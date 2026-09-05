@@ -28,6 +28,14 @@ SDKCONFIG_DEFAULTS ?= sdkconfig.defaults
 RELEASE_DIR        ?= build_release
 RELEASE_DEFAULTS   ?= $(RELEASE_DIR)/sdkconfig.defaults
 
+# The common IDF config baseline lives beside this makefile. On first build a project's local
+# sdkconfig.defaults is SEEDED from it (only when absent — never overwritten), with an optional
+# per-host sdkconfig.$(IOTDATA_HOST).defaults appended. Delete the local copy to re-seed after
+# the baseline changes. Keeps every esp32 project on one consistent config; host tweaks stay local.
+_TARGET_ESP32_MK_DIR    := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+SDKCONFIG_COMMON        ?= $(_TARGET_ESP32_MK_DIR)/sdkconfig.defaults
+SDKCONFIG_HOST_DEFAULTS ?= sdkconfig.$(IOTDATA_HOST).defaults
+
 .DEFAULT_GOAL := all
 .PHONY: all upload debug monitor size setup clean fullclean format release release-size release-upload
 
@@ -36,8 +44,24 @@ all: $(TARGET)
 $(TARGET): $(SOURCES) $(BUILDER_CFGS)
 	$(BUILDER) $(BUILDER_DEFS) build
 
-$(BUILDER_CFGS):
+$(BUILDER_CFGS): | $(SDKCONFIG_DEFAULTS)
 	$(BUILDER) $(BUILDER_DEFS) set-target $(PLATFORM)
+
+# Seed the local sdkconfig.defaults from the common baseline the first time only: a target with
+# no prerequisites runs its recipe just when the file is missing, so an existing (possibly edited)
+# local copy is left untouched. Appended after it: the optional per-host overrides. It is an
+# ORDER-ONLY prerequisite of the configure step above, so it is created before `set-target` reads
+# it, but its mtime never triggers a spurious reconfigure.
+$(SDKCONFIG_DEFAULTS):
+	@test -f "$(SDKCONFIG_COMMON)" || { echo "target-esp32: missing common baseline $(SDKCONFIG_COMMON)"; exit 1; }
+	@cp "$(SDKCONFIG_COMMON)" "$@"
+	@if [ -f "$(SDKCONFIG_HOST_DEFAULTS)" ]; then \
+	    printf '\n# --- host overrides appended from %s ---\n' "$(SDKCONFIG_HOST_DEFAULTS)" >> "$@"; \
+	    cat "$(SDKCONFIG_HOST_DEFAULTS)" >> "$@"; \
+	    echo "target-esp32: seeded $@ from common baseline + $(SDKCONFIG_HOST_DEFAULTS)"; \
+	else \
+	    echo "target-esp32: seeded $@ from common baseline"; \
+	fi
 
 # Lean field / OTA image, into a SEPARATE $(RELEASE_DIR) so it never touches build/.
 # ESP_LOG is stripped at COMPILE time (drops the format strings from flash — ~18%
@@ -47,7 +71,7 @@ $(BUILDER_CFGS):
 # cannot flip the LOG_MAXIMUM_LEVEL choice (an ESP-IDF quirk) and that is the switch that
 # actually removes the strings. Regenerated every run; the source of truth stays the one
 # committed $(SDKCONFIG_DEFAULTS). Version stamping is a later TODO.
-release:
+release: | $(SDKCONFIG_DEFAULTS)
 	@test -f $(SDKCONFIG_DEFAULTS) || { echo "release: no $(SDKCONFIG_DEFAULTS) to derive from"; exit 1; }
 	@mkdir -p $(RELEASE_DIR)
 	@grep -vE '^CONFIG_(IDF_TARGET|LOG_MAXIMUM_LEVEL|LOG_DEFAULT_LEVEL|COMPILER_OPTIMIZATION_ASSERTION)' $(SDKCONFIG_DEFAULTS) > $(RELEASE_DEFAULTS)
@@ -79,5 +103,9 @@ clean:
 fullclean:
 	$(BUILDER) fullclean
 	rm -rf $(RELEASE_DIR)
+	# sdkconfig.defaults is now SEEDED from the common baseline (see the seed rule above), so a
+	# fullclean drops it — along with the active sdkconfig — for a true reset: the next build
+	# re-seeds it from common (+ the per-host file), picking up any baseline change.
+	rm -f $(SDKCONFIG_DEFAULTS) sdkconfig sdkconfig.old
 format:
 	clang-format-19 -i $(SOURCES)
