@@ -24,8 +24,16 @@ _IOTDATA_MK_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))
 # Apex of the iotdata tree (three levels up: make -> iotdata-common -> src -> apex).
 IOTDATA_APEX ?= $(abspath $(_IOTDATA_MK_DIR)/../../..)
 
+# Hostname we're building on
+IOTDATA_HOST ?= $(shell hostname -s)
+
 # Source root holding all the iotdata-* repos: explicit override, else <apex>/src.
 IOTDATA_SRC ?= $(IOTDATA_APEX)/src
+# Force absolute. A project may set IOTDATA_SRC=../.. (fine for native gcc -I from the project dir),
+# but the esp32 CMake component build resolves relative include dirs from main/ (one level deeper)
+# and would double them (…/iotdata-example/iotdata-example/include). Absolute paths avoid that and
+# work for both. $(abspath) resolves against the invoking Makefile's directory.
+IOTDATA_SRC := $(abspath $(IOTDATA_SRC))
 
 # Repo roots — every iotdata repo is a sibling under $(IOTDATA_SRC).
 IOTDATA_SRC_LIBRARY ?= $(IOTDATA_SRC)/iotdata-library
@@ -35,7 +43,51 @@ IOTDATA_SRC_DEVICE  ?= $(IOTDATA_SRC)/iotdata-device
 IOTDATA_SRC_EXAMPLE ?= $(IOTDATA_SRC)/iotdata-example
 
 # iotdata-example internal sub-paths.
-#   IOTDATA_SRC_EXAMPLE_COMMON    -> iotdata_variant_suite.h
 #   IOTDATA_SRC_EXAMPLE_SIMULATOR -> simulator sources
-IOTDATA_SRC_EXAMPLE_COMMON    ?= $(IOTDATA_SRC_EXAMPLE)/iotdata
+# (the variant-suite header is now canonical at IOTDATA_VARIANT_HEADER, below.)
 IOTDATA_SRC_EXAMPLE_SIMULATOR ?= $(IOTDATA_SRC_EXAMPLE)/simulator
+
+# The iotdata library's own sources — list in a project's SOURCES for rebuild-on-change + format.
+# (iotdata.c is #included by the unity-build apps, so this is a prerequisite list, not a link list.)
+IOTDATA_SRC_LIBRARY_SOURCES ?= \
+    $(IOTDATA_SRC_LIBRARY)/iotdata_mesh.h \
+    $(IOTDATA_SRC_LIBRARY)/iotdata.h \
+    $(IOTDATA_SRC_LIBRARY)/iotdata.c
+
+# The variant-suite the apps compile against, as a FILE path. Injected as -DIOTDATA_VARIANT so the
+# committed wrapper iotdata-common/include/iotdata_variant.h #includes it; override per project or
+# per host to swap the variant set. No default is pulled in if unset -> the build breaks explicitly.
+IOTDATA_VARIANT ?= $(IOTDATA_SRC_COMMON)/include/iotdata_variant_weather_station.h
+
+# Shared native-build compiler flags. A Makefile uses these and may extend them, either
+# inline (CFLAGS_COMMON = $(IOTDATA_CFLAGS_COMMON) -Wextra-local) or by appending after the
+# include (IOTDATA_CFLAGS_COMMON += -Wextra-local). ?= so a project may pre-set to replace.
+IOTDATA_CFLAGS_COMMON ?= \
+    -Wfloat-conversion -Werror=float-conversion \
+    -Wall -Wextra -Werror -Wpedantic \
+    -Wstrict-prototypes -Wold-style-definition \
+    -Wcast-align -Wcast-qual -Wconversion \
+    -Wfloat-equal -Wformat=2 -Wformat-security \
+    -Winit-self -Wjump-misses-init \
+    -Wlogical-op -Wmissing-include-dirs \
+    -Wnested-externs -Wpointer-arith \
+    -Wredundant-decls -Wshadow \
+    -Wstrict-overflow=2 -Wswitch-default \
+    -Wunreachable-code -Wunused \
+    -Wwrite-strings \
+    -Wdouble-promotion \
+    -Wnull-dereference \
+    -Wduplicated-cond \
+    -Wduplicated-branches \
+    -Wrestrict \
+    -Wstringop-overflow \
+    -Wundef \
+    -Wvla \
+    -Wno-duplicated-branches
+IOTDATA_CFLAGS_OPT ?= -O3
+
+# Link deps of the iotdata library itself: cjson (JSON encode/decode) + m (float math). A Makefile
+# appends its own, e.g. LIBS = $(IOTDATA_LIBS_COMMON) -lmosquitto -lpthread. LDFLAGS is a slot for
+# shared linker options (none by default); extend locally the same way.
+IOTDATA_LIBS_COMMON    ?= -lcjson -lm
+IOTDATA_LDFLAGS_COMMON ?=

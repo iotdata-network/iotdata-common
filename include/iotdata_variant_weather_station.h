@@ -9,8 +9,8 @@
  * probes, hydrological gauges, etc).
  */
 
-#ifndef IOTDATA_VARIANT_SUITE_H
-#define IOTDATA_VARIANT_SUITE_H
+#ifndef IOTDATA_VARIANT_WEATHER_STATION_H
+#define IOTDATA_VARIANT_WEATHER_STATION_H
 
 /* ---------------------------------------------------------------------------
  * Variant indices
@@ -274,4 +274,4 @@ static inline const char *iotdata_vsuite_name(uint8_t variant) {
     return (variant < IOTDATA_VSUITE_COUNT) ? iotdata_variant_suite[variant].name : "unknown";
 }
 
-#endif /* IOTDATA_VARIANT_SUITE_H */
+#endif /* IOTDATA_VARIANT_WEATHER_STATION_H */

@@ -37,7 +37,7 @@ $(TARGET): $(SOURCES) $(BUILDER_CFGS)
 	$(BUILDER) $(BUILDER_DEFS) build
 
 $(BUILDER_CFGS):
-	$(BUILDER) set-target $(PLATFORM)
+	$(BUILDER) $(BUILDER_DEFS) set-target $(PLATFORM)
 
 # Lean field / OTA image, into a SEPARATE $(RELEASE_DIR) so it never touches build/.
 # ESP_LOG is stripped at COMPILE time (drops the format strings from flash — ~18%
