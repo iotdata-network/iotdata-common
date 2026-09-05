@@ -32,9 +32,15 @@ RELEASE_DEFAULTS   ?= $(RELEASE_DIR)/sdkconfig.defaults
 # sdkconfig.defaults is SEEDED from it (only when absent — never overwritten), with an optional
 # per-host sdkconfig.$(IOTDATA_HOST).defaults appended. Delete the local copy to re-seed after
 # the baseline changes. Keeps every esp32 project on one consistent config; host tweaks stay local.
-_TARGET_ESP32_MK_DIR    := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-SDKCONFIG_COMMON        ?= $(_TARGET_ESP32_MK_DIR)/sdkconfig.defaults
-SDKCONFIG_HOST_DEFAULTS ?= sdkconfig.$(IOTDATA_HOST).defaults
+_TARGET_ESP32_MK_DIR       := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+SDKCONFIG_COMMON           ?= $(_TARGET_ESP32_MK_DIR)/sdkconfig.defaults
+# Optional TRACKED per-project overlay (committed in the project dir); layered ON TOP of the
+# common baseline and BELOW the per-host file. For settings that are project-specific but not
+# host-specific, e.g. a solar board's brownout level. Named to dodge the sdkconfig.*.defaults
+# gitignore so it stays tracked.
+SDKCONFIG_PROJECT_DEFAULTS ?= sdkconfig.defaults.project
+# Optional LOCAL per-host overlay (gitignored); layered last so host tweaks win.
+SDKCONFIG_HOST_DEFAULTS    ?= sdkconfig.$(IOTDATA_HOST).defaults
 
 .DEFAULT_GOAL := all
 .PHONY: all upload debug monitor size setup clean fullclean format release release-size release-upload
@@ -55,13 +61,18 @@ $(BUILDER_CFGS): | $(SDKCONFIG_DEFAULTS)
 $(SDKCONFIG_DEFAULTS):
 	@test -f "$(SDKCONFIG_COMMON)" || { echo "target-esp32: missing common baseline $(SDKCONFIG_COMMON)"; exit 1; }
 	@cp "$(SDKCONFIG_COMMON)" "$@"
-	@if [ -f "$(SDKCONFIG_HOST_DEFAULTS)" ]; then \
+	@src="common baseline"; \
+	if [ -f "$(SDKCONFIG_PROJECT_DEFAULTS)" ]; then \
+	    printf '\n# --- project overrides appended from %s ---\n' "$(SDKCONFIG_PROJECT_DEFAULTS)" >> "$@"; \
+	    cat "$(SDKCONFIG_PROJECT_DEFAULTS)" >> "$@"; \
+	    src="$$src + $(SDKCONFIG_PROJECT_DEFAULTS)"; \
+	fi; \
+	if [ -f "$(SDKCONFIG_HOST_DEFAULTS)" ]; then \
 	    printf '\n# --- host overrides appended from %s ---\n' "$(SDKCONFIG_HOST_DEFAULTS)" >> "$@"; \
 	    cat "$(SDKCONFIG_HOST_DEFAULTS)" >> "$@"; \
-	    echo "target-esp32: seeded $@ from common baseline + $(SDKCONFIG_HOST_DEFAULTS)"; \
-	else \
-	    echo "target-esp32: seeded $@ from common baseline"; \
-	fi
+	    src="$$src + $(SDKCONFIG_HOST_DEFAULTS)"; \
+	fi; \
+	echo "target-esp32: seeded $@ from $$src"
 
 # Lean field / OTA image, into a SEPARATE $(RELEASE_DIR) so it never touches build/.
 # ESP_LOG is stripped at COMPILE time (drops the format strings from flash — ~18%

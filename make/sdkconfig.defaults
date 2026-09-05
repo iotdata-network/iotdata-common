@@ -31,7 +31,10 @@ CONFIG_LOG_MAXIMUM_LEVEL=4
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_DEFAULT_LEVEL=3
 
-# --- quiet bootloader ---
+# --- quiet the boot chatter: silence the ROM log entirely (drops the banner on EVERY wake —
+#     and on boards where an E22 control pin doubles as U0TXD, e.g. tsa's M1=GPIO21, keeps that
+#     pin from toggling with the banner at reset), plus the 2nd-stage bootloader log. ---
+CONFIG_BOOT_ROM_LOG_ALWAYS_OFF=y
 CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
 CONFIG_BOOTLOADER_LOG_LEVEL=0
 
