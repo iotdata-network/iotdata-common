@@ -12,7 +12,10 @@ compiler/cmake/ninja toolchain.
 
 Subcommands:
     flash     write a build dir's bootloader + partition-table + app to the chip
-    monitor   reset and print the serial console (colored logs, reconnect, inject)
+    monitor   print the serial console, interactive (type to the device's CLI); reconnects.
+              Does NOT reset by default (so it won't reboot a running node) — pass -r to reset.
+    command   issue ONE command to a running device and print just its response (C-tagged
+              lines), filtering out log noise — for scripting. e.g. `command vers`.
     deploy    flash, then monitor  (the usual verb)
 
 The build dir is any ESP-IDF `build/` directory: everything needed (chip, flash
@@ -27,8 +30,11 @@ Examples:
     esp32-deploy deploy -p /dev/ttyACM1 \
         --pull workshop:/opt/iotdata/src/iotdata-example/simulator_sensor_lora_esp32/build
 
-    # just watch a running board (equivalent to esp32-boot):
+    # watch a running board and type commands to its CLI (help / vers / stat / logl):
     esp32-deploy monitor -p /dev/ttyACM0
+
+    # one-shot: ask a running board for its version, print just the response:
+    esp32-deploy command -p /dev/ttyACM0 vers
 
     # flash only, no monitor:
     esp32-deploy flash -p /dev/ttyACM0 -b ../relay/build
@@ -49,6 +55,7 @@ import argparse
 import json
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -66,11 +73,14 @@ COLORS = {
     "E": "\033[31m",  # red
     "W": "\033[33m",  # yellow
     "I": "\033[32m",  # green
+    "C": "\033[36m",  # cyan — iotdata command output ("C (<ms>) ...")
 }
 RESET = "\033[0m"
 RED = "\033[31m"
 CYAN = "\033[36m"
-LOG_RE = re.compile(r"^[IDEW] \(\d+\) ")
+LOG_RE = re.compile(r"^[CIDEW] \(\d+\) ")
+# Command output is a pseudo log line "C (<ms>) <message>" (iotdata_command.h). Capture the message.
+CMD_RE = re.compile(r"^C \(\d+\) (.*)$")
 COMMAND_REQUEST = "COMMAND:REQUEST"
 
 def print_line(line):
@@ -88,8 +98,14 @@ def wait_for_port(port):
         polls += 1
         time.sleep(0.01)
 
-def monitor(port, command=None, reset=True):
+def monitor(port, command=None, reset=False):
     import serial  # imported lazily so `flash` works without pyserial
+    # Forward the terminal's stdin to the device so typed commands reach its console CLI. In cooked
+    # mode a whole line arrives on Enter; we pass the bytes straight through (the device parses lines).
+    try:
+        stdin_fd = sys.stdin.fileno()
+    except (ValueError, OSError, AttributeError):
+        stdin_fd = None
     buf = b""
     first_connect = True
     while True:
@@ -99,7 +115,7 @@ def monitor(port, command=None, reset=True):
             print(f"\n{RED}--- DEVICE RECONNECTED{RESET}", flush=True)
             buf = b""
         try:
-            with serial.Serial(port, 115200) as s:
+            with serial.Serial(port, 115200, timeout=0) as s:
                 if first_connect:
                     if reset:
                         try:
@@ -116,21 +132,75 @@ def monitor(port, command=None, reset=True):
                     s.write(f"{command}\n".encode())
                     s.flush()
                     print(f"{CYAN}COMMAND:INJECT (preload): {command}{RESET}")
+                watch = [s.fileno()] + ([stdin_fd] if stdin_fd is not None else [])
                 while True:
-                    data = s.read(s.in_waiting or 1)
-                    if not data:
-                        continue
-                    buf += data
-                    while b"\n" in buf:
-                        line, buf = buf.split(b"\n", 1)
-                        decoded = line.decode(errors="replace").rstrip("\r")
-                        print_line(decoded)
-                        if command and COMMAND_REQUEST in decoded:
-                            s.write(f"{command}\n".encode())
+                    ready, _, _ = select.select(watch, [], [], 0.2)
+                    if stdin_fd is not None and stdin_fd in ready:
+                        typed = os.read(stdin_fd, 256)
+                        if typed:
+                            s.write(typed)  # keystrokes/line -> device console
                             s.flush()
-                            print(f"{CYAN}COMMAND:INJECT: {command}{RESET}")
+                        else:  # EOF on stdin — stop forwarding, keep monitoring
+                            watch = [s.fileno()]
+                            stdin_fd = None
+                    if s.fileno() in ready:
+                        data = s.read(s.in_waiting or 1)
+                        if not data:
+                            continue
+                        buf += data
+                        while b"\n" in buf:
+                            line, buf = buf.split(b"\n", 1)
+                            decoded = line.decode(errors="replace").rstrip("\r")
+                            print_line(decoded)
+                            if command and COMMAND_REQUEST in decoded:
+                                s.write(f"{command}\n".encode())
+                                s.flush()
+                                print(f"{CYAN}COMMAND:INJECT: {command}{RESET}")
         except serial.SerialException:
             continue
+
+# --------------------------------------------------------------------------------------
+
+def command_oneshot(port, cmd, reset=False, timeout=2.0):
+    """Connect to a running device, issue one command, print its 'C (...)' response, exit.
+    Returns 0 if any command output was captured, else 1. ESP_LOG noise is filtered out."""
+    import serial
+    try:
+        with serial.Serial(port, 115200, timeout=0.1) as s:
+            if reset:
+                try:
+                    s.dtr = False
+                    s.rts = True
+                    time.sleep(0.1)
+                    s.rts = False
+                    time.sleep(0.4)  # give the app a moment to come up
+                except OSError:
+                    pass
+            try:
+                s.reset_input_buffer()
+            except OSError:
+                pass
+            s.write(f"{cmd}\n".encode())
+            s.flush()
+            buf = b""
+            out = []
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                data = s.read(s.in_waiting or 1)
+                if not data:
+                    continue
+                buf += data
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    m = CMD_RE.match(line.decode(errors="replace").rstrip("\r"))
+                    if m:
+                        out.append(m.group(1))
+                        deadline = time.time() + 0.4  # keep reading while output flows
+    except serial.SerialException as e:
+        die(f"serial: {e}")
+    for line in out:
+        print(line)
+    return 0 if out else 1
 
 # --------------------------------------------------------------------------------------
 
@@ -259,12 +329,18 @@ def main():
             p.add_argument("--baud", type=int, default=460800, help="flash baud (ignored on USB-JTAG)")
     p_flash = sub.add_parser("flash", help="write a build dir to the chip")
     add_common(p_flash, build=True)
-    p_mon = sub.add_parser("monitor", help="reset and print the serial console")
+    p_mon = sub.add_parser("monitor", help="print the serial console (interactive; -r resets first)")
     add_common(p_mon)
+    p_mon.add_argument("-r", "--reset", action="store_true", help="reset the device on connect (off by default)")
     p_mon.add_argument("command", nargs="?", default=None, help="command string to inject after boot")
     p_dep = sub.add_parser("deploy", help="flash, then monitor")
     add_common(p_dep, build=True)
     p_dep.add_argument("command", nargs="?", default=None, help="command string to inject after boot")
+    p_cmd = sub.add_parser("command", help="issue one command to a running device and print its response")
+    add_common(p_cmd)
+    p_cmd.add_argument("-r", "--reset", action="store_true", help="reset the device before issuing (off by default)")
+    p_cmd.add_argument("--timeout", type=float, default=2.0, help="seconds to wait for the response (default 2.0)")
+    p_cmd.add_argument("request", nargs="+", help="the command to send, e.g. 'vers', or 'logl debug'")
 
     args = parser.parse_args()
     if args.cmd == "flash":
@@ -274,9 +350,18 @@ def main():
         if not os.path.exists(args.port):
             die(f"{args.port} not found")
         try:
-            monitor(args.port, args.command)
+            monitor(args.port, args.command, reset=args.reset)
         except KeyboardInterrupt:
             print()
+        return
+    if args.cmd == "command":
+        if not os.path.exists(args.port):
+            die(f"{args.port} not found")
+        try:
+            sys.exit(command_oneshot(args.port, " ".join(args.request), reset=args.reset, timeout=args.timeout))
+        except KeyboardInterrupt:
+            print()
+            sys.exit(130)
         return
     if args.cmd == "deploy":
         do_flash(args.port, resolve_build_dir(args), args.baud)
