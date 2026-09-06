@@ -8,7 +8,7 @@
  * including — that pulls in the blackbox implementation and this adapter's definitions. Other TUs
  * just #include it for the declarations.
  *
- *   platform backend:  esp32 → NONE (RTC pool ring; MDS_FLASH is P3)   linux → FILE
+ *   platform backend:  esp32 → NONE (RTC pool ring; ESP_FLASH is P3)   linux → FILE
  *   clock:             esp32 → "seq:up_ms"                             linux → epoch ms
  *
  * A project sets its own backend by #defining BLACKBOX_PERSIST before including (the defaults below
@@ -25,7 +25,7 @@
 /* -------- platform backend + sizes + clock (compile-time; override before including) ---------- */
 #if defined(ESP_PLATFORM)
 #  ifndef BLACKBOX_PERSIST
-#    define BLACKBOX_PERSIST BLACKBOX_PERSIST_NONE       /* P1: RTC pool ring; MDS_FLASH → P3 */
+#    define BLACKBOX_PERSIST BLACKBOX_PERSIST_NONE       /* P1: RTC pool ring; ESP_FLASH → P3 */
 #  endif
 #  ifndef IOTDATA_BLACKBOX_POOL_SZ
 #    define IOTDATA_BLACKBOX_POOL_SZ 2048u
