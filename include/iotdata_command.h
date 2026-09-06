@@ -217,10 +217,10 @@ static void iotdata__cmd_boot(__attribute__ ((unused)) int argc, __attribute__ (
  * command (e.g. a `health`). */
 static const iotdata_command_t iotdata__cmd_builtin[] = {
 #if defined(ESP_PLATFORM)
-    { "vers", iotdata__cmd_vers, "firmware / platform / build version" },
-    { "stat", iotdata__cmd_stat, "runtime stats: uptime, reset reason, heap" },
-    { "logl", iotdata__cmd_logl, "log level — 'logl' shows, 'logl <lvl>' sets" },
-    { "boot", iotdata__cmd_boot, "restart the device" },
+    { "vers", iotdata__cmd_vers, "device firmware / platform / build version" },
+    { "stat", iotdata__cmd_stat, "device uptime, reset reason, heap" },
+    { "logl", iotdata__cmd_logl, "device loglevel — 'logl' shows, 'logl <lvl>' sets" },
+    { "boot", iotdata__cmd_boot, "device restart" },
 #endif
 };
 #define IOTDATA__BUILTIN_N (sizeof iotdata__cmd_builtin / sizeof iotdata__cmd_builtin[0])
