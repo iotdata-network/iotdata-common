@@ -1,8 +1,8 @@
 /*
  * iotdata_command.h — a small, generic USB-serial-JTAG command line for esp32 apps.
  *
- * Non-blocking and verb-based: a set of built-in commands (help, vers, stat, logl) plus any commands
- * the app plugs in on top. Designed to be driven from a cooperative main loop — call
+ * Non-blocking and verb-based: a set of built-in commands (help, vers, stat, logl, boot) plus any
+ * commands the app plugs in on top. Designed to be driven from a cooperative main loop — call
  * iotdata_command_poll() each pass; it drains whatever the console has and dispatches a full line.
  * Output is plain printf (over the same USB-serial-JTAG console the app logs on), so records/status
  * come straight back over USB.
@@ -80,6 +80,7 @@ void iotdata_command_reply(const char *fmt, ...) __attribute__((format(printf, 1
 #include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #pragma GCC diagnostic pop
@@ -199,6 +200,13 @@ static void iotdata__cmd_logl(int argc, char **argv) {
     iotdata_command_reply("log level = %s\n", iotdata__log_name(lvl));
 }
 
+static void iotdata__cmd_boot(__attribute__ ((unused)) int argc, __attribute__ ((unused)) char **argv) {
+    iotdata_command_reply("rebooting\n");
+    fflush(stdout);
+    esp_rom_delay_us(50000); /* let the reply drain out of the USB TX buffer before the reset */
+    esp_restart();
+}
+
 #endif /* ESP_PLATFORM */
 
 /* Built-ins mirror the iotdata telemetry TLVs, restricted to what is knowable generically:
@@ -212,6 +220,7 @@ static const iotdata_command_t iotdata__cmd_builtin[] = {
     { "vers", iotdata__cmd_vers, "firmware / platform / build version" },
     { "stat", iotdata__cmd_stat, "runtime stats: uptime, reset reason, heap" },
     { "logl", iotdata__cmd_logl, "log level — 'logl' shows, 'logl <lvl>' sets" },
+    { "boot", iotdata__cmd_boot, "restart the device" },
 #endif
 };
 #define IOTDATA__BUILTIN_N (sizeof iotdata__cmd_builtin / sizeof iotdata__cmd_builtin[0])
