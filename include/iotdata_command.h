@@ -200,7 +200,7 @@ static void iotdata__cmd_logl(int argc, char **argv) {
     iotdata_command_reply("log level = %s\n", iotdata__log_name(lvl));
 }
 
-static void iotdata__cmd_boot(__attribute__ ((unused)) int argc, __attribute__ ((unused)) char **argv) {
+static void iotdata__cmd_boot(__attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
     iotdata_command_reply("rebooting\n");
     fflush(stdout);
     esp_rom_delay_us(50000); /* let the reply drain out of the USB TX buffer before the reset */
