@@ -72,6 +72,11 @@ extern const blackbox_struct_config_t iotdata_blackbox_config_lifecycle;
 
 /* iotdata_blackbox_clock (the BLACKBOX_CLOCK hook) is already forward-declared by blackbox.h. */
 
+/* Seed the clock. Call ONCE before blackbox_init(). On esp32 the clock's `seq` lives in RTC_NOINIT,
+ * so this zeroes it on a true cold start (detected with a magic word -- see the implementation for
+ * why esp_reset_reason() cannot be used for that). A no-op on the host. */
+void iotdata_blackbox_begin(void);
+
 /* Convenience: record a lifecycle event. */
 static inline int iotdata_blackbox_lifecycle(blackbox_handle_t *h, iotdata_bb_lc_event_t ev, uint8_t reason) {
     const iotdata_bb_lifecycle_t r = { (uint8_t)ev, reason };
@@ -97,15 +102,38 @@ static int iotdata_bb__dec_lifecycle(__attribute__((unused)) const blackbox_stru
 const blackbox_struct_config_t iotdata_blackbox_config_lifecycle = { "LC", iotdata_bb__enc_lifecycle, iotdata_bb__dec_lifecycle };
 
 #if defined(ESP_PLATFORM)
+#include "esp_attr.h"
 #include "esp_timer.h"
-/* esp32 clock = "seq:up_ms". `seq` is a monotonic counter the app keeps in RTC_NOINIT so it survives
- * deep sleep; declare it (RTC_NOINIT_ATTR uint32_t iotdata_blackbox_seq;) in the app. */
-extern uint32_t iotdata_blackbox_seq;
+
+/* esp32 clock = "seq:up_ms". `seq` is a monotonic counter in RTC_NOINIT so it survives deep sleep and
+ * resets -- which also means it holds GARBAGE on a true cold start.
+ *
+ * You cannot detect that from esp_reset_reason(): a USB-powered ESP32-C3 reports ESP_RST_USB on a
+ * genuine power-up, NOT ESP_RST_POWERON (the ROM logs it as rst:0x15 USB_UART_CHIP_RESET), so an
+ * `if (reason == ESP_RST_POWERON) seq = 0;` guard silently never fires and the garbage persists
+ * through every later reset. Pair it with a magic word instead, exactly as an RTC state struct is.
+ *
+ * Both variables are owned HERE rather than by each app, so this cannot be got wrong per project.
+ * Call iotdata_blackbox_begin() once before blackbox_init(). */
+#define IOTDATA_BLACKBOX_SEQ_MAGIC 0x1D5EC10Cu /* 'IDSEC-CLOC(k)' */
+
+RTC_NOINIT_ATTR uint32_t iotdata_blackbox_seq;
+RTC_NOINIT_ATTR static uint32_t iotdata_blackbox_seq_magic;
+
+void iotdata_blackbox_begin(void) {
+    if (iotdata_blackbox_seq_magic != IOTDATA_BLACKBOX_SEQ_MAGIC) { /* RTC was garbage: cold start */
+        iotdata_blackbox_seq = 0;
+        iotdata_blackbox_seq_magic = IOTDATA_BLACKBOX_SEQ_MAGIC;
+    }
+}
+
 int iotdata_blackbox_clock(char *out, size_t n) {
     const uint32_t up = (uint32_t)(esp_timer_get_time() / 1000);
     return snprintf(out, n, "%u:%u", (unsigned)(++iotdata_blackbox_seq), (unsigned)up);
 }
 #else
+void iotdata_blackbox_begin(void) { /* host: the clock is a real timestamp, nothing to seed */
+}
 #include <time.h>
 int iotdata_blackbox_clock(char *out, size_t n) {
     struct timespec ts;

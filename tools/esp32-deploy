@@ -16,6 +16,11 @@ Subcommands:
               Does NOT reset by default (so it won't reboot a running node) — pass -r to reset.
     command   issue ONE command to a running device and print just its response (C-tagged
               lines), filtering out log noise — for scripting. e.g. `command vers`.
+    diag      pull the blackbox diagnostics partition off the chip and decode it to CSV
+              (`diag extract`), or decode an image pulled earlier (`diag decode <file>`).
+              Uses esptool only — no IDF toolchain — and is much faster than streaming the
+              records over the console, or erase it (`diag clear --confirm`). NB these
+              RESET the device.
     deploy    flash, then monitor  (the usual verb)
 
 The build dir is any ESP-IDF `build/` directory: everything needed (chip, flash
@@ -39,6 +44,11 @@ Examples:
     # flash only, no monitor:
     esp32-deploy flash -p /dev/ttyACM0 -b ../relay/build
 
+    # pull weeks of field diagnostics off a node (flush first: the read resets it):
+    esp32-deploy command -p /dev/ttyACM0 "diag flush"
+    esp32-deploy diag extract -p /dev/ttyACM0 --raw diag.bin --out diag.csv
+    esp32-deploy diag decode diag.bin          # offline, re-decode an image pulled earlier
+
 With two boards attached, ttyACM numbering can move across a reset/re-enumerate; to
 pin a physical board use a stable path, e.g. -p /dev/serial/by-path/<...> (see
 `ls -l /dev/serial/by-path`).
@@ -57,8 +67,10 @@ import os
 import re
 import select
 import shutil
+import struct
 import subprocess
 import sys
+import tempfile
 import time
 
 # --------------------------------------------------------------------------------------
@@ -66,6 +78,12 @@ import time
 def die(msg):
     print(f"error: {msg}", file=sys.stderr)
     sys.exit(1)
+
+VERBOSE = False
+
+def verbose(msg):
+    if VERBOSE:
+        print(msg, file=sys.stderr)
 
 # --------------------------------------------------------------------------------------
 
@@ -313,6 +331,168 @@ def resolve_build_dir(args):
 
 # --------------------------------------------------------------------------------------
 
+BLACKBOX_SECTOR = 4096
+BLACKBOX_MAGIC = 0x42584F42   # 'BXOB', little-endian
+BLACKBOX_HDR = 8              # magic(4) + seq(4)
+PART_TABLE_OFFSET = 0x8000
+PART_TABLE_SIZE = 0x1000
+PART_ENTRY_MAGIC = 0x50AA
+PART_ENTRY_SIZE = 32
+
+def esptool_read(esptool, port, baud, offset, size, out_path):
+    """Read a flash region to a file. NB this drives the chip into download mode, i.e. it RESETS the
+    device; --after hard-reset restarts the app afterwards."""
+    v5 = (esptool_major(esptool) or 4) >= 5
+    argv = esptool + ["--port", port, "--baud", str(baud),
+                      "--after", ("hard-reset" if v5 else "hard_reset"),
+                      ("read-flash" if v5 else "read_flash"),
+                      hex(offset), hex(size), out_path]
+    verbose(" ".join(argv))
+    r = subprocess.run(argv, stdout=(None if VERBOSE else subprocess.DEVNULL))
+    return r.returncode == 0
+
+def esptool_erase(esptool, port, baud, offset, size):
+    """Erase a flash region (4 KB-aligned). Like the read, this RESETS the device."""
+    v5 = (esptool_major(esptool) or 4) >= 5
+    argv = esptool + ["--port", port, "--baud", str(baud),
+                      "--after", ("hard-reset" if v5 else "hard_reset"),
+                      ("erase-region" if v5 else "erase_region"),
+                      hex(offset), hex(size)]
+    verbose(" ".join(argv))
+    r = subprocess.run(argv, stdout=(None if VERBOSE else subprocess.DEVNULL))
+    return r.returncode == 0
+
+def read_partition_table(esptool, port, baud):
+    """Pull + parse the device's partition table. Returns [(label, ptype, subtype, offset, size)]."""
+    tmp = os.path.join(tempfile.gettempdir(), f"esp32-deploy-parttab-{os.getpid()}.bin")
+    try:
+        if not esptool_read(esptool, port, baud, PART_TABLE_OFFSET, PART_TABLE_SIZE, tmp):
+            return []
+        with open(tmp, "rb") as f:
+            data = f.read()
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    out = []
+    for off in range(0, len(data) - PART_ENTRY_SIZE + 1, PART_ENTRY_SIZE):
+        magic, ptype, subtype, poff, psize = struct.unpack_from("<HBBII", data, off)
+        if magic != PART_ENTRY_MAGIC:
+            break  # end of table
+        label = data[off + 12 : off + 28].split(b"\0", 1)[0].decode("ascii", "replace")
+        out.append((label, ptype, subtype, poff, psize))
+    return out
+
+def decode_blackbox_image(data):
+    """Yield the CSV records held in a raw ESP_FLASH blackbox partition image, oldest first.
+
+    Deliberately a STANDALONE copy of the walk rather than importing blackbox/py/blackbox_esp_flash.py:
+    this tool must run on a bare target host with nothing but python3 + esptool, and must not depend on
+    the blackbox repo being checked out beside it. The on-flash format is specified in that repo's
+    DESIGN.md — if it ever changes, both decoders have to move together.
+
+    Format: N x 4096-byte sectors used as a ring; each written sector starts [magic u32][seq u32],
+    then records as [len u16][payload] (a CSV line, no newline). Sorting sectors by seq restores
+    chronological order across the wrap. len 0xFFFF (erased) or 0 ends a sector.
+    """
+    sectors = []
+    for off in range(0, (len(data) // BLACKBOX_SECTOR) * BLACKBOX_SECTOR, BLACKBOX_SECTOR):
+        magic, seq = struct.unpack_from("<II", data, off)
+        if magic == BLACKBOX_MAGIC:
+            sectors.append((seq, off))
+    sectors.sort()
+    for _seq, off in sectors:
+        end, pos = off + BLACKBOX_SECTOR, off + BLACKBOX_HDR
+        while pos + 2 <= end:
+            (length,) = struct.unpack_from("<H", data, pos)
+            if length in (0xFFFF, 0) or pos + 2 + length > end:
+                break
+            yield data[pos + 2 : pos + 2 + length].decode("utf-8", "replace")
+            pos += 2 + length
+    return
+
+def emit_records(data, out_path, stats_sectors=None):
+    lines = list(decode_blackbox_image(data))
+    if out_path:
+        with open(out_path, "w") as f:
+            for line in lines:
+                f.write(line + "\n")
+        print(f"{len(lines)} record(s) -> {out_path}", file=sys.stderr)
+    else:
+        for line in lines:
+            print(line)
+    if stats_sectors is not None:
+        verbose(f"{len(lines)} record(s) from {stats_sectors} written sector(s)")
+    return 0 if lines else 1
+
+def do_diag_extract(port, partition, baud, raw_path, csv_path, offset=None, size=None):
+    esptool = find_esptool()
+    if not esptool:
+        die("esptool not found — install it with:  pip install esptool  (this is not the IDF toolchain)")
+    if offset is None or size is None:
+        verbose("reading the partition table to locate the diagnostics partition")
+        table = read_partition_table(esptool, port, baud)
+        if not table:
+            die("could not read the partition table (is the device attached and in a sane state?)")
+        match = [e for e in table if e[0] == partition]
+        if not match:
+            names = ", ".join(e[0] for e in table) or "(none)"
+            die(f"no partition named {partition!r} on this device; found: {names}")
+        _, _, _, offset, size = match[0]
+        verbose(f"partition {partition!r} at {offset:#x}, {size} bytes")
+    keep = raw_path or os.path.join(tempfile.gettempdir(), f"esp32-deploy-diag-{os.getpid()}.bin")
+    # progress goes to stderr so `diag extract` with no --out can be piped as clean CSV
+    print(f"reading {partition} ({size} bytes at {offset:#x}) from {port} — this resets the device", file=sys.stderr)
+    try:
+        if not esptool_read(esptool, port, baud, offset, size, keep):
+            die("esptool read-flash failed")
+        with open(keep, "rb") as f:
+            data = f.read()
+        if raw_path:
+            print(f"raw image -> {raw_path}", file=sys.stderr)
+        return emit_records(data, csv_path)
+    finally:
+        if not raw_path:
+            try:
+                os.unlink(keep)
+            except OSError:
+                pass
+
+def do_diag_clear(port, partition, baud, offset, size, confirm):
+    """Erase the diagnostics partition. The firmware re-lays a fresh log on its next boot (the
+    backend treats an all-0xFF partition as virgin), and --after hard-reset restarts it for us."""
+    if not confirm:
+        die("diag clear ERASES the partition (weeks of field records) — re-run with --confirm.\n"
+            "       You probably want `diag extract` first.")
+    esptool = find_esptool()
+    if not esptool:
+        die("esptool not found — install it with:  pip install esptool  (this is not the IDF toolchain)")
+    if offset is None or size is None:
+        table = read_partition_table(esptool, port, baud)
+        if not table:
+            die("could not read the partition table (is the device attached and in a sane state?)")
+        match = [e for e in table if e[0] == partition]
+        if not match:
+            names = ", ".join(e[0] for e in table) or "(none)"
+            die(f"no partition named {partition!r} on this device; found: {names}")
+        _, _, _, offset, size = match[0]
+    print(f"erasing {partition} ({size} bytes at {offset:#x}) on {port} — this resets the device", file=sys.stderr)
+    if not esptool_erase(esptool, port, baud, offset, size):
+        die("esptool erase-region failed")
+    print(f"{partition} erased", file=sys.stderr)
+    return 0
+
+def do_diag_decode(image_path, csv_path):
+    try:
+        with open(image_path, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        die(str(e))
+    return emit_records(data, csv_path)
+
+# --------------------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(
         prog="esp32-deploy",
@@ -336,6 +516,18 @@ def main():
     p_dep = sub.add_parser("deploy", help="flash, then monitor")
     add_common(p_dep, build=True)
     p_dep.add_argument("command", nargs="?", default=None, help="command string to inject after boot")
+    p_diag = sub.add_parser("diag", help="pull + decode the blackbox diagnostics partition")
+    add_common(p_diag)
+    p_diag.add_argument("action", choices=["extract", "decode", "clear"], help="extract = read from the device; decode = an already-pulled image; clear = erase the partition")
+    p_diag.add_argument("image", nargs="?", default=None, help="decode: the raw partition image to read")
+    p_diag.add_argument("--partition", default="diag", help="partition name to read (default: diag)")
+    p_diag.add_argument("--offset", type=lambda v: int(v, 0), default=None, help="skip the partition-table lookup (needs --size)")
+    p_diag.add_argument("--size", type=lambda v: int(v, 0), default=None, help="bytes to read (with --offset)")
+    p_diag.add_argument("--raw", default=None, help="also keep the raw partition image at this path")
+    p_diag.add_argument("--out", default=None, help="write the decoded CSV here (default: stdout)")
+    p_diag.add_argument("--baud", type=int, default=460800, help="read baud (default 460800)")
+    p_diag.add_argument("--verbose", "-v", action="store_true", help="show the esptool invocation and partition lookup")
+    p_diag.add_argument("--confirm", action="store_true", help="required by `diag clear`: yes, really erase it")
     p_cmd = sub.add_parser("command", help="issue one command to a running device and print its response")
     add_common(p_cmd)
     p_cmd.add_argument("-r", "--reset", action="store_true", help="reset the device before issuing (off by default)")
@@ -354,6 +546,24 @@ def main():
         except KeyboardInterrupt:
             print()
         return
+    if args.cmd == "diag":
+        global VERBOSE
+        VERBOSE = args.verbose
+        if args.action == "decode":
+            if not args.image:
+                die("diag decode needs an image file (e.g. esp32-deploy diag decode diag.bin)")
+            sys.exit(do_diag_decode(args.image, args.out))
+        if not os.path.exists(args.port):
+            die(f"{args.port} not found")
+        if (args.offset is None) != (args.size is None):
+            die("--offset and --size must be given together")
+        if args.action == "clear":
+            sys.exit(do_diag_clear(args.port, args.partition, args.baud, args.offset, args.size, args.confirm))
+        try:
+            sys.exit(do_diag_extract(args.port, args.partition, args.baud, args.raw, args.out, args.offset, args.size))
+        except KeyboardInterrupt:
+            print()
+            sys.exit(130)
     if args.cmd == "command":
         if not os.path.exists(args.port):
             die(f"{args.port} not found")
