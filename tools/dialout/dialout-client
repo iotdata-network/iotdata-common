@@ -1,0 +1,510 @@
+#!/bin/sh
+#
+# dialout-client -- phone home from a box you cannot reach.
+#
+# For a node behind CGNAT, a mobile APN, or somebody else's router: nothing can dial IN, so the
+# node dials OUT on a timer and leaves a reverse tunnel behind that you can ssh back through.
+#
+# One run does exactly this, and stops at the first thing that says no:
+#
+#   0. link-script up, if set -- for a box whose network IS the dial-out (a 4G modem). Fails -> stop.
+#   1. read the invite list (DNS TXT). Not invited -> stop, having opened nothing.
+#   2. read the endpoint (DNS SRV) -> host and port. No record -> stop.
+#   3. ssh -N -R <our port>:localhost:22 to it.
+#   4. hold, until the invite is withdrawn, or nothing has used it for `idle`, or hold-max.
+#   5. link-script down, on every path out including the early ones.
+#
+# Steps 1 and 2 are two DNS lookups, and the normal answer is no: a client nobody is waiting for
+# does that every 12 hours and goes back to sleep. With a modem it costs a few seconds of radio
+# rather than nothing, because you cannot ask DNS anything until the modem is up -- which is why
+# step 5 runs on the no-invitation path too, not just after a tunnel.
+#
+# The invite is the real clock. `dialout-server wait` publishes it and withdraws it on Ctrl-C, and
+# the client rechecks while it holds, so the tunnel lasts as long as somebody is waiting on it
+# rather than as long as a timer says. It never cuts off a session in progress.
+#
+# Deps, all apt: dnsutils (dig), openssh-client (ssh, ssh-keygen), coreutils (md5sum, timeout),
+# iproute2 (ss). No language runtime, nothing to build, nothing vendored.
+#
+# Usage:
+#   dialout-client dial [--endpoint host:port] [--force] [--idle N]   dial out (the default)
+#   dialout-client check                                              resolve only; say what it found
+#   dialout-client keygen                                             make our key; print the pubkey
+#   dialout-client install [--interval 12h]                           systemd service + timer
+#   dialout-client uninstall
+#   dialout-client status
+#
+# The pubkey from `keygen` is what the far end feeds to `dialout-server enrol`.
+
+# -f (noglob) matters: DNS answers are split into words unquoted, and the invite wildcard is
+# literally "*". Without it the shell expands that against the working directory and the open
+# invitation silently never matches -- which is the failure you would least like to debug at 2am
+# on a box you cannot reach.
+set -euf
+
+SELF=$(basename "$0")
+HERE=$(cd "$(dirname "$0")" && pwd)
+
+# ------------------------------------------------------------------------------------------------
+# config
+# ------------------------------------------------------------------------------------------------
+
+# key=value, # comments. dialout.cfg then dialout.<hostname>.cfg, the latter overriding. Keys reach
+# the shell as CFG_<key with - turned to _>; anything else in the key is dropped rather than
+# eval'd, because this walks into an eval and a config file should not be able to run code.
+cfg_load() {
+    for _f in "$@"; do
+        [ -f "$_f" ] || continue
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            case "$_line" in '' | '#'*) continue ;; esac
+            case "$_line" in *=*) ;; *) continue ;; esac
+            _k=$(printf '%s' "${_line%%=*}" | tr -d ' \t' | tr '-' '_' | tr -cd 'A-Za-z0-9_')
+            [ -n "$_k" ] || continue
+            _v=${_line#*=}
+            _v=${_v%"${_v##*[![:space:]]}"}
+            _v=${_v#"${_v%%[![:space:]]*}"}
+            eval "CFG_$_k=\$_v"
+        done <"$_f"
+    done
+}
+
+# cfg <key> [default] -- empty counts as unset, so a key can be blanked in the base file and
+# filled in by the host overlay.
+cfg() {
+    _n=$(printf '%s' "$1" | tr '-' '_')
+    eval "_v=\${CFG_$_n:-}"
+    [ -n "$_v" ] && printf '%s' "$_v" || printf '%s' "${2:-}"
+}
+
+log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
+die() {
+    log "$SELF: $*"
+    exit 1
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ------------------------------------------------------------------------------------------------
+# identity
+# ------------------------------------------------------------------------------------------------
+
+# The 6-hex-digit token that stands for this client in both the invite list and the port
+# derivation. md5 of the name: available everywhere, and identical in sh and in node, which is the
+# whole reason for choosing it over anything cleverer.
+token_of() { printf '%s' "$1" | md5sum | cut -c1-6; }
+
+# port = base + token mod span. Both ends compute it; nothing is registered or exchanged.
+port_of() {
+    _base=$(cfg tunnel-port-base 47100)
+    _span=$(cfg tunnel-port-span 400)
+    printf '%s' "$((_base + (0x$(token_of "$1") % _span)))"
+}
+
+# ------------------------------------------------------------------------------------------------
+# DNS
+# ------------------------------------------------------------------------------------------------
+
+# Short timeouts: this runs on a link that may be a 4G modem having a bad day, and a run that
+# hangs for minutes on a resolver is worse than one that gives up and tries again in 12 hours.
+dig_q() { dig +short +timeout=5 +tries=2 "$@" 2>/dev/null || true; }
+
+invite_name() {
+    _n=$(cfg dns-invite)
+    [ -n "$_n" ] && {
+        printf '%s' "$_n"
+        return
+    }
+    printf '_%s-invite._tcp.%s' "$(cfg dns-service dialout)" "$(cfg dns-domain)"
+}
+
+srv_name() { printf '_%s._tcp.%s' "$(cfg dns-service dialout)" "$(cfg dns-domain)"; }
+
+# Are we wanted? Returns 0 if invited. The record is a TXT whose strings we concatenate, then look
+# for our token or the * wildcard, honouring an optional :<expiry-epoch>.
+invited() {
+    _tok=$1
+    _txt=$(dig_q TXT "$(invite_name)" | tr -d '"' | tr '\n' ' ')
+    [ -n "$_txt" ] || {
+        log "invite: no list published at $(invite_name)"
+        return 1
+    }
+    _now=$(date +%s)
+    for _e in $_txt; do
+        case "$_e" in v=*) continue ;; esac
+        _who=${_e%%:*}
+        _exp=${_e#*:}
+        [ "$_exp" = "$_e" ] && _exp=0
+        case "$_who" in
+        "$_tok" | '*') ;;
+        *) continue ;;
+        esac
+        if [ "$_exp" -gt 0 ] 2>/dev/null && [ "$_exp" -lt "$_now" ]; then
+            log "invite: entry for $_who expired $(( _now - _exp ))s ago"
+            continue
+        fi
+        [ "$_who" = '*' ] && log "invite: open invitation (*)" || log "invite: listed as $_who"
+        return 0
+    done
+    return 1
+}
+
+# SRV -> "host port". Lowest priority wins, then highest weight; in practice there is one record.
+endpoint() {
+    _r=$(dig_q SRV "$(srv_name)" | sort -k1,1n -k2,2nr | head -1)
+    [ -n "$_r" ] || return 1
+    set -- $_r
+    [ $# -ge 4 ] || return 1
+    printf '%s %s' "${4%.}" "$3"
+}
+
+# ------------------------------------------------------------------------------------------------
+# the tunnel
+# ------------------------------------------------------------------------------------------------
+
+state_dir() { printf '%s' "$(cfg client-state-dir /var/lib/dialout-client)"; }
+key_file() { printf '%s/id_dialout' "$(state_dir)"; }
+
+keygen() {
+    _k=$(key_file)
+    mkdir -p "$(state_dir)"
+    chmod 700 "$(state_dir)"
+    if [ ! -f "$_k" ]; then
+        ssh-keygen -q -t ed25519 -N '' -C "dialout:$(cfg name "$(hostname)")" -f "$_k"
+        log "keygen: created $_k"
+    fi
+    cat "$_k.pub"
+}
+
+# Is the tunnel carrying anything? A forwarded session shows up on THIS box as an established
+# connection to our own sshd from loopback -- the ssh client is the one making it. Both ends being
+# loopback is what distinguishes it from someone logged in over the LAN.
+busy() {
+    have ss || return 1
+    ss -tnH state established "( dport = :$(cfg local-port 22) )" 2>/dev/null |
+        awk '$3 ~ /^127\./ && $4 ~ /^127\./ { found = 1 } END { exit !found }'
+}
+
+# ------------------------------------------------------------------------------------------------
+# the link hook
+# ------------------------------------------------------------------------------------------------
+#
+# On a box whose network IS the dial-out -- a 4G modem that is powered down between windows --
+# there is nothing to resolve DNS over until something brings it up. So an optional script is
+# called with "up" before anything else happens and "down" once the tunnel is finished, and its
+# exit status is believed: a failed "up" aborts the run rather than dialing into a dead link.
+#
+# It is guarded by a timeout because the failure mode of a modem script is not "returns an error",
+# it is "sits there" -- and a client wedged on a wwan0 that will never come up is a client that
+# has silently left the fleet.
+#
+# The contract, in full:
+#   $1 is "up" or "down"; exit 0 = success, anything else = failure
+#   it must be idempotent -- "up" on an already-up link succeeds, likewise "down"
+#   "down" runs even if "up" failed, so a half-raised modem still gets torn down
+# See dialout-link.example.
+
+link_run() {
+    _s=$(cfg link-script)
+    [ -n "$_s" ] || return 0
+    [ -x "$_s" ] || {
+        log "link: $_s is not executable"
+        return 1
+    }
+    _lt=$(cfg link-timeout 60)
+    log "link: $1"
+    _lrc=0
+    if have timeout; then
+        timeout "$_lt" "$_s" "$1" || _lrc=$?
+    else
+        "$_s" "$1" || _lrc=$?
+    fi
+    if [ "$_lrc" = 124 ]; then
+        log "link: $1 timed out after ${_lt}s"
+        return 1
+    fi
+    [ "$_lrc" = 0 ] || log "link: $1 failed rc=$_lrc"
+    return "$_lrc"
+}
+
+# ------------------------------------------------------------------------------------------------
+
+dial() {
+    _force=0 _ep='' _idle=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --force) _force=1 ;;
+        --endpoint)
+            _ep=$2
+            shift
+            ;;
+        --idle)
+            _idle=$2
+            shift
+            ;;
+        *) die "dial: unknown option $1" ;;
+        esac
+        shift
+    done
+
+    _name=$(cfg name "$(hostname)")
+    _tok=$(token_of "$_name")
+    _rport=$(cfg tunnel-port "$(port_of "$_name")")
+    _idle=${_idle:-$(cfg idle 1800)}
+    _poll=$(cfg poll 30)
+    _max=$(cfg hold-max 21600)
+
+    have dig || die "dig not found -- apt install dnsutils"
+    have ssh || die "ssh not found -- apt install openssh-client"
+
+    # One cleanup for every way out of here -- normal end, die, signal. It is armed BEFORE the link
+    # is raised so that a kill between "up" and the first log line still tears the modem down.
+    _pid='' _link_up=0
+    cleanup() {
+        [ -n "$_pid" ] && kill "$_pid" 2>/dev/null
+        # idempotent: the normal path calls this explicitly and the trap may fire too, and taking
+        # a modem down twice is at best noise and at worst confuses the script.
+        if [ "$_link_up" = 1 ]; then
+            _link_up=0
+            # || true: this runs from an EXIT trap under set -e, and a modem script that returns
+            # non-zero on teardown must not turn a clean run into a failed one
+            link_run down || true
+        fi
+        return 0
+    }
+    trap 'cleanup' EXIT INT TERM
+
+    # 0. bring the link up, if this box needs that doing. Before the invite check, because on a
+    #    modem box there is no DNS to check the invite over until this has run.
+    if [ -n "$(cfg link-script)" ]; then
+        _link_up=1
+        link_run up || die "link: up failed -- not dialing"
+    fi
+
+    # 1. invited? Cheapest question, asked first, and the usual answer is no.
+    _watch_invite=0
+    if [ "$_force" = 0 ] && [ "$(cfg require-invite 1)" = 1 ]; then
+        [ -n "$(cfg dns-domain)" ] || die "dns-domain not set (and require-invite=1)"
+        invited "$_tok" || {
+            log "not invited ($_name/$_tok) -- nothing to do"
+            exit 0
+        }
+        _watch_invite=1
+    fi
+
+    # 2. where?
+    if [ -z "$_ep" ]; then
+        [ -n "$(cfg dns-domain)" ] || die "dns-domain not set and no --endpoint given"
+        _r=$(endpoint) || {
+            log "no SRV record at $(srv_name) -- giving up until next run"
+            exit 0
+        }
+        set -- $_r
+        _host=$1 _port=$2
+    else
+        _host=${_ep%:*} _port=${_ep##*:}
+        [ "$_host" != "$_port" ] || _port=$(cfg port-external 47022)
+    fi
+
+    _key=$(key_file)
+    [ -f "$_key" ] || die "no key at $_key -- run '$SELF keygen' and enrol the pubkey on the server"
+
+    log "dial: $_name -> $_host:$_port, reverse port $_rport, idle $_idle s"
+
+    # 3. connect. ExitOnForwardFailure is the important one: if the port is already held (a run
+    #    that has not finished, or a name collision) we want to know, not to sit there connected
+    #    with no tunnel behind us believing all is well.
+    ssh -N -T \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+        -o StrictHostKeyChecking=accept-new \
+        -o UserKnownHostsFile="$(state_dir)/known_hosts" \
+        -o IdentitiesOnly=yes -i "$_key" \
+        -o ConnectTimeout="$(cfg connect-timeout 20)" \
+        -o BatchMode=yes \
+        -p "$_port" \
+        -R "127.0.0.1:$_rport:127.0.0.1:$(cfg local-port 22)" \
+        "$(cfg ssh-user dialoutd)@$_host" &
+    _pid=$!
+
+    # 4. hold. Three ways this ends: the invite is withdrawn, nothing has used the tunnel for
+    #    `idle`, or hold-max. None of them interrupts a session in progress -- the idle clock only
+    #    advances while the tunnel is quiet, and a withdrawn invite waits for the session to close.
+    _recheck=$(cfg invite-recheck 60)
+    _t0=$(date +%s)
+    _last=$_t0
+    _seen=0
+    _revoked=0
+    _recheck_at=$((_t0 + _recheck))
+    while kill -0 "$_pid" 2>/dev/null; do
+        sleep "$_poll"
+        _now=$(date +%s)
+
+        _busy=0
+        if busy; then _busy=1; fi
+        if [ "$_busy" = 1 ]; then
+            if [ "$_seen" = 0 ]; then log "session opened through the tunnel"; fi
+            _seen=1
+            _last=$_now
+        elif [ "$_seen" = 1 ]; then
+            log "session closed"
+            _seen=2
+        fi
+
+        # The invite can be withdrawn while we hold -- Ctrl-C out of `dialout-server wait` is
+        # exactly that -- and a tunnel nobody is waiting on should not sit there for the rest of
+        # `idle`. Rechecked on its own clock, not every poll: it is a DNS query, and the record's
+        # TTL is 60s, so asking faster than that only re-reads the same cached answer.
+        if [ "$_revoked" = 0 ] && [ "$_watch_invite" = 1 ] && [ "$_now" -ge "$_recheck_at" ]; then
+            _recheck_at=$((_now + _recheck))
+            if ! invited "$_tok" >/dev/null 2>&1; then
+                # A withdrawn record and a resolver that has stopped answering look identical from
+                # here -- both are an empty reply. So confirm DNS is alive at all before acting:
+                # dropping a working tunnel because of a hiccup is much the worse failure, and the
+                # idle and hold-max clocks are still there to end the session eventually.
+                if endpoint >/dev/null 2>&1; then
+                    _revoked=1
+                    if [ "$_busy" = 1 ]; then
+                        log "invite withdrawn -- hanging up when this session ends"
+                    else
+                        log "invite withdrawn -- hanging up"
+                    fi
+                else
+                    log "invite recheck inconclusive (dns not answering) -- holding"
+                fi
+            fi
+        fi
+        if [ "$_revoked" = 1 ] && [ "$_busy" = 0 ]; then break; fi
+
+        if [ $((_now - _last)) -ge "$_idle" ]; then
+            log "idle $_idle s -- hanging up"
+            break
+        fi
+        if [ $((_now - _t0)) -ge "$_max" ]; then
+            log "hold-max $_max s reached -- hanging up"
+            break
+        fi
+    done
+
+    if kill -0 "$_pid" 2>/dev/null; then
+        kill "$_pid" 2>/dev/null || true
+        wait "$_pid" 2>/dev/null || true
+    else
+        wait "$_pid" 2>/dev/null || _rc=$?
+        if [ "${_rc:-0}" != 0 ]; then
+            log "ssh exited rc=${_rc}"
+            # 255 straight away is nearly always ExitOnForwardFailure: the server side of the port
+            # is still held by a run that has not idled out yet. Say so, rather than leaving
+            # "remote port forwarding failed" to be interpreted as a broken config.
+            [ "${_rc}" = 255 ] && [ $(($(date +%s) - _t0)) -lt 15 ] &&
+                log "hint: reverse port $_rport may still be held on the server by an earlier run -- it frees when that one idles out"
+        fi
+    fi
+    log "dial: done after $(($(date +%s) - _t0))s"
+    _pid=''
+    cleanup
+    trap - EXIT INT TERM
+}
+
+# ------------------------------------------------------------------------------------------------
+
+check() {
+    _name=$(cfg name "$(hostname)")
+    _tok=$(token_of "$_name")
+    printf 'name          %s\n' "$_name"
+    printf 'token         %s\n' "$_tok"
+    printf 'tunnel port   %s\n' "$(cfg tunnel-port "$(port_of "$_name")")"
+    if [ -z "$(cfg dns-domain)" ]; then
+        printf 'dns           (dns-domain not set -- discovery off, --endpoint only)\n'
+        printf 'key           %s\n' "$([ -f "$(key_file)" ] && key_file || echo '(none -- run keygen)')"
+        return
+    fi
+    printf 'invite list   %s\n' "$(invite_name)"
+    printf 'srv record    %s\n' "$(srv_name)"
+    if _r=$(endpoint); then
+        set -- $_r
+        printf 'endpoint      %s:%s\n' "$1" "$2"
+    else
+        printf 'endpoint      (no SRV record)\n'
+    fi
+    if invited "$_tok" 2>/dev/null; then printf 'invited       yes\n'; else printf 'invited       no\n'; fi
+    printf 'key           %s\n' "$([ -f "$(key_file)" ] && key_file || echo '(none -- run keygen)')"
+}
+
+status() {
+    check
+    printf '\n'
+    systemctl status dialout-client.timer --no-pager 2>/dev/null | head -12 || printf 'timer not installed\n'
+}
+
+install_units() {
+    _interval=12h
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --interval)
+            _interval=$2
+            shift
+            ;;
+        *) die "install: unknown option $1" ;;
+        esac
+        shift
+    done
+    [ "$(id -u)" = 0 ] || die "install: needs root"
+    for _u in dialout-client.service dialout-client.timer; do
+        sed -e "s#@BIN@#$HERE/$SELF#g" -e "s#@INTERVAL@#$_interval#g" "$HERE/systemd/$_u" >"/etc/systemd/system/$_u"
+    done
+    systemctl daemon-reload
+    systemctl enable --now dialout-client.timer
+    log "installed: dialout-client.timer every $_interval (plus one shortly after boot)"
+    systemctl list-timers dialout-client.timer --no-pager 2>/dev/null || true
+}
+
+uninstall_units() {
+    [ "$(id -u)" = 0 ] || die "uninstall: needs root"
+    systemctl disable --now dialout-client.timer 2>/dev/null || true
+    rm -f /etc/systemd/system/dialout-client.service /etc/systemd/system/dialout-client.timer
+    systemctl daemon-reload
+    log "uninstalled"
+}
+
+# ------------------------------------------------------------------------------------------------
+
+CFG=''
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --config)
+        CFG=$2
+        shift
+        ;;
+    *) break ;;
+    esac
+    shift
+done
+if [ -n "$CFG" ]; then cfg_load "$CFG"; else cfg_load "$HERE/dialout.cfg" "$HERE/dialout.$(hostname).cfg"; fi
+
+case "${1:-dial}" in
+dial)
+    shift 2>/dev/null || true
+    dial "$@"
+    ;;
+check)
+    check
+    ;;
+keygen)
+    keygen
+    ;;
+status)
+    status
+    ;;
+install)
+    shift
+    install_units "$@"
+    ;;
+uninstall)
+    uninstall_units
+    ;;
+-h | --help | help)
+    # to the first blank line, not a hardcoded line count -- the header grows and a fixed range
+    # silently starts printing the code below it
+    sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+*) die "unknown command '$1' (try --help)" ;;
+esac

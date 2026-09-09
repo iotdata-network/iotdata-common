@@ -2,8 +2,8 @@
 
 # --------------------------------------------------------------------------------------
 
-"""esp32-deploy: flash a pre-built ESP-IDF image and/or monitor an ESP32 over USB
-serial, on a host with NO IDF toolchain.
+"""esp32-tool: work with an ESP32 over USB serial from a host with NO IDF toolchain —
+flash it, watch it, drive its CLI, and pull its diagnostics off it.
 
 Built for the split workflow: build on a fast toolchain host (e.g. workshop), then
 flash and watch on the target host (e.g. iotdata-tst-3) where the boards are plugged
@@ -29,25 +29,25 @@ so this works for any project without hardcoding offsets.
 
 Examples:
     # board on ttyACM0, artifacts already local (shared FS, or copied over):
-    esp32-deploy deploy -p /dev/ttyACM0 -b ../simulator_sensor_lora_esp32/build
+    esp32-tool deploy -p /dev/ttyACM0 -b ../simulator_sensor_lora_esp32/build
 
     # pull the artifacts off the build host first, then flash + monitor:
-    esp32-deploy deploy -p /dev/ttyACM1 \
+    esp32-tool deploy -p /dev/ttyACM1 \
         --pull workshop:/opt/iotdata/src/iotdata-example/simulator_sensor_lora_esp32/build
 
     # watch a running board and type commands to its CLI (help / vers / stat / logl):
-    esp32-deploy monitor -p /dev/ttyACM0
+    esp32-tool monitor -p /dev/ttyACM0
 
     # one-shot: ask a running board for its version, print just the response:
-    esp32-deploy command -p /dev/ttyACM0 vers
+    esp32-tool command -p /dev/ttyACM0 vers
 
     # flash only, no monitor:
-    esp32-deploy flash -p /dev/ttyACM0 -b ../relay/build
+    esp32-tool flash -p /dev/ttyACM0 -b ../relay/build
 
     # pull weeks of field diagnostics off a node (flush first: the read resets it):
-    esp32-deploy command -p /dev/ttyACM0 "diag flush"
-    esp32-deploy diag extract -p /dev/ttyACM0 --raw diag.bin --out diag.csv
-    esp32-deploy diag decode diag.bin          # offline, re-decode an image pulled earlier
+    esp32-tool command -p /dev/ttyACM0 "diag flush"
+    esp32-tool diag extract -p /dev/ttyACM0 --raw diag.bin --out diag.csv
+    esp32-tool diag decode diag.bin          # offline, re-decode an image pulled earlier
 
 With two boards attached, ttyACM numbering can move across a reset/re-enumerate; to
 pin a physical board use a stable path, e.g. -p /dev/serial/by-path/<...> (see
@@ -364,7 +364,7 @@ def esptool_erase(esptool, port, baud, offset, size):
 
 def read_partition_table(esptool, port, baud):
     """Pull + parse the device's partition table. Returns [(label, ptype, subtype, offset, size)]."""
-    tmp = os.path.join(tempfile.gettempdir(), f"esp32-deploy-parttab-{os.getpid()}.bin")
+    tmp = os.path.join(tempfile.gettempdir(), f"esp32-tool-parttab-{os.getpid()}.bin")
     try:
         if not esptool_read(esptool, port, baud, PART_TABLE_OFFSET, PART_TABLE_SIZE, tmp):
             return []
@@ -441,7 +441,7 @@ def do_diag_extract(port, partition, baud, raw_path, csv_path, offset=None, size
             die(f"no partition named {partition!r} on this device; found: {names}")
         _, _, _, offset, size = match[0]
         verbose(f"partition {partition!r} at {offset:#x}, {size} bytes")
-    keep = raw_path or os.path.join(tempfile.gettempdir(), f"esp32-deploy-diag-{os.getpid()}.bin")
+    keep = raw_path or os.path.join(tempfile.gettempdir(), f"esp32-tool-diag-{os.getpid()}.bin")
     # progress goes to stderr so `diag extract` with no --out can be piped as clean CSV
     print(f"reading {partition} ({size} bytes at {offset:#x}) from {port} — this resets the device", file=sys.stderr)
     try:
@@ -495,8 +495,8 @@ def do_diag_decode(image_path, csv_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="esp32-deploy",
-        description="Flash a pre-built ESP-IDF image and/or monitor an ESP32 over USB serial (no IDF toolchain).",
+        prog="esp32-tool",
+        description="Flash, monitor, drive and diagnose an ESP32 over USB serial (no IDF toolchain).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -551,7 +551,7 @@ def main():
         VERBOSE = args.verbose
         if args.action == "decode":
             if not args.image:
-                die("diag decode needs an image file (e.g. esp32-deploy diag decode diag.bin)")
+                die("diag decode needs an image file (e.g. esp32-tool diag decode diag.bin)")
             sys.exit(do_diag_decode(args.image, args.out))
         if not os.path.exists(args.port):
             die(f"{args.port} not found")

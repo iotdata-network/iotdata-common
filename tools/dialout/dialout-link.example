@@ -1,0 +1,78 @@
+#!/bin/sh
+#
+# dialout-link.example -- template for the client's link-script hook.
+#
+# Copy it, make it executable, and point link-script= at it in dialout.<hostname>.cfg. It is only
+# needed on a box whose network IS the dial-out: a 4G modem powered down between windows. A box on
+# ethernet or wifi needs no link script at all -- leave link-script empty, which is the default.
+#
+# Contract:
+#   $1 is "up" or "down"
+#   exit 0 = success, anything else = failure
+#   a failed "up" aborts the run: the client will not dial into a dead link
+#   it MUST be idempotent -- "up" on an already-up link succeeds, likewise "down"
+#   "down" runs even if "up" failed, so a half-raised modem still gets torn down
+#   the client kills it after link-timeout seconds (default 60) and treats that as failure
+#
+# Keep it quick and keep it quiet: it runs on a timer, unattended, on a box nobody can reach.
+
+set -eu
+
+IFACE=wwan0
+APN=internet
+WAIT=45 # seconds to wait for an address; stay under the client's link-timeout
+
+log() { printf '%s dialout-link: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
+
+# has the interface got a v4 address yet?
+have_addr() { ip -4 -br addr show "$IFACE" 2>/dev/null | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; }
+
+case "${1:-}" in
+up)
+    # Idempotent: if it is already up, say so and stop. Do NOT tear down and re-raise -- the box
+    # may be on ethernet today, or a previous run may still be finishing.
+    if have_addr; then
+        log "$IFACE already up"
+        exit 0
+    fi
+    log "raising $IFACE (apn $APN)"
+
+    # --- replace this block with whatever your modem actually needs ---
+    # ModemManager:   mmcli -m 0 --simple-connect="apn=$APN" && dhclient "$IFACE"
+    # qmi:            qmicli -d /dev/cdc-wdm0 --wds-start-network="apn=$APN,ip-type=4" --client-no-release-cid
+    # NetworkManager: nmcli connection up "$APN"
+    # systemd-networkd / a wwan .network unit: ip link set "$IFACE" up
+    false # <- nothing configured yet; make this a real command
+    # ------------------------------------------------------------------
+
+    _i=0
+    while [ "$_i" -lt "$WAIT" ]; do
+        if have_addr; then
+            log "$IFACE up after ${_i}s"
+            exit 0
+        fi
+        sleep 1
+        _i=$((_i + 1))
+    done
+    log "$IFACE did not come up within ${WAIT}s"
+    exit 1
+    ;;
+down)
+    # Best effort, and idempotent. Never fail here in a way that leaves the modem powered: the
+    # whole reason this exists is to stop it drawing current between windows.
+    log "lowering $IFACE"
+
+    # --- replace to match "up" ---
+    # mmcli -m 0 --simple-disconnect
+    # qmicli -d /dev/cdc-wdm0 --wds-stop-network=... 
+    # nmcli connection down "$APN"
+    true
+    # -----------------------------
+
+    exit 0
+    ;;
+*)
+    log "usage: $0 up|down"
+    exit 2
+    ;;
+esac

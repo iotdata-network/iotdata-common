@@ -1,0 +1,29 @@
+# Installed by `dialout-client install`, which substitutes @BIN@. Triggered by dialout-client.timer;
+# run it by hand any time with `systemctl start dialout-client` or just `dialout-client dial`.
+
+[Unit]
+Description=dialout client (phone home and leave a reverse tunnel)
+Documentation=file:/opt/iotdata/src/iotdata-common/tools/dialout/README.md
+After=network-online.target
+Wants=network-online.target
+
+# [Unit], not [Service]: systemd moved the start-rate limiter here and ignores it in [Service].
+StartLimitIntervalSec=30min
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+ExecStart=@BIN@ dial
+
+# A run normally ends in seconds -- two DNS lookups and no invitation. When there IS an invitation
+# it holds the tunnel until idle, which the script itself caps at hold-max; this is only the
+# backstop for an ssh that has wedged in a way ServerAlive did not catch.
+TimeoutStartSec=25200
+
+# The box may be on a modem that is still negotiating, or a resolver that is not up yet. Three
+# tries a minute apart costs nothing and turns a lot of "missed windows" into connections.
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

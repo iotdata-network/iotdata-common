@@ -1,0 +1,32 @@
+# Installed by `dialout-server install`, which substitutes @NODE@ and @BIN@.
+#
+# The unit is a convenience, not the only way to run this: `dialout-server run` in a terminal is
+# the same code path and logs the same lines to stdout. Run it by hand while you are working on a
+# site, install the unit when you want it there without you.
+
+[Unit]
+Description=dialout server (reverse-tunnel rendezvous: dropbear + DNS + UPnP)
+Documentation=file:/opt/iotdata/src/iotdata-common/tools/dialout/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=@NODE@ @BIN@ run
+Restart=always
+RestartSec=10
+
+# It spawns dropbear, which needs to change uid to the dialout account, so this runs as root. The
+# blast radius is bounded by what dropbear is given instead: its own host key, one shell-less
+# account, local forwarding off, root login off.
+User=root
+
+# Nothing here needs to write outside its own state.
+StateDirectory=dialout
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dialout
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

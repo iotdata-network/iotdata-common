@@ -1,0 +1,23 @@
+# Installed by `dialout-client install [--interval 12h]`, which substitutes @INTERVAL@.
+
+[Unit]
+Description=dialout client, every @INTERVAL@
+Documentation=file:/opt/iotdata/src/iotdata-common/tools/dialout/README.md
+
+[Timer]
+# Once shortly after boot -- a box that has just been power-cycled is exactly the box someone is
+# most likely to be waiting for.
+OnBootSec=3min
+OnUnitActiveSec=@INTERVAL@
+
+# A fleet that all dials at the same instant is a self-inflicted thundering herd, and the whole
+# point of a 12-hour window is that the exact minute does not matter.
+RandomizedDelaySec=10min
+AccuracySec=1min
+
+# Catch up on a missed window rather than silently waiting another 12 hours -- the box that was
+# switched off is the one you want to hear from.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
