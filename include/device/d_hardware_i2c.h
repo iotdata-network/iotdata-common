@@ -51,20 +51,25 @@ esp_err_t hw_i2c_start(const gpio_num_t sda, const gpio_num_t scl, const uint32_
 
     _hw_i2c_pins_enable();
 
-    ESP_ERROR_CHECK(i2c_new_master_bus(&(const i2c_master_bus_config_t){
-        .i2c_port = s_i2c_port,
-        .sda_io_num = sda,
-        .scl_io_num = scl,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = false, // not needed internal pullups when we have external
-    }, &s_i2c_bus));
+    ESP_ERROR_CHECK(i2c_new_master_bus(
+        &(const i2c_master_bus_config_t){
+            .i2c_port = s_i2c_port,
+            .sda_io_num = sda,
+            .scl_io_num = scl,
+            .clk_source = I2C_CLK_SRC_DEFAULT,
+            .glitch_ignore_cnt = 7,
+            .flags.enable_internal_pullup = false, // not needed internal pullups when we have external
+        },
+        &s_i2c_bus));
 
-    ESP_GOTO_ON_ERROR(i2c_master_bus_add_device(s_i2c_bus, &(const i2c_device_config_t){
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = dev_addr,
-        .scl_speed_hz = freq_hz,
-    }, &s_i2c_dev), hw_i2c_start_failed, __func__, "i2c_master_bus_add_device (0x%02" PRIX8 ")", dev_addr);
+    ESP_GOTO_ON_ERROR(i2c_master_bus_add_device(s_i2c_bus,
+                                                &(const i2c_device_config_t){
+                                                    .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+                                                    .device_address = dev_addr,
+                                                    .scl_speed_hz = freq_hz,
+                                                },
+                                                &s_i2c_dev),
+                      hw_i2c_start_failed, __func__, "i2c_master_bus_add_device (0x%02" PRIX8 ")", dev_addr);
 
     ESP_LOGD("hw_i2c", "started: sda=%d, scl=%d, freq=%" PRIu32 " addr=0x%02" PRIX8, sda, scl, freq_hz, dev_addr);
 
@@ -120,7 +125,7 @@ void hw_i2c_stop(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_i2c_bus_start(const gpio_num_t sda, const gpio_num_t scl, __attribute__ ((unused)) const uint32_t freq_hz) {
+esp_err_t hw_i2c_bus_start(const gpio_num_t sda, const gpio_num_t scl, __attribute__((unused)) const uint32_t freq_hz) {
     assert(!s_i2c_bus && !s_i2c_dev);
 
     s_i2c_sda = sda;
@@ -129,14 +134,17 @@ esp_err_t hw_i2c_bus_start(const gpio_num_t sda, const gpio_num_t scl, __attribu
 
     _hw_i2c_pins_enable();
 
-    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&(const i2c_master_bus_config_t){
-        .i2c_port = s_i2c_port,
-        .sda_io_num = sda,
-        .scl_io_num = scl,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = false,
-    }, &s_i2c_bus), __func__, "i2c_new_master_bus");
+    ESP_RETURN_ON_ERROR(i2c_new_master_bus(
+                            &(const i2c_master_bus_config_t){
+                                .i2c_port = s_i2c_port,
+                                .sda_io_num = sda,
+                                .scl_io_num = scl,
+                                .clk_source = I2C_CLK_SRC_DEFAULT,
+                                .glitch_ignore_cnt = 7,
+                                .flags.enable_internal_pullup = false,
+                            },
+                            &s_i2c_bus),
+                        __func__, "i2c_new_master_bus");
     ESP_LOGD("hw_i2c", "bus started: sda=%d, scl=%d", sda, scl);
     return ESP_OK;
 }
@@ -164,11 +172,13 @@ esp_err_t hw_i2c_dev_probe(const uint8_t addr) {
 // ------------------------------------------------------------------------------------------------------------------------
 
 esp_err_t hw_i2c_dev_add(const uint8_t addr, i2c_master_dev_handle_t *const out) {
-    return i2c_master_bus_add_device(s_i2c_bus, &(const i2c_device_config_t){
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = addr,
-        .scl_speed_hz = I2C_FREQ_SLOW,
-    }, out);
+    return i2c_master_bus_add_device(s_i2c_bus,
+                                     &(const i2c_device_config_t){
+                                         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+                                         .device_address = addr,
+                                         .scl_speed_hz = I2C_FREQ_SLOW,
+                                     },
+                                     out);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------

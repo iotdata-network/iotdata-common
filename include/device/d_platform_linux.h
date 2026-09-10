@@ -68,14 +68,14 @@
 
 typedef int esp_err_t;
 
-#define ESP_OK                  0
-#define ESP_FAIL                (-1)
-#define ESP_ERR_NO_MEM          0x101
-#define ESP_ERR_INVALID_ARG     0x102
-#define ESP_ERR_INVALID_STATE   0x103
-#define ESP_ERR_INVALID_SIZE    0x104
-#define ESP_ERR_NOT_FOUND       0x105
-#define ESP_ERR_TIMEOUT         0x107
+#define ESP_OK                0
+#define ESP_FAIL              (-1)
+#define ESP_ERR_NO_MEM        0x101
+#define ESP_ERR_INVALID_ARG   0x102
+#define ESP_ERR_INVALID_STATE 0x103
+#define ESP_ERR_INVALID_SIZE  0x104
+#define ESP_ERR_NOT_FOUND     0x105
+#define ESP_ERR_TIMEOUT       0x107
 
 static inline const char *esp_err_to_name(const esp_err_t e) {
     switch (e) {
@@ -108,10 +108,10 @@ static inline const char *esp_err_to_name(const esp_err_t e) {
 // level tags), so driver output is not a second log format in the same file. Otherwise stderr.
 
 #ifndef PRINTF_INFO
-#define PRINTF_INFO(...)  fprintf(stderr, __VA_ARGS__)
+#define PRINTF_INFO(...) fprintf(stderr, __VA_ARGS__)
 #endif
 #ifndef PRINTF_WARN
-#define PRINTF_WARN(...)  fprintf(stderr, __VA_ARGS__)
+#define PRINTF_WARN(...) fprintf(stderr, __VA_ARGS__)
 #endif
 #ifndef PRINTF_ERROR
 #define PRINTF_ERROR(...) fprintf(stderr, __VA_ARGS__)
@@ -349,7 +349,7 @@ static inline esp_err_t hw_uart_start(const gpio_num_t tx, const gpio_num_t rx, 
         return ESP_FAIL;
     }
     cfmakeraw(&tty); /* 8N1, no echo, no translation -- this is a binary protocol */
-    tty.c_cflag &= (tcflag_t)~(PARENB | CSTOPB | CRTSCTS);
+    tty.c_cflag &= (tcflag_t) ~(PARENB | CSTOPB | CRTSCTS);
     tty.c_cflag |= (CS8 | CREAD | CLOCAL);
     tty.c_cc[VMIN] = 0; /* reads never block; poll() does the waiting */
     tty.c_cc[VTIME] = 0;

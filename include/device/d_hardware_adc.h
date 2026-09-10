@@ -33,18 +33,20 @@ static esp_err_t hw_adc_oneshot_start(const adc_unit_t unit, const adc_channel_t
 
     esp_err_t err;
     if ((err = adc_oneshot_config_channel(s_hw_adc.unit, channel, &(const adc_oneshot_chan_cfg_t){ .atten = atten, .bitwidth = bitwidth }))) != ESP_OK) {
-        (void)adc_oneshot_del_unit(s_hw_adc.unit);
-        s_hw_adc.unit = NULL;
-        ESP_LOGE("hw_adc", "adc_oneshot_config_channel: %s", esp_err_to_name(err));
-        return err;
-    }
+            (void)adc_oneshot_del_unit(s_hw_adc.unit);
+            s_hw_adc.unit = NULL;
+            ESP_LOGE("hw_adc", "adc_oneshot_config_channel: %s", esp_err_to_name(err));
+            return err;
+        }
 
-    if (adc_cali_create_scheme_curve_fitting(&(const adc_cali_curve_fitting_config_t){
-        .unit_id = unit,
-        .chan = channel,
-        .atten = atten,
-        .bitwidth = bitwidth,
-    }, &s_hw_adc.cali) != ESP_OK)
+    if (adc_cali_create_scheme_curve_fitting(
+            &(const adc_cali_curve_fitting_config_t){
+                .unit_id = unit,
+                .chan = channel,
+                .atten = atten,
+                .bitwidth = bitwidth,
+            },
+            &s_hw_adc.cali) != ESP_OK)
         s_hw_adc.cali = NULL;
 
     s_hw_adc.channel = channel;

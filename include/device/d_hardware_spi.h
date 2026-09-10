@@ -53,21 +53,26 @@ esp_err_t hw_spi_start(const gpio_num_t mosi, const gpio_num_t clk, const gpio_n
 
     _hw_spi_pins_enable();
 
-    ESP_ERROR_CHECK(spi_bus_initialize(s_spi_port, &(const spi_bus_config_t){
-        .mosi_io_num = mosi,
-        .miso_io_num = GPIO_NUM_NC, // no MISO in this driver
-        .sclk_io_num = clk,
-        .quadwp_io_num = GPIO_NUM_NC,
-        .quadhd_io_num = GPIO_NUM_NC,
-        .max_transfer_sz = max_transfer_size,
-    }, SPI_DMA_CH_AUTO));
+    ESP_ERROR_CHECK(spi_bus_initialize(s_spi_port,
+                                       &(const spi_bus_config_t){
+                                           .mosi_io_num = mosi,
+                                           .miso_io_num = GPIO_NUM_NC, // no MISO in this driver
+                                           .sclk_io_num = clk,
+                                           .quadwp_io_num = GPIO_NUM_NC,
+                                           .quadhd_io_num = GPIO_NUM_NC,
+                                           .max_transfer_sz = max_transfer_size,
+                                       },
+                                       SPI_DMA_CH_AUTO));
 
-    ESP_GOTO_ON_ERROR(spi_bus_add_device(s_spi_port, &(const spi_device_interface_config_t){
-        .clock_speed_hz = SPI_CLK_FREQ_HZ,
-        .mode = 0,          // CPOL=0, CPHA=0
-        .spics_io_num = cs, // CS may not be managed by driver
-        .queue_size = 1,        
-    }, &s_spi_dev), hw_spi_start_failed, __func__, "spi_bus_add_device");
+    ESP_GOTO_ON_ERROR(spi_bus_add_device(s_spi_port,
+                                         &(const spi_device_interface_config_t){
+                                             .clock_speed_hz = SPI_CLK_FREQ_HZ,
+                                             .mode = 0,          // CPOL=0, CPHA=0
+                                             .spics_io_num = cs, // CS may not be managed by driver
+                                             .queue_size = 1,
+                                         },
+                                         &s_spi_dev),
+                      hw_spi_start_failed, __func__, "spi_bus_add_device");
 
     ESP_LOGD("hw_spi", "started: mosi=%d, clk=%d, dc=%d, busy=%d, cs=%d, freq=%d", mosi, clk, dc, busy, cs, SPI_CLK_FREQ_HZ);
 
@@ -82,21 +87,21 @@ hw_spi_start_failed:
 // ------------------------------------------------------------------------------------------------------------------------
 
 esp_err_t hw_spi_cmd(const uint8_t cmd) {
-    hw_gpio_set(s_spi_dc, false);                             // command mode
+    hw_gpio_set(s_spi_dc, false);                                                                   // command mode
     return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = 8, .tx_buffer = &cmd })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
 esp_err_t hw_spi_data(const uint8_t val) {
-    hw_gpio_set(s_spi_dc, true);                              // data mode
+    hw_gpio_set(s_spi_dc, true);                                                                    // data mode
     return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = 8, .tx_buffer = &val })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
 esp_err_t hw_spi_data_bulk(const uint8_t *const data, const size_t len) {
-    hw_gpio_set(s_spi_dc, true);                                    // data mode
+    hw_gpio_set(s_spi_dc, true);                                                                          // data mode
     return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = len * 8, .tx_buffer = data })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
 }
 

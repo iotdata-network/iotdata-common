@@ -55,22 +55,24 @@ esp_err_t hw_uart_start(const gpio_num_t tx, const gpio_num_t rx, const int baud
     ESP_ERROR_CHECK(uart_driver_install(s_uart_port, rx_buf_size, tx_buf_size, 0, NULL, 0));
     s_uart_installed = true;
 
-    ESP_GOTO_ON_ERROR(uart_param_config(s_uart_port, &(const uart_config_t){
-        .baud_rate = baud,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    ESP_GOTO_ON_ERROR(uart_param_config(s_uart_port,
+                                        &(const uart_config_t){
+                                            .baud_rate = baud,
+                                            .data_bits = UART_DATA_8_BITS,
+                                            .parity = UART_PARITY_DISABLE,
+                                            .stop_bits = UART_STOP_BITS_1,
+                                            .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
 #ifdef CONFIG_PM_ENABLE
-        // Under power management the APB clock scales with the CPU (DFS), which corrupts the baud
-        // divider and the peer reads back 0 bytes. XTAL is a fixed clock independent of DFS, so the
-        // UART stays reliable. Only PM builds (e.g. the always-on relay) take this path; every other
-        // consumer keeps UART_SCLK_DEFAULT byte-for-byte.
-        .source_clk = UART_SCLK_XTAL,
+                                            // Under power management the APB clock scales with the CPU (DFS), which corrupts the baud
+                                            // divider and the peer reads back 0 bytes. XTAL is a fixed clock independent of DFS, so the
+                                            // UART stays reliable. Only PM builds (e.g. the always-on relay) take this path; every other
+                                            // consumer keeps UART_SCLK_DEFAULT byte-for-byte.
+                                            .source_clk = UART_SCLK_XTAL,
 #else
-        .source_clk = UART_SCLK_DEFAULT,
+                                            .source_clk = UART_SCLK_DEFAULT,
 #endif
-    }), hw_uart_start_failed, __func__, "uart_param_config");
+                                        }),
+                      hw_uart_start_failed, __func__, "uart_param_config");
     ESP_GOTO_ON_ERROR(uart_set_pin(s_uart_port, tx, rx, GPIO_NUM_NC, GPIO_NUM_NC), hw_uart_start_failed, __func__, "uart_set_pin");
     ESP_GOTO_ON_ERROR(uart_flush_input(s_uart_port), hw_uart_start_failed, __func__, "uart_flush_input");
 

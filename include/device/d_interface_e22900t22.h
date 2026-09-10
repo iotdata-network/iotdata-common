@@ -13,12 +13,7 @@ typedef enum {
     LORA_MODULE_USB = 1,
 } lora_module_t;
 
-typedef enum {
-    LORA_MODE_NORMAL,
-    LORA_MODE_WAKE_ON_RECEIVE,
-    LORA_MODE_CONFIG,
-    LORA_MODE_DEEP_SLEEP
-} lora_mode_t;
+typedef enum { LORA_MODE_NORMAL, LORA_MODE_WAKE_ON_RECEIVE, LORA_MODE_CONFIG, LORA_MODE_DEEP_SLEEP } lora_mode_t;
 
 #define LORA_E22_ADDRESS_DEFAULT            0x0008
 #define LORA_E22_NETWORK_DEFAULT            0x00
@@ -53,7 +48,7 @@ const lora_config_t lora_config_default = {
     .packet_size = LORA_PACKET_SIZE_DEFAULT,
     .listen_before_transmit = LORA_LISTEN_BEFORE_TRANSMIT_DEFAULT,
     .crypt = LORA_CRYPT_DEFAULT,
-    .rssi_packet = true,  /* both default ON: what the hardcoded registers did */
+    .rssi_packet = true, /* both default ON: what the hardcoded registers did */
     .rssi_channel = true,
 };
 
@@ -155,7 +150,7 @@ _RTC_DATA_STRUCT _lora_rtc_t _lora_rtc;
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-#define _LORA_IS_USB() (_LORA_CONFIG(module) == LORA_MODULE_USB)
+#define _LORA_IS_USB()                  (_LORA_CONFIG(module) == LORA_MODULE_USB)
 
 void _lora_pins_enable(void) {
     if (!_LORA_IS_USB()) {
@@ -269,7 +264,7 @@ esp_err_t _lora_mode_set_usb(const lora_mode_t mode) {
 }
 
 esp_err_t _lora_mode_set(const lora_mode_t mode) {
-    return _LORA_IS_USB() ? _lora_mode_set_usb(mode)   : _lora_mode_set_dip(mode);
+    return _LORA_IS_USB() ? _lora_mode_set_usb(mode) : _lora_mode_set_dip(mode);
 }
 
 /*
@@ -362,10 +357,10 @@ esp_err_t _lora_read_product(void) {
 esp_err_t _lora_read_and_update_config(void) {
 
     const uint8_t req_config[_LORA_E22_REG_SIZE_CONFIG_WRITE] = {
-        (uint8_t)((_LORA_CONFIG(e22_address) >> 8)),                                                                                          // [ADDH = 0x00]
-        (uint8_t)((_LORA_CONFIG(e22_address) & 0xFF)),                                                                                        // [ADDL = 0x08]
-        _LORA_CONFIG(e22_network),                                                                                                            // [NETID = 0x00]
-        0x60 | _LORA_E22_CONFIG_AIR_DATA_RATE(_LORA_CONFIG(air_data_rate)),                                                             // REG0: 0x60 = UART 9600/8N1, [air rate]
+        (uint8_t)((_LORA_CONFIG(e22_address) >> 8)),                        // [ADDH = 0x00]
+        (uint8_t)((_LORA_CONFIG(e22_address) & 0xFF)),                      // [ADDL = 0x08]
+        _LORA_CONFIG(e22_network),                                          // [NETID = 0x00]
+        0x60 | _LORA_E22_CONFIG_AIR_DATA_RATE(_LORA_CONFIG(air_data_rate)), // REG0: 0x60 = UART 9600/8N1, [air rate]
         /*
          * REG1: packet_size (7:6), rssi_channel (5), reserved (4:3), switch_config_serial (2),
          *       transmit_power (1:0)
@@ -383,10 +378,10 @@ esp_err_t _lora_read_and_update_config(void) {
          * field here.
          */
         (uint8_t)((_LORA_IS_USB() ? 0x04 : 0) | (_LORA_CONFIG(rssi_channel) ? 0x20 : 0) | _LORA_E22_CONFIG_PACKET_SIZE(_LORA_CONFIG(packet_size)) | _LORA_E22_CONFIG_TRANSMIT_POWER(_LORA_CONFIG(transmit_power))),
-        _LORA_CONFIG(channel),                                                                                                                // [CH = 10 / 860.125 MHz]
+        _LORA_CONFIG(channel),                                                                                                 // [CH = 10 / 860.125 MHz]
         (uint8_t)((_LORA_CONFIG(rssi_packet) ? 0x80 : 0) | 0x03 | _LORA_E22_CONFIG_LBT(_LORA_CONFIG(listen_before_transmit))), // REG3: [RSSI packet], transparent, [LBT], WOR 2000ms
-        (uint8_t)((_LORA_CONFIG(crypt) >> 8)),                                                                                                // [CRYPT_H = 0x00]
-        (uint8_t)((_LORA_CONFIG(crypt) & 0xFF)),                                                                                              // [CRYPT_L = 0x00]
+        (uint8_t)((_LORA_CONFIG(crypt) >> 8)),                                                                                 // [CRYPT_H = 0x00]
+        (uint8_t)((_LORA_CONFIG(crypt) & 0xFF)),                                                                               // [CRYPT_L = 0x00]
     };
 
     uint8_t dev_config[_LORA_E22_REG_SIZE_CONFIG_READ];

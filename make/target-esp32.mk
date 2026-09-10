@@ -119,4 +119,4 @@ fullclean:
 	# re-seeds it from common (+ the per-host file), picking up any baseline change.
 	rm -f $(SDKCONFIG_DEFAULTS) sdkconfig sdkconfig.old
 format:
-	clang-format-19 -i $(SOURCES)
+	clang-format-19 -i $(SOURCES_TARGET)
