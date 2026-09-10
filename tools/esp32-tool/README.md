@@ -40,6 +40,19 @@ esp32-tool deploy -p /dev/ttyACM1 \
     --pull workshop:/opt/iotdata/src/iotdata-example/simulator_sensor_lora_esp32/build
 ```
 
+## Boards that sleep
+
+A board that deep-sleeps between cycles is only enumerated for the few seconds it is awake, so
+`/dev/ttyACM0` mostly does not exist and the flash window is easy to miss — losing it costs a whole
+sleep interval. **`-w` waits for the port** instead of failing, on every subcommand that uses one:
+
+```sh
+esp32-tool deploy -p /dev/ttyACM0 -w      # sit until it wakes, flash it, then monitor
+```
+
+The build dir is resolved (and `--pull` done) *before* the wait, so the window is spent flashing
+rather than on setup. `monitor` already survives the re-enumeration on its own.
+
 ## Driving the device CLI
 
 `command` issues one command and prints only its response — the C-tagged lines — with log noise
