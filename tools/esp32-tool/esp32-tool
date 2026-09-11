@@ -101,12 +101,47 @@ LOG_RE = re.compile(r"^[CIDEW] \(\d+\) ")
 CMD_RE = re.compile(r"^C \(\d+\) (.*)$")
 COMMAND_REQUEST = "COMMAND:REQUEST"
 
+# A transcript of a monitor session. Written alongside the terminal output, never instead of it,
+# because the point is to leave a run going and read it afterwards -- an overnight relay soak, a
+# fault that takes hours to recur. Lines carry a wall-clock stamp so two boards' logs (and a
+# gateway's) can be lined up against each other; the device's own "(3652885)" is uptime, which
+# cannot be compared across boards.
+_log_fh = None
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+def log_open(spec, port):
+    """Open the transcript for `spec` and return its path (None when not logging).
+
+    A timestamp is inserted before the extension -- `-l relay.log` writes `relay-20260911-121530.log`
+    -- so a re-run never appends to, or overwrites, the run you are still reading. Give a directory
+    (or a path ending in /) to get `esp32-<stamp>.log` inside it."""
+    global _log_fh
+    if not spec:
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    if spec.endswith(os.sep) or os.path.isdir(spec):
+        path = os.path.join(spec, f"esp32-{stamp}.log")
+    else:
+        root, ext = os.path.splitext(spec)
+        path = f"{root}-{stamp}{ext or '.log'}"
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    _log_fh = open(path, "a", buffering=1)  # line buffered: readable with tail -f while it runs
+    _log_fh.write(f"# esp32-tool monitor {port} started {time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n")
+    return path
+
+def log_line(text):
+    if _log_fh is not None:
+        _log_fh.write(f"{time.strftime('%H:%M:%S')} {_ANSI_RE.sub('', text)}\n")
+
 def print_line(line):
     match = LOG_RE.match(line)
     if match and line[0] in COLORS:
         print(f"{COLORS[line[0]]}{line}{RESET}")
     else:
         print(line)
+    log_line(line)
 
 def wait_for_port(port, timeout=None):
     """Block until `port` exists. Returns True if it appeared, False on timeout.
@@ -149,8 +184,10 @@ def monitor(port, command=None, reset=False):
     while True:
         if not first_connect:
             print(f"{RED}--- DEVICE DISCONNECTED{RESET}", flush=True)
+            log_line("--- DEVICE DISCONNECTED")
             wait_for_port(port)
             print(f"\n{RED}--- DEVICE RECONNECTED{RESET}", flush=True)
+            log_line("--- DEVICE RECONNECTED")
             buf = b""
         try:
             with serial.Serial(port, 115200, timeout=0) as s:
@@ -534,10 +571,12 @@ def main():
     add_common(p_flash, build=True)
     p_mon = sub.add_parser("monitor", help="print the serial console (interactive; -r resets first)")
     add_common(p_mon)
+    p_mon.add_argument("-l", "--log", metavar="FILE", default=None, help="also write the console to FILE, timestamp-suffixed (relay.log -> relay-20260911-121530.log; a directory gets esp32-<stamp>.log)")
     p_mon.add_argument("-r", "--reset", action="store_true", help="reset the device on connect (off by default)")
     p_mon.add_argument("command", nargs="?", default=None, help="command string to inject after boot")
     p_dep = sub.add_parser("deploy", help="flash, then monitor")
     add_common(p_dep, build=True)
+    p_dep.add_argument("-l", "--log", metavar="FILE", default=None, help="also write the console to FILE, timestamp-suffixed (relay.log -> relay-20260911-121530.log; a directory gets esp32-<stamp>.log)")
     p_dep.add_argument("command", nargs="?", default=None, help="command string to inject after boot")
     p_diag = sub.add_parser("diag", help="pull + decode the blackbox diagnostics partition")
     add_common(p_diag)
@@ -563,6 +602,11 @@ def main():
         require_port(args)
         do_flash(args.port, build, args.baud)
         return
+    if args.cmd in ("monitor", "deploy"):
+        logged = log_open(getattr(args, "log", None), args.port)
+        if logged:
+            print(f"{CYAN}--- logging to {logged}{RESET}", flush=True)
+
     if args.cmd == "monitor":
         require_port(args)
         try:

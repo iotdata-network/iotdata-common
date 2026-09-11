@@ -36,6 +36,7 @@ typedef struct {
     uint16_t crypt;
     bool rssi_packet;
     bool rssi_channel;
+    bool host_sleeps;
 } lora_config_t;
 
 const lora_config_t lora_config_default = {
@@ -50,6 +51,7 @@ const lora_config_t lora_config_default = {
     .crypt = LORA_CRYPT_DEFAULT,
     .rssi_packet = true, /* both default ON: what the hardcoded registers did */
     .rssi_channel = true,
+    .host_sleeps = true, /* the battery case is the default: an always-on host opts out */
 };
 
 static inline uint8_t _lora_e22_air_data_rate(uint16_t rate) {
@@ -90,10 +92,6 @@ static inline uint8_t _lora_e22_air_data_rate(uint16_t rate) {
  * the dongle is ready gets no response at all, not an error. The only available substitute is
  * time, which is what the 50ms `usleep` marked "yuck" in the reference serial_linux.h was actually
  * buying: it sat before every read and every write.
- *
- * Observed without it: the mode switch and the first config read succeed, then product-read and
- * config-write return 0 bytes -- every command that follows a *successful* one too closely is
- * simply not heard, while one that happens to follow a timeout works fine.
  */
 #define _LORA_USB_SETTLE_MS                50
 #define _LORA_SETUP_DELAY_MS               100
@@ -110,7 +108,12 @@ static inline uint8_t _lora_e22_air_data_rate(uint16_t rate) {
    then sends the echo. Observed at ~3s on a USB dongle, i.e. right on the general command budget,
    so it gets its own. */
 #define _LORA_CMD_TIMEOUT_SAVE_MS          8000
-#define _LORA_TRANSMIT_WAIT_MS             1000
+/*
+ * How long to wait for AUX to say the module has drained -- see _lora_transmit_wait_ms(). These
+ * bound a value derived from the configured air rate rather than replacing it.
+ */
+#define _LORA_TRANSMIT_WAIT_MIN_MS         1000  /* the fast rates make the arithmetic tiny */
+#define _LORA_TRANSMIT_WAIT_MAX_MS         20000 /* beyond this the module is not merely busy */
 #define _LORA_SLEEP_DELAY_MS               5
 #define _LORA_TRANSMIT_DELAY_MS            30000
 #define _LORA_SAVE_DELAY_MS                100
@@ -124,6 +127,8 @@ static inline uint8_t _lora_e22_air_data_rate(uint16_t rate) {
 #define _LORA_E22_REG_SIZE_CONFIG_WRITE    9
 #define _LORA_E22_REG_SIZE_PRODUCT_READ    7
 #define _LORA_E22_CMD_SIZE_HEADER          3
+
+#define _LORA_E22_REG1_OFFSET              4 /* ADDH ADDL NETID REG0 [REG1] CH REG3 ... */
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -151,6 +156,33 @@ _RTC_DATA_STRUCT _lora_rtc_t _lora_rtc;
 // ------------------------------------------------------------------------------------------------------------------------
 
 #define _LORA_IS_USB()                  (_LORA_CONFIG(module) == LORA_MODULE_USB)
+
+/*
+ * The AUX wait has to be DERIVED, not fixed.
+ *
+ * AUX stays low while the module still holds anything, so the worst case is the air time of what
+ * it is holding -- and air time scales with the configured rate. A full 240-byte packet is 800ms
+ * at 2.4kbps and 6.4 SECONDS at 0.3kbps, so no single constant serves both: the 1000ms this
+ * replaces was nearly right at 2.4kbps and wrong by more than 6x below it.
+ *
+ * Budget: the air time of a full packet, doubled. The doubling covers the two things that make a
+ * write wait longer than its own frame -- one frame already queued ahead of it, and
+ * listen-before-transmit deferring the start while the channel is busy. Both happen together on a
+ * mesh under load, which is where the fixed value failed: a relay's forward retries filled the
+ * module and the write gave up after a second, reporting an error for ordinary back-pressure.
+ *
+ * Only DIP modules reach this: lora_is_ready() is unconditionally true on USB, which has no AUX.
+ */
+static inline uint32_t _lora_transmit_wait_ms(void) {
+    const uint16_t bps = _LORA_CONFIG(air_data_rate);
+    if (bps == 0)
+        return _LORA_TRANSMIT_WAIT_MIN_MS;
+    const uint32_t air_ms = ((uint32_t)LORA_PACKET_SIZE_MAX * 8u * 1000u) / (uint32_t)bps;
+    const uint32_t budget = air_ms * 2u;
+    if (budget < _LORA_TRANSMIT_WAIT_MIN_MS)
+        return _LORA_TRANSMIT_WAIT_MIN_MS;
+    return budget > _LORA_TRANSMIT_WAIT_MAX_MS ? _LORA_TRANSMIT_WAIT_MAX_MS : budget;
+}
 
 void _lora_pins_enable(void) {
     if (!_LORA_IS_USB()) {
@@ -193,16 +225,22 @@ D_WAIT_READY_FUNC(lora_wait_ready, lora_is_ready, _LORA_READY_DELAY_MS, true, __
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static int _lora_cmd_xfer_to(const uint8_t *const cmd, const size_t cmd_len, uint8_t *const res, const size_t res_len, const int timeout_ms) {
+static bool _lora_cmd_send(const uint8_t *const cmd, const size_t cmd_len) {
     _lora_settle();
-    if (!lora_wait_ready(_LORA_TRANSMIT_WAIT_MS))
-        return -1;
+    if (!lora_wait_ready(_lora_transmit_wait_ms()))
+        return false;
     if (hw_uart_flush() != ESP_OK)
-        return -1;
+        return false;
     if (hw_uart_write(cmd, cmd_len) != (int)cmd_len)
-        return -1;
+        return false;
     _lora_settle();
-    if (!lora_wait_ready(_LORA_TRANSMIT_WAIT_MS))
+    return true;
+}
+
+static int _lora_cmd_xfer_to(const uint8_t *const cmd, const size_t cmd_len, uint8_t *const res, const size_t res_len, const int timeout_ms) {
+    if (!_lora_cmd_send(cmd, cmd_len))
+        return -1;
+    if (!lora_wait_ready(_lora_transmit_wait_ms()))
         return -1;
     return hw_uart_read(res, res_len, timeout_ms);
 }
@@ -239,29 +277,41 @@ esp_err_t _lora_mode_set_usb(const lora_mode_t mode) {
     else
         mode_byte = 0x03; // LORA_MODE_DEEP_SLEEP
     const uint8_t cmd[] = { 0xC0, 0xC1, 0xC2, 0xC3, 0x02, mode_byte };
-    uint8_t res[sizeof(cmd)];
-    const int want = (int)sizeof(cmd) - 1;
-    const int n = _lora_cmd_xfer(cmd, sizeof(cmd), res, (size_t)want);
-    if (n == 3 && res[0] == 0xFF && res[1] == 0xFF && res[2] == 0xFF) {
-        /*
-         * WARN, not DEBUG, and read the message carefully before believing it.
-         *
-         * FF FF FF is documented nowhere. The reference implementation calls it "already appears to
-         * be in required mode, will accept" and returns success -- and that reading cost real
-         * debugging time, because it is at least equally consistent with a plain NACK. Observed:
-         * with REG1 bit 2 (switch-config-serial) clear, EVERY mode command answers FF FF FF while
-         * the module stays put, config reads keep working, and data writes come back as FF FF FF
-         * too. Nothing looks broken; nothing works.
-         *
-         * So it is accepted as success (the module may genuinely be in the mode we asked for) but
-         * it is now audible. If you see it more than occasionally, suspect bit 2.
-         */
-        ESP_LOGW(__tag_device_e22900t22, "mode set (usb): mode %d not confirmed (FF FF FF) -- accepted, but check REG1 bit 2 if this repeats", (int)mode);
-        return ESP_OK;
+    if (mode == LORA_MODE_DEEP_SLEEP) {
+        ESP_RETURN_ON_FALSE(_lora_cmd_send(cmd, sizeof(cmd)), ESP_FAIL, __tag_device_e22900t22, "mode set (usb): sleep command not written");
+    } else {
+        uint8_t res[sizeof(cmd)];
+        const int want = (int)sizeof(cmd) - 1;
+        const int n = _lora_cmd_xfer(cmd, sizeof(cmd), res, (size_t)want);
+        if (n == 3 && res[0] == 0xFF && res[1] == 0xFF && res[2] == 0xFF) {
+            /*
+            * WARN, not DEBUG, and read the message carefully before believing it.
+            *
+            * FF FF FF is documented nowhere. The reference implementation calls it "already appears to
+            * be in required mode, will accept" and returns success -- and that reading cost real
+            * debugging time, because it is at least equally consistent with a plain NACK. Observed
+            * with REG1 bit 2 (switch-config-serial) CLEAR: every mode command answers FF FF FF while
+            * the module stays put, config reads keep working, and data writes come back as FF FF FF
+            * too. Nothing looks broken; nothing works.
+            *
+            * It is NOT on its own evidence that bit 2 is clear -- a deep-sleep command answers this
+            * way with bit 2 perfectly set, which is why that mode no longer reaches here at all.
+            *
+            * So it is accepted as success (the module may genuinely be in the mode we asked for) but
+            * it is now audible. If you see it for NORMAL or CONFIG, read the REG1 value the setup
+            * logs and check bit 2 rather than guessing.
+            */
+            ESP_LOGW(__tag_device_e22900t22, "mode set (usb): mode %d not confirmed (FF FF FF) -- accepted, but check the REG1 value if this repeats", (int)mode);
+            return ESP_OK;
+        }
+        ESP_RETURN_ON_FALSE(n >= want, ESP_FAIL, __tag_device_e22900t22, "mode set (usb): got %d bytes, expected %d", n, want);
     }
-    ESP_RETURN_ON_FALSE(n >= want, ESP_FAIL, __tag_device_e22900t22, "mode set (usb): got %d bytes, expected %d", n, want);
     return ESP_OK;
 }
+
+/* Only meaningful when the host does not sleep: then setup leaves the link up and start has
+   nothing to do. A sleeping host loses statics anyway, which is what _lora_rtc is for. */
+static bool s_lora_link_up = false;
 
 esp_err_t _lora_mode_set(const lora_mode_t mode) {
     return _LORA_IS_USB() ? _lora_mode_set_usb(mode) : _lora_mode_set_dip(mode);
@@ -361,22 +411,6 @@ esp_err_t _lora_read_and_update_config(void) {
         (uint8_t)((_LORA_CONFIG(e22_address) & 0xFF)),                      // [ADDL = 0x08]
         _LORA_CONFIG(e22_network),                                          // [NETID = 0x00]
         0x60 | _LORA_E22_CONFIG_AIR_DATA_RATE(_LORA_CONFIG(air_data_rate)), // REG0: 0x60 = UART 9600/8N1, [air rate]
-        /*
-         * REG1: packet_size (7:6), rssi_channel (5), reserved (4:3), switch_config_serial (2),
-         *       transmit_power (1:0)
-         *
-         * BIT 2 IS LOAD-BEARING ON USB. "Switch config by serial" is what makes the software mode
-         * command (C0 C1 C2 C3 02 xx) work; the DIP module has M0/M1 instead and no such bit.
-         * Clear it on a USB dongle and you lock the module in whatever mode it is in -- after
-         * which every mode command answers FF FF FF, config reads still work (so it looks alive),
-         * and any data write is rejected as a malformed command. Recoverable only because config
-         * writes keep working, which is the one mercy.
-         *
-         * More generally: building this block from scratch means every bit we do not model gets
-         * zeroed. The reference implementation read-modify-writes the config the device reports,
-         * so it preserves such bits by accident of design. Worth remembering before adding a
-         * field here.
-         */
         (uint8_t)((_LORA_IS_USB() ? 0x04 : 0) | (_LORA_CONFIG(rssi_channel) ? 0x20 : 0) | _LORA_E22_CONFIG_PACKET_SIZE(_LORA_CONFIG(packet_size)) | _LORA_E22_CONFIG_TRANSMIT_POWER(_LORA_CONFIG(transmit_power))),
         _LORA_CONFIG(channel),                                                                                                 // [CH = 10 / 860.125 MHz]
         (uint8_t)((_LORA_CONFIG(rssi_packet) ? 0x80 : 0) | 0x03 | _LORA_E22_CONFIG_LBT(_LORA_CONFIG(listen_before_transmit))), // REG3: [RSSI packet], transparent, [LBT], WOR 2000ms
@@ -393,6 +427,21 @@ esp_err_t _lora_read_and_update_config(void) {
     if (e22_config_differs) {
         ESP_RETURN_ON_ERROR(_lora_cmd_write_config(req_config), __tag_device_e22900t22, "setup: config write");
         hw_delay_ms_yieldable(_LORA_SAVE_DELAY_MS);
+        uint8_t now_config[_LORA_E22_REG_SIZE_CONFIG_READ];
+        if (_lora_cmd_read_config(now_config) != ESP_OK)
+            ESP_LOGW(__tag_device_e22900t22, "config verify: read back failed -- cannot confirm the write took");
+        else if (memcmp(now_config, req_config, _LORA_E22_REG_SIZE_CONFIG_WRITE) != 0) {
+            char want[sizeof(req_config) * 3], got[sizeof(now_config) * 3];
+            ESP_LOGE(__tag_device_e22900t22, "config verify: read back failed -- wanted %s, module reports %s", d_bytes_hex_str(want, sizeof(want), req_config, (int)sizeof(req_config), ":"),
+                     d_bytes_hex_str(got, sizeof(got), now_config, _LORA_E22_REG_SIZE_CONFIG_WRITE, ":"));
+        }
+    }
+
+    if (_LORA_IS_USB()) {
+        uint8_t reg_config[_LORA_E22_REG_SIZE_CONFIG_READ];
+        if (_lora_cmd_read_config(reg_config) == ESP_OK && (reg_config[_LORA_E22_REG1_OFFSET] & 0x04) == 0)
+            ESP_LOGE(__tag_device_e22900t22, "REG1 bit 2 (switch config by serial) is CLEAR (REG1=0x%02" PRIX8 ") -- mode commands will be PUT ON AIR instead of obeyed; use the module's mode button to reach config mode and rewrite it",
+                     reg_config[_LORA_E22_REG1_OFFSET]);
     }
 
     return ESP_OK;
@@ -413,8 +462,6 @@ esp_err_t lora_sleep(void) {
 #pragma GCC diagnostic ignored "-Wjump-misses-init"
 esp_err_t lora_setup(const lora_config_t *const config) {
 
-    /* Assert the wiring before anything else -- except on USB, where there is none to assert.
-       The config has to land in RTC first, since _LORA_IS_USB() reads it. */
     _LORA_RTC_INIT();
     memcpy(&_lora_rtc.config, config, sizeof(_lora_rtc.config));
 
@@ -442,9 +489,14 @@ esp_err_t lora_setup(const lora_config_t *const config) {
 
     ESP_GOTO_ON_ERROR(_lora_read_and_update_config(), lora_setup_exit, __tag_device_e22900t22, "setup: config");
 
-    ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_DEEP_SLEEP), lora_setup_exit, __tag_device_e22900t22, "setup: mode deep sleep");
-    hw_uart_stop();
-    _lora_pins_disable();
+    if (!_LORA_CONFIG(host_sleeps)) {
+        ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_NORMAL), lora_setup_exit, __tag_device_e22900t22, "setup: mode normal");
+        s_lora_link_up = true;
+    } else {
+        ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_DEEP_SLEEP), lora_setup_exit, __tag_device_e22900t22, "setup: mode deep sleep");
+        hw_uart_stop();
+        _lora_pins_disable();
+    }
 
     ESP_LOGI(__tag_device_e22900t22, "setup: name=0x%04" PRIX16 ", version=%d, power=%ddBm", (uint16_t)((_lora_rtc.product[0] << 8) | _lora_rtc.product[1]), _lora_rtc.product[2], _lora_rtc.product[3]);
 
@@ -464,6 +516,11 @@ esp_err_t lora_start(void) {
 
     ESP_RETURN_ON_FALSE(_LORA_RTC_VALID(), DEV_ERR_RTC, __tag_device_e22900t22, "start: rtc invalid");
     ESP_RETURN_ON_FALSE(_LORA_PRODUCT_ID_VALID(lora_rtc.product), DEV_ERR_PRODUCT_ID, __tag_device_e22900t22, "start: product invalid");
+
+    if (s_lora_link_up) {
+        ESP_LOGI(__tag_device_e22900t22, "started (link already up)");
+        return ESP_OK; /* setup left it in NORMAL with the UART open: there is nothing to do */
+    }
 
     esp_err_t ret;
 
@@ -502,7 +559,27 @@ esp_err_t lora_read_channel_rssi(int *const rssi_dbm) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-#define _LORA_RX_GAP_MS 20 /* inter-byte idle that delimits a received frame (>> one byte-time at 9600 baud) */
+/*
+ * The inter-byte idle that delimits a received frame -- and it has to be told about the link, not
+ * about the baud rate.
+ *
+ * On a DIP module the UART is wired straight to the SoC: bytes arrive one byte-time apart (1.04ms
+ * at 9600) and any real gap is a frame boundary, so 20ms is already generous.
+ *
+ * Behind a USB-serial dongle the host schedules URBs, and a frame longer than one bulk transfer
+ * arrives as two, tens of milliseconds apart, with nothing wrong. At 20ms that reads as a frame
+ * boundary and a long frame is torn in half: observed on a 56-byte node VERSION report, split into
+ * a 31-byte piece that decoded as far as its header and a 28-byte tail that looked like a fresh
+ * packet from a nonsense station. The reference implementation allowed 100ms per byte after the
+ * first, which is why it never showed this; that is the number to match.
+ *
+ * The cost of a longer gap is that two frames genuinely arriving back-to-back within it are read
+ * as one. That merged frame then fails to decode -- and since a frame that does not decode no
+ * longer claims a dedup slot, it is dropped and the relayed copy still gets through.
+ */
+#define _LORA_RX_GAP_DIP_MS 20
+#define _LORA_RX_GAP_USB_MS 100
+#define _LORA_RX_GAP_MS     (_LORA_IS_USB() ? _LORA_RX_GAP_USB_MS : _LORA_RX_GAP_DIP_MS)
 
 esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, int *const out_rssi_dbm, const int first_byte_timeout_ms) {
 
@@ -539,7 +616,8 @@ esp_err_t lora_write(const uint8_t *const data, const size_t len) {
     ESP_RETURN_ON_FALSE(len > 0 && len <= LORA_PACKET_SIZE_MAX, ESP_ERR_INVALID_SIZE, __tag_device_e22900t22, "write: invalid length %d (< 0 || > %d)", (int)len, (int)LORA_PACKET_SIZE_MAX);
 
     // Wait for AUX ready before transmit
-    ESP_RETURN_ON_FALSE(lora_wait_ready(_LORA_TRANSMIT_WAIT_MS), DEV_ERR_TIMEOUT, __tag_device_e22900t22, "write: wait ready (%d)", _LORA_TRANSMIT_WAIT_MS);
+    ESP_RETURN_ON_FALSE(lora_wait_ready(_lora_transmit_wait_ms()), DEV_ERR_TIMEOUT, __tag_device_e22900t22, "write: wait ready (%" PRIu32 "ms at %ubps -- module still busy)", _lora_transmit_wait_ms(),
+                        (unsigned)_LORA_CONFIG(air_data_rate));
     ESP_RETURN_ON_FALSE(hw_uart_write(data, len) == (int)len, ESP_FAIL, __tag_device_e22900t22, "write: uart write (len=%d)", (int)len);
     // Block until the UART has physically clocked every byte out to the module
     ESP_RETURN_ON_ERROR(hw_uart_wait_tx_done(_LORA_CMD_TIMEOUT_MS), __tag_device_e22900t22, "write: tx drain");
@@ -566,9 +644,10 @@ esp_err_t lora_wait_complete(void) {
 
 esp_err_t lora_stop(void) {
 
-    if (lora_sleep() == ESP_OK)
+    if (_LORA_CONFIG(host_sleeps) && lora_sleep() == ESP_OK)
         if (_LORA_SLEEP_DELAY_MS > 0)
             hw_delay_ms_yieldable(_LORA_SLEEP_DELAY_MS);
+    s_lora_link_up = false;
     hw_uart_stop();
     _lora_pins_disable();
 

@@ -59,10 +59,43 @@ typedef struct {
 typedef void (*idep_status_fn)(uint16_t station, iotdata_kvr_t *kv);
 typedef bool (*idep_tx_fn)(const uint8_t *packet, size_t len);
 
+/* Fills the mesh group of STATUS; leave .present false to omit it. */
+typedef void (*idep_status_mesh_fn)(uint16_t station, iotdata_node_status_mesh_t *out);
+
+/* A CONTROL key this layer does not know, offered to the application. Returns whether it was
+   the app's; false means "not implemented", counted as unknown and skipped rather than failing
+   the frame. */
+typedef bool (*idep_control_fn)(uint16_t station, uint8_t key, const uint8_t *val, uint8_t vlen);
+
 typedef struct {
     const idep_version_t *version;
     idep_status_fn status;
     idep_tx_fn tx;
+    /* Optional: the mesh group of STATUS. NULL on a plain end device, which is in nobody's mesh
+       and must therefore OMIT the group rather than report a zeroed one. A node that both senses
+       and relays -- which is coming -- fills it in, and answers the mesh scope as a relay does. */
+    idep_status_mesh_fn status_mesh;
+    /* Optional: the same app-control seam the relay and the gateway have. `control_keys` is what
+       it implements, so the CONTROL report can advertise it -- this layer cannot know, and a
+       hardcoded list here would go stale the first time the app changed. */
+    idep_control_fn control;
+    const uint8_t *control_keys;
+    uint8_t control_keys_count;
+    /*
+     * The receiver is NEVER off: a simulator on the bench, or any mains-powered end device.
+     *
+     * Such a node does not advertise at all, and the other two fields are ignored. A DOWN frame is
+     * always TRANSMITTED first and only then held (see iotdata_down.h), so a node that is always
+     * listening hears the immediate transmission -- the advertisement exists purely to tell a
+     * holder when a SLEEPING node is briefly awake, and there is nothing to tell about a node that
+     * never sleeps. The held copy simply goes unused and expires.
+     *
+     * The one thing given up is the retry path: if that immediate transmission is lost on the air,
+     * nothing prompts the holder to try again, so the command has to be reissued. For a bench
+     * instrument that is the right trade; a field node that wants the retry should advertise
+     * occasionally instead, which is what receive_every_ms is for.
+     */
+    bool receive_always;
     uint32_t receive_every_ms;  /* 0 = never open a window: this node cannot be reached */
     uint16_t receive_window_ms; /* advertised, so a sender can skip one too short to use */
 } idep_config_t;
@@ -94,6 +127,8 @@ static inline void idep_node_init(idep_node_t *const n, const uint16_t station_i
 /* Account for time passing. Returns true when a window has become due, at which point the next
    frame this node sends should carry a RECEIVE TLV. */
 static inline bool idep_window_advance(const idep_config_t *const cfg, idep_node_t *const n, const uint32_t delta_ms) {
+    if (cfg->receive_always)
+        return false; /* always listening: nothing to schedule and nothing to announce */
     if (cfg->receive_every_ms == 0)
         return false;
     if (n->window_pending)
@@ -120,7 +155,9 @@ static inline void idep_window_begin(const idep_config_t *const cfg, idep_node_t
     n->stat_windows++;
 }
 
-static inline bool idep_window_active(const idep_node_t *const n, const uint32_t now_ms) {
+static inline bool idep_window_active(const idep_config_t *const cfg, const idep_node_t *const n, const uint32_t now_ms) {
+    if (cfg->receive_always)
+        return true; /* nothing to expire */
     return n->window_open && (int32_t)(n->window_end_ms - now_ms) > 0;
 }
 
@@ -134,7 +171,8 @@ static inline void idep_window_end(idep_node_t *const n) {
    Riding an outbound telemetry frame is the cheap way -- two bytes on a frame already being sent. */
 static inline bool idep_receive_append(const idep_config_t *const cfg, iotdata_encoder_t *const enc) {
     uint8_t kv[8];
-    const size_t n = iotdata_node_receive_build(kv, sizeof(kv), cfg->receive_window_ms, 0);
+    /* 0 = unstated = "listening, for anything", which is the whole truth for an always-on node */
+    const size_t n = iotdata_node_receive_build(kv, sizeof(kv), cfg->receive_always ? 0u : cfg->receive_window_ms, 0);
     return iotdata_encode_tlv(enc, IOTDATA_NODE_TLV_RECEIVE, kv, (uint8_t)n) == IOTDATA_OK;
 }
 
@@ -204,23 +242,34 @@ static inline int idep_build_variant(uint8_t *const buf, const size_t size, uint
     return kv.overflow ? -1 : (int)kv.len;
 }
 
-static inline int idep_build_control(uint8_t *const buf, const size_t size) {
+static inline int idep_build_control(const idep_config_t *const cfg, uint8_t *const buf, const size_t size) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_REQUEST_VERSION);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_REQUEST_VARIANT);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_REQUEST_CONTROL);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_REQUEST_STATUS);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_REQUEST_CONFIG);
+    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_VERSION_REQUEST);
+    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_VARIANT_REQUEST);
+    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_CONTROL_REQUEST);
+    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_STATUS_REQUEST);
+    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_CONFIG_REQUEST);
     iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_REBOOT);
+    for (uint8_t i = 0; i < cfg->control_keys_count; i++)
+        iotdata_kvr_add_flag(&kv, cfg->control_keys[i]);
     return kv.overflow ? -1 : (int)kv.len;
 }
 
-static inline int idep_build_status(const idep_config_t *const cfg, const idep_node_t *const n, uint8_t *const buf, const size_t size) {
+/* `scope` is the STATUS_REQUEST value: which groups to report, 0 (absent) meaning all of them.
+   Asking a plain end device for the MESH group correctly yields an EMPTY status -- it is in no
+   mesh -- rather than the node group it did not ask for. */
+static inline int idep_build_status(const idep_config_t *const cfg, const idep_node_t *const n, uint8_t *const buf, const size_t size, const uint8_t scope) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    if (cfg->status != NULL)
+    if (iotdata_node_status_scope_wants(scope, IOTDATA_NODE_STATUS_SCOPE_NODE) && cfg->status != NULL)
         cfg->status(n->station_id, &kv); /* the app knows its own uptime, battery, heap */
+    if (iotdata_node_status_scope_wants(scope, IOTDATA_NODE_STATUS_SCOPE_MESH) && cfg->status_mesh != NULL) {
+        iotdata_node_status_mesh_t m;
+        memset(&m, 0, sizeof(m));
+        cfg->status_mesh(n->station_id, &m);
+        iotdata_node_status_mesh_emit(&kv, &m); /* a no-op unless .present */
+    }
     return kv.overflow ? -1 : (int)kv.len;
 }
 
@@ -233,7 +282,7 @@ static inline int idep_build_config(const idep_config_t *const cfg, uint8_t *con
     return kv.overflow ? -1 : (int)kv.len;
 }
 
-static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *const n, const uint8_t type, uint8_t *const buf, const size_t size) {
+static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *const n, const uint8_t type, uint8_t *const buf, const size_t size, const uint8_t scope) {
     static uint8_t variant_cursor = 0;
     switch (type) {
     case IOTDATA_NODE_TLV_VERSION:
@@ -241,9 +290,9 @@ static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *
     case IOTDATA_NODE_TLV_VARIANT:
         return idep_build_variant(buf, size, &variant_cursor);
     case IOTDATA_NODE_TLV_CONTROL:
-        return idep_build_control(buf, size);
+        return idep_build_control(cfg, buf, size);
     case IOTDATA_NODE_TLV_STATUS:
-        return idep_build_status(cfg, n, buf, size);
+        return idep_build_status(cfg, n, buf, size, scope);
     case IOTDATA_NODE_TLV_CONFIG:
         return idep_build_config(cfg, buf, size);
     default:
@@ -257,11 +306,13 @@ static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *
 
 /* Reply with one system TLV, as an ordinary frame from us. A report says who SENT it, so there is
    no addressing to do -- whoever is listening republishes it. */
-static inline bool idep_report(const idep_config_t *const cfg, idep_node_t *const n, const uint8_t type) {
+/* `scope` only means anything to STATUS; 0 is "every group", which is what every caller that is
+   not answering an explicit request wants. */
+static inline bool idep_report_scoped(const idep_config_t *const cfg, idep_node_t *const n, const uint8_t type, const uint8_t scope) {
     if (cfg->tx == NULL)
         return false;
     static uint8_t kvbuf[IDEP_KV_MAX]; /* static: too large for a sensor's stack frame */
-    const int kvlen = idep_build(cfg, n, type, kvbuf, sizeof(kvbuf));
+    const int kvlen = idep_build(cfg, n, type, kvbuf, sizeof(kvbuf), scope);
     if (kvlen < 0)
         return false;
     static iotdata_encoder_t enc;
@@ -278,6 +329,10 @@ static inline bool idep_report(const idep_config_t *const cfg, idep_node_t *cons
     return cfg->tx(packet, len);
 }
 
+static inline bool idep_report(const idep_config_t *const cfg, idep_node_t *const n, const uint8_t type) {
+    return idep_report_scoped(cfg, n, type, 0); /* 0 = every group */
+}
+
 static inline void idep_process_control(const idep_config_t *const cfg, idep_node_t *const n, const uint8_t *const kv, const size_t kvlen, bool *const reboot_out) {
     size_t cur = 0;
     uint8_t key, vlen;
@@ -286,7 +341,10 @@ static inline void idep_process_control(const idep_config_t *const cfg, idep_nod
         const uint8_t want = iotdata_node_tlv_control_type(key);
         if (want != IOTDATA_NODE_TLV_NONE) {
             n->stat_requests++;
-            (void)idep_report(cfg, n, want);
+            /* STATUS is the one request with a value: which groups to report. Anything else that
+               carries a value is answered in full, as if it had carried none. */
+            const uint8_t scope = (want == IOTDATA_NODE_TLV_STATUS && vlen >= 1) ? val[0] : 0u;
+            (void)idep_report_scoped(cfg, n, want, scope);
             continue;
         }
         switch (key) {
@@ -296,7 +354,12 @@ static inline void idep_process_control(const idep_config_t *const cfg, idep_nod
                 *reboot_out = true;
             break;
         default:
-            n->stat_unknown++; /* skipped, not fatal: an older node meeting a newer manager */
+            /* not ours: offer it to the app before giving up. A mesh command reaching a node with
+               no mesh lands here and is correctly counted unknown. */
+            if (cfg->control != NULL && cfg->control(n->station_id, key, val, vlen))
+                n->stat_commands++;
+            else
+                n->stat_unknown++; /* skipped, not fatal: an older node meeting a newer manager */
             break;
         }
     }
