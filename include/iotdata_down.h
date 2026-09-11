@@ -76,7 +76,7 @@ typedef struct {
 typedef struct {
     buffer_pool_t *pool;
     iotdata_down_slot_t slot[IOTDATA_DOWN_SLOTS];
-    int count; /* valid slots -- kept in sync so scans can short-circuit */
+    int count;
     uint32_t age_next;
     uint32_t stat_stored, stat_superseded, stat_echo, stat_evicted, stat_delivered, stat_toobig;
 } iotdata_down_t;
@@ -125,15 +125,15 @@ static inline uint16_t iotdata_down_len(const iotdata_down_t *const ds, const in
    a missed release is a buffer leaked for the life of the process. */
 static inline void iotdata_down_release(iotdata_down_t *const ds, const int i) {
     iotdata_down_slot_t *const e = &ds->slot[i];
-    if (!e->valid)
-        return;
-    buffer_unref(ds->pool, e->frame);
-    e->frame = (buffer_handle_t)BUFFER_NONE;
-    e->valid = false;
+    if (e->valid) {
+        buffer_unref(ds->pool, e->frame);
+        e->frame = BUFFER_NONE;
+        e->valid = false;
+    }
 }
 
 static inline int iotdata_down_locate(const iotdata_down_t *const ds, const uint16_t target) {
-    for (int i = 0, c = 0; i < IOTDATA_DOWN_SLOTS && c < ds->count; i++) {
+    for (int i = 0, c = 0; i < (int)(sizeof(ds->slot) / sizeof(ds->slot[0])) && c < ds->count; i++) {
         const iotdata_down_slot_t *const e = &ds->slot[i];
         if (e->valid) {
             if (e->target == target)
@@ -149,13 +149,16 @@ static inline bool iotdata_down_holds(const iotdata_down_t *const ds, const uint
 }
 
 static inline int iotdata_down_oldest(const iotdata_down_t *const ds) {
-    int oldest = -1;
-    for (int i = 0; i < IOTDATA_DOWN_SLOTS; i++) {
+    int slot_oldest = -1;
+    for (int i = 0, c = 0; i < (int)(sizeof(ds->slot) / sizeof(ds->slot[0])) && c < ds->count; i++) {
         const iotdata_down_slot_t *const e = &ds->slot[i];
-        if (e->valid && (oldest < 0 || e->age < ds->slot[oldest].age))
-            oldest = i;
+        if (e->valid) {
+            c++;
+            if (slot_oldest < 0 || e->age < ds->slot[slot_oldest].age)
+                slot_oldest = i;
+        }
     }
-    return oldest;
+    return slot_oldest;
 }
 
 /* Offer a frame held in a POOLED buffer. The slot takes a reference of its own when it keeps the
@@ -191,7 +194,7 @@ static inline iotdata_down_ev_t iotdata_down_offer(iotdata_down_t *const ds, con
     /* UPSERT: find a free slot, else evict the oldest. Scanning for !valid means no count guard --
        a free slot is exactly what the count does not point at. */
     int slot = -1;
-    for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++)
+    for (int j = 0; j < (int)(sizeof(ds->slot) / sizeof(ds->slot[0])); j++)
         if (!ds->slot[j].valid) {
             slot = j;
             break;
@@ -220,7 +223,7 @@ static inline iotdata_down_ev_t iotdata_down_offer(iotdata_down_t *const ds, con
 static inline buffer_handle_t iotdata_down_deliver(iotdata_down_t *const ds, const uint16_t target, size_t *const len_out) {
     const int i = iotdata_down_locate(ds, target);
     if (i < 0)
-        return (buffer_handle_t)BUFFER_NONE;
+        return BUFFER_NONE;
     iotdata_down_slot_t *e = &ds->slot[i];
     e->sends++;
     ds->stat_delivered++;
@@ -229,7 +232,6 @@ static inline buffer_handle_t iotdata_down_deliver(iotdata_down_t *const ds, con
     return e->frame;
 }
 
-/* Drop what we hold for a target: for an operator command, not for delivery. */
 static inline bool iotdata_down_drop(iotdata_down_t *const ds, const uint16_t target) {
     const int i = iotdata_down_locate(ds, target);
     if (i < 0)
@@ -241,7 +243,7 @@ static inline bool iotdata_down_drop(iotdata_down_t *const ds, const uint16_t ta
 
 static inline int iotdata_down_clear(iotdata_down_t *const ds) {
     const int n = ds->count;
-    for (int i = 0; i < IOTDATA_DOWN_SLOTS && ds->count > 0; i++)
+    for (int i = 0; i < (int)(sizeof(ds->slot) / sizeof(ds->slot[0])) && ds->count > 0; i++)
         if (ds->slot[i].valid) {
             iotdata_down_release(ds, i);
             ds->count--;
