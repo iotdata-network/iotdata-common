@@ -72,7 +72,14 @@
 #define BUFFER_LOCK_RELEASE(l) ((void)(l))
 #endif
 
+/* A handle is an INDEX, not a pointer: one byte, so a holder costs a byte rather than four or
+   eight, and a stale one can be range-checked rather than merely hoped about. The cost is a
+   ceiling of 255 buffers per pool, of which 0xFF is BUFFER_NONE -- so 254 usable. That is ample
+   for frames in flight, but a pool sized for a large table of long-term holds can approach it:
+   BUFFER_POOL_DECLARE fails the build rather than silently minting handles that collide with
+   BUFFER_NONE. Widening this to uint16_t is the fix if a pool ever genuinely needs more. */
 typedef uint8_t buffer_handle_t;
+#define BUFFER_POOL_COUNT_MAX 254
 
 /* Per-buffer bookkeeping. `at` is where the data currently starts, which moves BACKWARDS as
    headers are prepended; `len` is how many bytes of data there are from `at`. */
@@ -102,6 +109,8 @@ typedef struct {
 /* Declare the storage and the pool together, so a user dimensions it in one place and never
    touches a field. `name` is the pool; the arrays are private by convention. */
 #define BUFFER_POOL_DECLARE(name, count, stride) \
+    /* a handle is one byte and 0xFF is reserved, so the pool cannot exceed 254 buffers */ \
+    typedef char name##_count_fits_[((count) >= 1 && (count) <= BUFFER_POOL_COUNT_MAX) ? 1 : -1]; \
     static uint8_t name##_data_[(count) * (stride)]; \
     static buffer_meta_t name##_meta_[(count)]; \
     static uint32_t name##_map_[BUFFER_POOL_MAP_WORDS(count)]; \

@@ -26,6 +26,8 @@ test:
 	@mkdir -p $(TEST_DIR)
 	@$(TEST_CC) $(TEST_CFLAGS) test_node_endpoint.c $(IOTDATA_SRC_LIBRARY)/iotdata.c -o $(TEST_DIR)/test_node_endpoint -lm
 	@$(TEST_DIR)/test_node_endpoint
+	@$(TEST_CC) $(TEST_CFLAGS) test_format.c -o $(TEST_DIR)/test_format
+	@$(TEST_DIR)/test_format
 	@$(TEST_CC) $(TEST_CFLAGS) test_module_buffers.c -o $(TEST_DIR)/test_module_buffers
 	@$(TEST_DIR)/test_module_buffers
 	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE -pthread test_module_buffers_locked.c -o $(TEST_DIR)/test_module_buffers_locked
