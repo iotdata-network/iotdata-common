@@ -278,7 +278,6 @@ static inline uint32_t buffer_pool_acquires(const buffer_pool_t *const p) {
     return p->acquires;
 }
 
-
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 //
@@ -306,9 +305,9 @@ typedef const char *(*buffer_tag_name_fn)(uint8_t tag);
 typedef struct {
     buffer_handle_t buf;
     bool valid;
-    uint8_t tag;       /* the caller's classification: what kind of frame this is */
-    uint32_t key;      /* the caller's identity for it, for remove-by-key */
-    uint32_t due_ms;   /* not before this */
+    uint8_t tag;        /* the caller's classification: what kind of frame this is */
+    uint32_t key;       /* the caller's identity for it, for remove-by-key */
+    uint32_t due_ms;    /* not before this */
     uint32_t expiry_ms; /* give up at this; 0 = never expires */
 } buffer_queue_entry_t;
 
@@ -537,6 +536,5 @@ static inline uint32_t buffer_queue_expired(const buffer_queue_t *const q) {
 static inline uint32_t buffer_queue_rejected(const buffer_queue_t *const q) {
     return q->st_rejected;
 }
-
 
 #endif /* D_MODULE_BUFFERS_H */

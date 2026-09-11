@@ -285,22 +285,22 @@ esp_err_t _lora_mode_set_usb(const lora_mode_t mode) {
         const int n = _lora_cmd_xfer(cmd, sizeof(cmd), res, (size_t)want);
         if (n == 3 && res[0] == 0xFF && res[1] == 0xFF && res[2] == 0xFF) {
             /*
-            * WARN, not DEBUG, and read the message carefully before believing it.
-            *
-            * FF FF FF is documented nowhere. The reference implementation calls it "already appears to
-            * be in required mode, will accept" and returns success -- and that reading cost real
-            * debugging time, because it is at least equally consistent with a plain NACK. Observed
-            * with REG1 bit 2 (switch-config-serial) CLEAR: every mode command answers FF FF FF while
-            * the module stays put, config reads keep working, and data writes come back as FF FF FF
-            * too. Nothing looks broken; nothing works.
-            *
-            * It is NOT on its own evidence that bit 2 is clear -- a deep-sleep command answers this
-            * way with bit 2 perfectly set, which is why that mode no longer reaches here at all.
-            *
-            * So it is accepted as success (the module may genuinely be in the mode we asked for) but
-            * it is now audible. If you see it for NORMAL or CONFIG, read the REG1 value the setup
-            * logs and check bit 2 rather than guessing.
-            */
+             * WARN, not DEBUG, and read the message carefully before believing it.
+             *
+             * FF FF FF is documented nowhere. The reference implementation calls it "already appears to
+             * be in required mode, will accept" and returns success -- and that reading cost real
+             * debugging time, because it is at least equally consistent with a plain NACK. Observed
+             * with REG1 bit 2 (switch-config-serial) CLEAR: every mode command answers FF FF FF while
+             * the module stays put, config reads keep working, and data writes come back as FF FF FF
+             * too. Nothing looks broken; nothing works.
+             *
+             * It is NOT on its own evidence that bit 2 is clear -- a deep-sleep command answers this
+             * way with bit 2 perfectly set, which is why that mode no longer reaches here at all.
+             *
+             * So it is accepted as success (the module may genuinely be in the mode we asked for) but
+             * it is now audible. If you see it for NORMAL or CONFIG, read the REG1 value the setup
+             * logs and check bit 2 rather than guessing.
+             */
             ESP_LOGW(__tag_device_e22900t22, "mode set (usb): mode %d not confirmed (FF FF FF) -- accepted, but check the REG1 value if this repeats", (int)mode);
             return ESP_OK;
         }
@@ -616,8 +616,7 @@ esp_err_t lora_write(const uint8_t *const data, const size_t len) {
     ESP_RETURN_ON_FALSE(len > 0 && len <= LORA_PACKET_SIZE_MAX, ESP_ERR_INVALID_SIZE, __tag_device_e22900t22, "write: invalid length %d (< 0 || > %d)", (int)len, (int)LORA_PACKET_SIZE_MAX);
 
     // Wait for AUX ready before transmit
-    ESP_RETURN_ON_FALSE(lora_wait_ready(_lora_transmit_wait_ms()), DEV_ERR_TIMEOUT, __tag_device_e22900t22, "write: wait ready (%" PRIu32 "ms at %ubps -- module still busy)", _lora_transmit_wait_ms(),
-                        (unsigned)_LORA_CONFIG(air_data_rate));
+    ESP_RETURN_ON_FALSE(lora_wait_ready(_lora_transmit_wait_ms()), DEV_ERR_TIMEOUT, __tag_device_e22900t22, "write: wait ready (%" PRIu32 "ms at %ubps -- module still busy)", _lora_transmit_wait_ms(), (unsigned)_LORA_CONFIG(air_data_rate));
     ESP_RETURN_ON_FALSE(hw_uart_write(data, len) == (int)len, ESP_FAIL, __tag_device_e22900t22, "write: uart write (len=%d)", (int)len);
     // Block until the UART has physically clocked every byte out to the module
     ESP_RETURN_ON_ERROR(hw_uart_wait_tx_done(_LORA_CMD_TIMEOUT_MS), __tag_device_e22900t22, "write: tx drain");
