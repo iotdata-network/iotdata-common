@@ -17,6 +17,22 @@ if(DEFINED IOTDATA_CONFIG AND NOT "${IOTDATA_CONFIG}" STREQUAL "")
     message(STATUS "app: config override = ${IOTDATA_CONFIG}")
 endif()
 
+# --- version identity (the Makefile's APP / VERSION / stamp, see target-esp32.mk) ---
+# These are the single source of the node's VERSION report (iotdata_node_version.h). The stamp is
+# passed IN rather than taken from __DATE__ or the IDF app descriptor, and that is deliberate:
+# CONFIG_APP_REPRODUCIBLE_BUILD leaves esp_app_desc_t.date/.time empty by design, because a
+# timestamp the compiler invents is precisely what makes a build unreproducible. As an explicit
+# build INPUT it is compatible with reproducibility -- pass a fixed stamp and the binary is
+# reproducible; pass `date -u` and it records when it was built.
+foreach(_v IOTDATA_VERSION_APP IOTDATA_VERSION_SEMVER IOTDATA_VERSION_STAMP)
+    if(DEFINED ${_v} AND NOT "${${_v}}" STREQUAL "")
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE ${_v}="${${_v}}")
+    endif()
+endforeach()
+if(DEFINED IOTDATA_VERSION_APP AND NOT "${IOTDATA_VERSION_APP}" STREQUAL "")
+    message(STATUS "app: version = ${IOTDATA_VERSION_APP}/${IOTDATA_VERSION_SEMVER}/${IOTDATA_VERSION_STAMP}")
+endif()
+
 # --- strict warnings ---
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wdouble-promotion

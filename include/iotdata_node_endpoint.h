@@ -50,10 +50,6 @@
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-typedef struct {
-    const char *firmware, *hardware, *platform, *application, *build, *serial;
-} idep_version_t;
-
 /* The app adds its own STATUS keys -- battery, temperature, whatever it has. Called with the
    builder mid-flight, so it just appends. */
 typedef void (*idep_status_fn)(uint16_t station, iotdata_kvr_t *kv);
@@ -68,7 +64,9 @@ typedef void (*idep_status_mesh_fn)(uint16_t station, iotdata_node_status_mesh_t
 typedef bool (*idep_control_fn)(uint16_t station, uint8_t key, const uint8_t *val, uint8_t vlen);
 
 typedef struct {
-    const idep_version_t *version;
+    /* What this instance HAS -- the rest of VERSION (chip, IDF, stamp, eFuse serial) is detected
+       by iotdata_node_version.h and needs nothing from the app. May be NULL. */
+    const iotdata_version_caps_t *caps;
     idep_status_fn status;
     idep_tx_fn tx;
     /* Optional: the mesh group of STATUS. NULL on a plain end device, which is in nobody's mesh
@@ -207,15 +205,9 @@ static inline void idep_add_str(iotdata_kvr_t *const kv, const uint8_t key, cons
 static inline int idep_build_version(const idep_config_t *const cfg, uint8_t *const buf, const size_t size) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    if (cfg->version != NULL) {
-        idep_add_str(&kv, IOTDATA_NODE_VERSION_FIRMWARE, cfg->version->firmware);
-        idep_add_str(&kv, IOTDATA_NODE_VERSION_HARDWARE, cfg->version->hardware);
-        idep_add_str(&kv, IOTDATA_NODE_VERSION_PLATFORM, cfg->version->platform);
-        idep_add_str(&kv, IOTDATA_NODE_VERSION_APPLICATION, cfg->version->application);
-        idep_add_str(&kv, IOTDATA_NODE_VERSION_BUILD, cfg->version->build);
-        idep_add_str(&kv, IOTDATA_NODE_VERSION_SERIAL, cfg->version->serial);
-    }
-    return kv.overflow ? -1 : (int)kv.len;
+    /* Every field from iotdata_node_version.h, so a sensor answers this in exactly the form a
+       relay and a gateway do -- one grammar for a reader to parse, whatever it is talking to. */
+    return iotdata_version_pack(&kv, cfg->caps);
 }
 
 /* Unlike a relay or a gateway, an end device DOES produce telemetry, so this is the one place the

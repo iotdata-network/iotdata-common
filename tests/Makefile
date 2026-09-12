@@ -26,6 +26,8 @@ test:
 	@mkdir -p $(TEST_DIR)
 	@$(TEST_CC) $(TEST_CFLAGS) test_node_endpoint.c $(IOTDATA_SRC_LIBRARY)/iotdata.c -o $(TEST_DIR)/test_node_endpoint -lm
 	@$(TEST_DIR)/test_node_endpoint
+	@$(TEST_CC) $(TEST_CFLAGS) -DPLATFORM_LINUX -DIOTDATA_VERSION_APP='"testapp"' -DIOTDATA_VERSION_SEMVER='"1.2.3"' -DIOTDATA_VERSION_STAMP='"$(shell date -u +%Y%m%d%H%M)"' test_version.c -o $(TEST_DIR)/test_version -lm
+	@$(TEST_DIR)/test_version
 	@$(TEST_CC) $(TEST_CFLAGS) test_format.c -o $(TEST_DIR)/test_format
 	@$(TEST_DIR)/test_format
 	@$(TEST_CC) $(TEST_CFLAGS) test_module_buffers.c -o $(TEST_DIR)/test_module_buffers

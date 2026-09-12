@@ -28,6 +28,16 @@
 CC     ?= gcc
 FORMAT ?= clang-format-19
 
+# Version identity, the same three variables the esp32 rule uses (target-esp32.mk), so a project
+# declares itself the same way whichever platform it targets. NAME is the name the node REPORTS --
+# distinct from TARGET, the binary name. VERSION is the release line, hand-set at a release point.
+# The stamp is regenerated on EVERY invocation, so a build cannot inherit an earlier one's; pass a
+# fixed IOTDATA_VERSION_STAMP for a reproducible binary.
+NAME           ?= $(TARGET)
+VERSION        ?= 0.0.0
+VERSION_STAMP  ?= $(shell date -u +%Y%m%d%H%M)
+CFLAGS_DEFINES += -DIOTDATA_VERSION_APP='"$(NAME)"' -DIOTDATA_VERSION_SEMVER='"$(VERSION)"' -DIOTDATA_VERSION_STAMP='"$(VERSION_STAMP)"'
+
 TEST_TARGET    ?= $(TARGET)_test
 TEST_LIBS      ?= $(LIBS)
 SOURCES_ALL    ?= $(MAIN) $(if $(TEST_MAIN),$(TEST_MAIN)) $(SOURCES_TARGET)
@@ -38,7 +48,11 @@ TARGETS_ALL    ?= $(TARGET) $(if $(TEST_MAIN),$(TEST_TARGET))
 
 all: $(TARGET)
 
-$(TARGET): $(MAIN) $(SOURCES)
+# MAKEFILE_LIST is a prerequisite because the makefiles carry the compile flags -- NAME, VERSION and
+# the rest -- and make has no other way to notice that one of them changed. Without it, bumping
+# VERSION at a release point would leave the binary reporting the old one, which is exactly the
+# kind of quiet lie the version report exists to prevent.
+$(TARGET): $(MAIN) $(SOURCES) $(MAKEFILE_LIST)
 	$(CC) $(CFLAGS) -o $(TARGET) $(MAIN) $(LDFLAGS) $(LIBS)
 
 clean:

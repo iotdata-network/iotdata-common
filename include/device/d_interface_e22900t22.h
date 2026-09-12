@@ -212,8 +212,40 @@ void _lora_pins_disable(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+/*
+ * TRANSMIT BACK-PRESSURE, and the USB module has none of its own.
+ *
+ * On DIP, AUX is the module telling us its buffer has room, and lora_write() waits on it. USB
+ * exposes no AUX at all, so this answered `true` unconditionally -- meaning lora_write()'s
+ * "wait for ready" was a no-op and the host could hand the module a second frame while it was
+ * still radiating the first. With listen-before-transmit on, how long that takes is not even
+ * predictable: the module waits for a clear channel first.
+ *
+ * What that cost, observed live on a gateway: three phantom stations in two logs, each one the
+ * gateway's OWN BEACON transmitted with its leading byte missing. `F0 01 11 2F 00 01 00 12 64`
+ * went out as `01 11 2F 00 01 00 12 64`, which is a syntactically perfect header for a station
+ * that does not exist, so every relay that heard it invented a neighbour and forwarded it. Each
+ * one was a beacon whose mesh sequence was exactly ACK+1, sent ~220ms behind that ACK in the same
+ * loop pass, where ack-to-ack spacing of ~390ms never failed. The module drops the leading byte
+ * of a frame written while it is busy.
+ *
+ * Time is the only substitute for AUX here, so the guard is a minimum interval between writes.
+ * It is deliberately a crude floor rather than a computed air time: with LBT the module's busy
+ * period is not a function of frame length, so a formula would be a guess dressed up as physics.
+ * 400ms is the spacing that was never observed to fail; tune it against a log, not against the
+ * bit rate.
+ */
+#ifndef _LORA_TX_GUARD_USB_MS
+#define _LORA_TX_GUARD_USB_MS 400
+#endif
+
+static uint32_t _lora_tx_guard_until_ms = 0;
+
 bool lora_is_ready(void) {
-    return _LORA_IS_USB() ? true : hw_gpio_get(PIN_DEVICE_LORA_AUX);
+    if (!_LORA_IS_USB())
+        return hw_gpio_get(PIN_DEVICE_LORA_AUX);
+    /* wrap-safe, so this still orders correctly across the millisecond clock's rollover */
+    return (int32_t)((uint32_t)__ticks_ms() - _lora_tx_guard_until_ms) >= 0;
 }
 
 static inline void _lora_settle(void) {
@@ -566,6 +598,22 @@ esp_err_t lora_read_channel_rssi(int *const rssi_dbm) {
  * On a DIP module the UART is wired straight to the SoC: bytes arrive one byte-time apart (1.04ms
  * at 9600) and any real gap is a frame boundary, so 20ms is already generous.
  *
+ * It was briefly raised to 50ms on the theory that a DIP module was splitting frames mid-packet,
+ * after a relay invented stations out of beacons that arrived a byte short. That theory was
+ * WRONG and the history is worth keeping, because the symptom looks identical either way: the
+ * byte was never lost on this side at all. It was dropped by the USB module at the OTHER end,
+ * which had been handed a frame while still radiating the previous one -- see
+ * _LORA_TX_GUARD_USB_MS. The proof was _LORA_RX_FRAME_MIN below: a read-side split now reports a
+ * runt and logs its cause, and across two hours of the 50ms build not one fired while the
+ * phantoms kept coming. So 20ms stands, and there is no evidence a DIP module has ever split a
+ * frame.
+ *
+ * If one ever does, the fragment warning will say so and 50ms is the answer -- measured rather
+ * than guessed: across 1188 receives on that link the shortest gap between two frames was 180ms,
+ * with nothing below 100ms, so there is room to raise this without merging two frames into one.
+ * Keep DIP below USB rather than collapsing them, though: that 180ms floor is a property of one
+ * network's beacon and ack cadence at 2.4kbps, not a guarantee.
+ *
  * Behind a USB-serial dongle the host schedules URBs, and a frame longer than one bulk transfer
  * arrives as two, tens of milliseconds apart, with nothing wrong. At 20ms that reads as a frame
  * boundary and a long frame is torn in half: observed on a 56-byte node VERSION report, split into
@@ -573,12 +621,25 @@ esp_err_t lora_read_channel_rssi(int *const rssi_dbm) {
  * packet from a nonsense station. The reference implementation allowed 100ms per byte after the
  * first, which is why it never showed this; that is the number to match.
  *
- * The cost of a longer gap is that two frames genuinely arriving back-to-back within it are read
- * as one. That merged frame then fails to decode -- and since a frame that does not decode no
- * longer claims a dedup slot, it is dropped and the relayed copy still gets through.
+ * The cost of a longer gap is twofold. Two frames genuinely arriving back-to-back within it are
+ * read as one; that merged frame then fails to decode -- and since a frame that does not decode no
+ * longer claims a dedup slot, it is dropped and the relayed copy still gets through. And every
+ * read waits the gap out after its last byte, so a received frame costs the gap in loop time --
+ * which is the other reason not to raise this without evidence: it is paid on every frame, by a
+ * loop that has to keep reading.
  */
 #define _LORA_RX_GAP_DIP_MS 20
 #define _LORA_RX_GAP_USB_MS 100
+
+/* The shortest thing that could be a frame: an iotdata/mesh header is 4 bytes (variant+station,
+   sequence). A read shorter than that PLUS the appended RSSI byte did not catch a whole frame, it
+   caught a fragment -- and a fragment's last byte is DATA, not RSSI. Treating it as RSSI is how a
+   1-byte fragment becomes `len = 0`, which the caller cannot tell from "nothing arrived", while
+   the rest of the packet is then read as a frame in its own right, one byte short at the front.
+   Observed live: a gateway beacon `F0 01 0B DD 00 01 00 11 A2` split after its first byte was
+   read back as `01 0B DD 00 01 00 11 A2` -- a syntactically perfect header for a station that
+   does not exist, which nothing downstream can reject. */
+#define _LORA_RX_FRAME_MIN  4
 #define _LORA_RX_GAP_MS     (_LORA_IS_USB() ? _LORA_RX_GAP_USB_MS : _LORA_RX_GAP_DIP_MS)
 
 esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, int *const out_rssi_dbm, const int first_byte_timeout_ms) {
@@ -594,10 +655,17 @@ esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, in
     size_t total = 1;
     while (total < max && hw_uart_read(buf + total, 1, _LORA_RX_GAP_MS) > 0)
         total++;
-    if (total >= 1) {
+    if (total >= (size_t)_LORA_RX_FRAME_MIN + 1) {
         if (out_rssi_dbm != NULL)
             *out_rssi_dbm = _LORA_E22_RSSI_DBM(buf[total - 1]);
         total -= 1;
+    } else {
+        /* A fragment. Hand back every byte read, with no RSSI claimed, so the caller counts it as
+           the runt it is rather than being told nothing happened. The stream is already
+           desynchronised at this point and these bytes cannot be un-read -- what this buys is
+           that the NEXT frame's bogus header has a logged cause sitting immediately before it. */
+        ESP_LOGW(__tag_device_e22900t22, "read: %u byte fragment, not a frame -- a packet split across the %dms gap; the next read will start mid-packet", (unsigned)total, _LORA_RX_GAP_MS);
+        d_bytes_hex_log(__tag_device_e22900t22, buf, (int)total);
     }
     *out_len = (int)total;
 
@@ -620,6 +688,12 @@ esp_err_t lora_write(const uint8_t *const data, const size_t len) {
     ESP_RETURN_ON_FALSE(hw_uart_write(data, len) == (int)len, ESP_FAIL, __tag_device_e22900t22, "write: uart write (len=%d)", (int)len);
     // Block until the UART has physically clocked every byte out to the module
     ESP_RETURN_ON_ERROR(hw_uart_wait_tx_done(_LORA_CMD_TIMEOUT_MS), __tag_device_e22900t22, "write: tx drain");
+
+    /* The module is now busy. On DIP, AUX will say so; on USB nothing will, so hold the next
+       write off for the guard interval -- this is the only thing standing between a back-to-back
+       pair and a frame going out a byte short. */
+    if (_LORA_IS_USB())
+        _lora_tx_guard_until_ms = (uint32_t)__ticks_ms() + _LORA_TX_GUARD_USB_MS;
 
     ESP_LOGD(__tag_device_e22900t22, "write: sent %d bytes", (int)len);
     d_bytes_hex_log(__tag_device_e22900t22, data, (int)len);

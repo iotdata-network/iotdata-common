@@ -2,8 +2,9 @@
 #
 # A project Makefile sets the variables below, then includes this file:
 #   PLATFORM      target chip, e.g. esp32c3                 [required]
-#   NAME          app name; TARGET = build/$(NAME).bin      [default: app]
-#   SOURCES       files whose change should force a rebuild  [default: main/$(NAME).c]
+#   NAME          the app's name, as it REPORTS itself       [default: app]
+#   VERSION       release line, hand-set at a release point   [default: 0.0.0]
+#   SOURCES       files whose change should force a rebuild   [default: main/app.c]
 #   DEVICE        serial port for flash / monitor           [default: /dev/ttyACM0]
 #   BUILDER_DEFS  extra `idf.py -D...` cache entries         [optional]
 #
@@ -15,12 +16,32 @@
 # BUILDER_DEFS can reference the SRC_* variables.
 
 BUILDER      ?= idf.py
+# NAME is the app's own name -- what it reports in VERSION, and what a human calls it. It is NOT
+# the source path (every project's entry point is main/app.c) and NOT the binary name (that comes
+# from project() in CMakeLists.txt, and those names are arbitrary: sensor_depth_snow,
+# sensor_tsa_test). Conflating the three is what made this inconsistent.
 NAME         ?= app
-SOURCES      ?= main/$(NAME).c
+SOURCES      ?= main/app.c
 DEVICE       ?= /dev/ttyACM0
+# The stamp is regenerated on EVERY invocation, so a build can never inherit an earlier one's --
+# and because it is a build INPUT rather than something the compiler invents, it stays compatible
+# with CONFIG_APP_REPRODUCIBLE_BUILD, which leaves esp_app_desc_t.date/.time empty by design (pass
+# a fixed IOTDATA_VERSION_STAMP for a reproducible binary).
+VERSION      ?= 0.0.0
+VERSION_STAMP ?= $(shell date -u +%Y%m%d%H%M)
+
 BUILDER_DEFS ?=
 BUILDER_CFGS ?= build/build.ninja
-TARGET       ?= build/$(NAME).bin
+BUILDER_DEFS += \
+    -DIOTDATA_VERSION_APP=$(NAME) \
+    -DIOTDATA_VERSION_SEMVER=$(VERSION) \
+    -DIOTDATA_VERSION_STAMP=$(VERSION_STAMP)
+
+# The binary IDF actually writes, read out of CMakeLists.txt rather than guessed: project() names
+# do not follow from NAME (sds is sensor_depth_snow), and a TARGET that names a file which never
+# appears means `make` can never report itself up to date.
+PROJECT      ?= $(shell sed -n 's/^project(\(.*\))/\1/p' CMakeLists.txt)
+TARGET       ?= build/$(PROJECT).bin
 
 # release image: the dev sdkconfig.defaults is the single source of truth; the release
 # config is SYNTHESISED from it on the fly (see the `release` rule) into a separate dir.
@@ -114,9 +135,6 @@ clean:
 fullclean:
 	$(BUILDER) fullclean
 	rm -rf $(RELEASE_DIR)
-	# sdkconfig.defaults is now SEEDED from the common baseline (see the seed rule above), so a
-	# fullclean drops it — along with the active sdkconfig — for a true reset: the next build
-	# re-seeds it from common (+ the per-host file), picking up any baseline change.
 	rm -f $(SDKCONFIG_DEFAULTS) sdkconfig sdkconfig.old
 format:
 	clang-format-19 -i $(SOURCES_TARGET)
