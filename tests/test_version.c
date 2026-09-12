@@ -12,6 +12,7 @@
 // ------------------------------------------------------------------------------------------------------------------------
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "iotdata_variant.h"
@@ -262,6 +263,93 @@ static void test_pack(void) {
     CHECK(iotdata_version_pack(&kv, NULL) == -1, "a short buffer is an error");
 }
 
+/* The splitters exist so that no reader reimplements the grammars -- which is how they drift. */
+static void test_splitters(void) {
+    printf("grammar splitters: taking the values apart again\n");
+    char a[32], b[32], c[32];
+
+    CHECK(iotdata_version_software_split("relay/1.0.0/202609121743", a, sizeof(a), b, sizeof(b), c, sizeof(c)), "software split");
+    CHECK(strcmp(a, "relay") == 0 && strcmp(b, "1.0.0") == 0 && strcmp(c, "202609121743") == 0, "app, semver, stamp");
+    /* all three are required: an app name with no stamp says nothing about WHICH build it is */
+    CHECK(!iotdata_version_software_split("relay/1.0.0", a, sizeof(a), b, sizeof(b), c, sizeof(c)), "a missing stamp is malformed, not partial");
+
+    CHECK(iotdata_version_hardware_split("esp32c3/riscv32", a, sizeof(a), b, sizeof(b)), "hardware split");
+    CHECK(strcmp(a, "esp32c3") == 0 && strcmp(b, "riscv32") == 0, "board, arch");
+    /* one part IS the arch: a host reporting only its architecture is still telling the truth */
+    CHECK(iotdata_version_hardware_split("x86_64", a, sizeof(a), b, sizeof(b)), "arch alone is valid");
+    CHECK(a[0] == '\0' && strcmp(b, "x86_64") == 0, "and lands in arch, not board");
+
+    CHECK(iotdata_version_firmware_split("linux/6.12.96", a, sizeof(a), b, sizeof(b), c, sizeof(c)), "firmware split");
+    CHECK(strcmp(a, "linux") == 0 && strcmp(b, "6.12.96") == 0 && c[0] == '\0', "stack, version, no low half");
+    CHECK(iotdata_version_firmware_split("idf/6.1+bl1", a, sizeof(a), b, sizeof(b), c, sizeof(c)), "with a bootloader");
+    CHECK(strcmp(a, "idf") == 0 && strcmp(b, "6.1") == 0 && strcmp(c, "bl1") == 0, "and the low half is separated");
+
+    /* what the detectors actually produce must survive its own splitter -- the round trip is the
+       only thing that proves the grammar and the parser agree */
+    char hw[IOTDATA_VERSION_HARDWARE_MAX + 1], fw[IOTDATA_VERSION_FIRMWARE_MAX + 1], sw[IOTDATA_VERSION_SOFTWARE_MAX + 1];
+    CHECK(iotdata_version_software_split(iotdata_version_software(sw, sizeof(sw)), a, sizeof(a), b, sizeof(b), c, sizeof(c)), "this build's software splits");
+    CHECK(strcmp(a, IOTDATA_VERSION_APP) == 0, "back to the app name it was given");
+    CHECK(iotdata_version_hardware_split(iotdata_version_hardware(hw, sizeof(hw)), a, sizeof(a), b, sizeof(b)), "this build's hardware splits");
+    CHECK(iotdata_version_firmware_split(iotdata_version_firmware(fw, sizeof(fw)), a, sizeof(a), b, sizeof(b), c, sizeof(c)), "this build's firmware splits");
+
+    /* a truncating buffer gives a short answer, not a refusal: a reader after the first field
+       should not be defeated by a long third one */
+    char tiny[4];
+    CHECK(iotdata_version_part("abcdefgh/x", '/', 0, tiny, sizeof(tiny)) == 3, "truncated to the buffer");
+    CHECK(strcmp(tiny, "abc") == 0, "and terminated");
+    CHECK(iotdata_version_part("a/b", '/', 5, tiny, sizeof(tiny)) == -1, "no such part");
+    CHECK(tiny[0] == '\0', "and the buffer is cleared, not left stale");
+    CHECK(iotdata_version_part(NULL, '/', 0, tiny, sizeof(tiny)) == -1, "NULL is not a crash");
+}
+
+#if !defined(IOTDATA_NO_JSON)
+static void test_json(void) {
+    printf("json: the capability registry travels with the report\n");
+    iotdata_version_caps_t caps, back;
+    memset(&caps, 0, sizeof(caps));
+    (void)iotdata_version_caps_add(&caps, IOTDATA_VERSION_CAP_RADIO, IOTDATA_VERSION_RADIO_E22_DIP | IOTDATA_VERSION_RADIO_SX1302);
+    (void)iotdata_version_caps_add(&caps, IOTDATA_VERSION_CAP_FEATURES, IOTDATA_VERSION_FEATURE_MESH);
+
+    cJSON *const o = iotdata_version_caps_to_json(&caps);
+    CHECK(o != NULL, "encoded");
+    char *const txt = cJSON_PrintUnformatted(o);
+    CHECK(txt != NULL && strstr(txt, "radio/e22-dip,radio/sx1302,mesh") != NULL, "the names a human reads");
+    CHECK(txt != NULL && strstr(txt, "\"category\":\"radio\"") != NULL, "and the raw entries a newer reader needs");
+    free(txt);
+
+    /* decoded from the ENTRIES, not the names -- decoding its own rendering would make the format
+       depend on how it prints */
+    CHECK(iotdata_version_caps_from_json(o, &back), "decoded");
+    CHECK(back.count == caps.count, "same number of categories");
+    CHECK(iotdata_version_caps_get(&back, IOTDATA_VERSION_CAP_RADIO) == iotdata_version_caps_get(&caps, IOTDATA_VERSION_CAP_RADIO), "radio mask round-trips, both bits");
+    CHECK(iotdata_version_caps_get(&back, IOTDATA_VERSION_CAP_FEATURES) == IOTDATA_VERSION_FEATURE_MESH, "and features");
+    cJSON_Delete(o);
+
+    /* a category this build has never heard of is SKIPPED, not fatal: a newer node is allowed to
+       declare things we cannot name */
+    cJSON *const future = cJSON_Parse("{\"entries\":[{\"category\":\"quantum\",\"mask\":7},{\"category\":\"radio\",\"mask\":1}]}");
+    CHECK(future != NULL, "parsed");
+    CHECK(iotdata_version_caps_from_json(future, &back), "and accepted");
+    CHECK(back.count == 1 && iotdata_version_caps_get(&back, IOTDATA_VERSION_CAP_RADIO) == 1, "keeping what it understands");
+    cJSON_Delete(future);
+
+    CHECK(iotdata_version_cap_key("radio") == IOTDATA_VERSION_CAP_RADIO, "names map back to keys");
+    CHECK(iotdata_version_cap_key("nonesuch") == -1, "and an unknown name does not");
+
+    /* the key hook: it claims capabilities and declines everything else */
+    cJSON *const obj = cJSON_CreateObject();
+    const uint8_t entry[2] = { 0x00, 0x01 };
+    CHECK(iotdata_version_json_key(obj, "capabilities", IOTDATA_NODE_VERSION_CAPABILITIES, entry, 2), "claims capabilities");
+    CHECK(!iotdata_version_json_key(obj, "software", IOTDATA_NODE_VERSION_SOFTWARE, entry, 2), "declines the rest, so a caller keeps its generic path");
+    const uint8_t odd[3] = { 0, 1, 2 };
+    CHECK(iotdata_version_json_key(obj, "bad", IOTDATA_NODE_VERSION_CAPABILITIES, odd, 3), "claims a malformed one too");
+    char *const out = cJSON_PrintUnformatted(obj);
+    CHECK(out != NULL && strstr(out, "\"bad\":\"malformed\"") != NULL, "and says so rather than guessing");
+    free(out);
+    cJSON_Delete(obj);
+}
+#endif
+
 int main(void) {
     printf("iotdata_node_version: what a node says it is\n\n");
     test_caps_entries();
@@ -270,6 +358,10 @@ int main(void) {
     test_grammars();
     test_append();
     test_pack();
+    test_splitters();
+#if !defined(IOTDATA_NO_JSON)
+    test_json();
+#endif
     char v[IOTDATA_VERSION_STR_MAX + 1];
     printf("\n  this build: %s\n", iotdata_version_str(v, sizeof(v), NULL));
     printf("  stamp is real: %s\n", iotdata_version_stamp_is_real() ? "yes" : "no (unset)");

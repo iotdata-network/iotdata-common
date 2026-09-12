@@ -47,6 +47,9 @@
 #ifndef IDEP_PACKET_MAX
 #define IDEP_PACKET_MAX 240
 #endif
+#ifndef IDEP_DIAG_RECORD_MAX
+#define IDEP_DIAG_RECORD_MAX 128 /* one diagnostic record: only allocated when a device HAS a recorder */
+#endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -62,6 +65,11 @@ typedef void (*idep_status_mesh_fn)(uint16_t station, iotdata_node_status_mesh_t
    the app's; false means "not implemented", counted as unknown and skipped rather than failing
    the frame. */
 typedef bool (*idep_control_fn)(uint16_t station, uint8_t key, const uint8_t *val, uint8_t vlen);
+
+/* One diagnostic record per call, from `cursor` (start it at 0), returning its length and 0 when
+   there are no more -- the same shape the relay's node layer uses, so a device that gains a
+   recorder plugs it in the same way wherever it runs. */
+typedef size_t (*idep_diag_fn)(size_t *cursor, char *out, size_t outsize);
 
 typedef struct {
     /* What this instance HAS -- the rest of VERSION (chip, IDF, stamp, eFuse serial) is detected
@@ -79,6 +87,9 @@ typedef struct {
     idep_control_fn control;
     const uint8_t *control_keys;
     uint8_t control_keys_count;
+    /* Optional: a recorder. Most end devices have none, and then a diagnostics request is still
+       ANSWERED -- see idep_build_diagnostics. */
+    idep_diag_fn diag;
     /*
      * The receiver is NEVER off: a simulator on the bench, or any mains-powered end device.
      *
@@ -237,14 +248,30 @@ static inline int idep_build_variant(uint8_t *const buf, const size_t size, uint
 static inline int idep_build_control(const idep_config_t *const cfg, uint8_t *const buf, const size_t size) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_VERSION_REQUEST);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_VARIANT_REQUEST);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_CONTROL_REQUEST);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_STATUS_REQUEST);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_CONFIG_REQUEST);
-    iotdata_kvr_add_flag(&kv, IOTDATA_NODE_CONTROL_REBOOT);
-    for (uint8_t i = 0; i < cfg->control_keys_count; i++)
-        iotdata_kvr_add_flag(&kv, cfg->control_keys[i]);
+    /* an end device keeps no mesh tables */
+    return iotdata_control_pack(&kv, &(const iotdata_control_report_t){ .tables = false, .keys = cfg->control_keys, .keys_count = cfg->control_keys_count });
+}
+
+/*
+ * Every node answers a diagnostics request, because "nothing recorded" is an answer -- the rule
+ * VARIANT already follows, and the CONTROL report advertises DIAGNOSTICS unconditionally on that
+ * basis. An end device usually has no recorder at all, and then the report is EMPTY rather than
+ * absent: absent is indistinguishable from a node that ignored the request, which is precisely
+ * what its own CONTROL report promised it would not do.
+ */
+static inline int idep_build_diagnostics(const idep_config_t *const cfg, uint8_t *const buf, const size_t size) {
+    iotdata_kvr_t kv;
+    iotdata_kvr_init(&kv, buf, size);
+    if (cfg->diag != NULL) {
+        static char rec[IDEP_DIAG_RECORD_MAX]; /* static: too large for a sensor's stack frame */
+        size_t cursor = 0, n;
+        iotdata_kvr_add_u8(&kv, IOTDATA_NODE_DIAGNOSTICS_TYPE, IOTDATA_NODE_DIAG_BLACKBOX);
+        while ((n = cfg->diag(&cursor, rec, sizeof(rec))) > 0) {
+            if (n > 255u || kv.len + 2u + n > size)
+                break; /* what does not fit waits for the next request */
+            iotdata_kvr_add(&kv, IOTDATA_NODE_DIAGNOSTICS_DATA, rec, (uint8_t)n);
+        }
+    }
     return kv.overflow ? -1 : (int)kv.len;
 }
 
@@ -287,6 +314,8 @@ static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *
         return idep_build_status(cfg, n, buf, size, scope);
     case IOTDATA_NODE_TLV_CONFIG:
         return idep_build_config(cfg, buf, size);
+    case IOTDATA_NODE_TLV_DIAGNOSTICS:
+        return idep_build_diagnostics(cfg, buf, size);
     default:
         return -1;
     }

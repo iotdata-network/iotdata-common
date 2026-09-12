@@ -26,6 +26,7 @@
 #include "iotdata.h"
 #include "iotdata_node.h"
 #include "iotdata_node_version.h"
+#include "iotdata_node_control.h"
 #include "iotdata_node_endpoint.h"
 
 /* --- stubs standing in for an application ------------------------------------------------- */
@@ -40,6 +41,11 @@ static bool ctl_cb(uint16_t s, uint8_t k, const uint8_t *v, uint8_t n) {
     return false;
 }
 static const uint8_t keys[] = { IOTDATA_NODE_CONTROL_MESH_PEERS_CLEAR };
+static size_t diag_cb(size_t *cursor, char *out, size_t outsize) { /* two records, then done */
+    if (*cursor >= 2) return 0;
+    const int n = snprintf(out, outsize, "rec%u", (unsigned)(*cursor)++);
+    return (n < 0) ? 0 : (size_t)n;
+}
 /* what a sensor declares: the rest of VERSION is detected, so there is nothing else to stub */
 static iotdata_version_caps_t caps;
 
@@ -81,6 +87,20 @@ int main(void) {
     len = idep_build(&plain, &n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0);
     cur=0; while (iotdata_kvr_next(buf,(uint8_t)len,&cur,&k,&v,&vl)) if (k==IOTDATA_NODE_CONTROL_MESH_PEERS_CLEAR) adv_plain = true;
     CHECK(!adv_plain, "a node with no hook advertises no app keys");
+
+    /* DIAGNOSTICS is advertised by every node unconditionally, so every node must answer it. A
+       device with no recorder answers EMPTY -- absent would look exactly like being ignored. */
+    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0);
+    CHECK(len == 0, "no recorder: an empty report, which is still a report");
+    const idep_config_t recorder = { .caps=&caps, .status=st_cb, .tx=tx_cb, .diag=diag_cb, .receive_always=true };
+    len = idep_build(&recorder, &n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0);
+    int records = 0; bool typed = false;
+    cur = 0;
+    while (iotdata_kvr_next(buf,(uint8_t)len,&cur,&k,&v,&vl)) {
+        if (k == IOTDATA_NODE_DIAGNOSTICS_TYPE) typed = true;
+        if (k == IOTDATA_NODE_DIAGNOSTICS_DATA) records++;
+    }
+    CHECK(typed && records == 2, "a recorder: the type, then every record it had");
 
     /* the hook receives an unknown key; a key it refuses is counted unknown */
     idep_node_init(&n, 0x0537);

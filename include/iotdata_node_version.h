@@ -41,7 +41,6 @@
 #include <string.h>
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// WHAT THE BUILD DECLARES
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #ifndef IOTDATA_VERSION_APP
@@ -60,8 +59,8 @@
    descriptor at every link, which is a better source than a define because it cannot be forgotten
    or left behind by an incremental build. Unset and underivable, it reads as _NONE, so the
    omission is visible rather than silently inherited from whenever the tree was last touched. */
-#define IOTDATA_VERSION_STAMP_NONE "000000000000"
-#define IOTDATA_VERSION_STAMP_LEN  12
+#define IOTDATA_VERSION_STAMP_NONE         "000000000000"
+#define IOTDATA_VERSION_STAMP_LEN          12
 
 /* Field sizes in CHARACTERS -- a buffer for one is declared [SIZE + 1] for the terminator, so
    these read as the lengths they are rather than as one less than they look. Generous against the grammars (a `board/arch` runs ~15, a `software` ~24) and cheap:
@@ -643,7 +642,141 @@ static inline const char *iotdata_version_str(char *const buf, const size_t size
 /* The TLV packer needs the kvr writer, so it appears only where the node protocol has been
    included. Everything above is pure formatting and needs nothing -- which is what lets a host
    tool include this header on its own just to say what it is. */
-#if defined(IOTDATA_NODE_H)
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// TAKING THEM APART AGAIN
+//
+// The grammars are defined here, so the splitters belong here too -- otherwise every reader
+// reimplements them and they drift. All three use '/' as the separator, which is what lets one
+// helper serve them all.
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+/* The idx'th `sep`-delimited part of `s`, copied into `out`. Returns its length, or -1 if there is
+   no such part. A part longer than the buffer is truncated rather than refused: these are values
+   off a wire, and a reader wanting the first field should not be defeated by a malformed third. */
+static inline int iotdata_version_part(const char *const s, const char sep, const int idx, char *const out, const size_t size) {
+    if (out == NULL || size == 0)
+        return -1;
+    out[0] = '\0';
+    if (s == NULL)
+        return -1;
+    int at = 0;
+    const char *start = s;
+    for (const char *p = s;; p++) {
+        if (*p != sep && *p != '\0')
+            continue;
+        if (at == idx) {
+            size_t n = (size_t)(p - start);
+            if (n > size - 1u)
+                n = size - 1u;
+            memcpy(out, start, n);
+            out[n] = '\0';
+            return (int)n;
+        }
+        if (*p == '\0')
+            return -1;
+        at++;
+        start = p + 1;
+    }
+}
+
+/* "app/semver/stamp". All three are required, so a value missing one is malformed rather than
+   partially useful -- an app name with no stamp says nothing about which build it is. */
+static inline bool iotdata_version_software_split(const char *const sw, char *const app, const size_t app_sz, char *const semver, const size_t semver_sz, char *const stamp, const size_t stamp_sz) {
+    return iotdata_version_part(sw, '/', 0, app, app_sz) > 0 && iotdata_version_part(sw, '/', 1, semver, semver_sz) > 0 && iotdata_version_part(sw, '/', 2, stamp, stamp_sz) > 0;
+}
+
+/* "board/arch", where the board is optional: a host that reports only its architecture is giving
+   a true answer, just a less specific one, so a single part IS the arch. */
+static inline bool iotdata_version_hardware_split(const char *const hw, char *const board, const size_t board_sz, char *const arch, const size_t arch_sz) {
+    if (iotdata_version_part(hw, '/', 1, arch, arch_sz) > 0)
+        return iotdata_version_part(hw, '/', 0, board, board_sz) > 0;
+    if (board != NULL && board_sz > 0)
+        board[0] = '\0';
+    return iotdata_version_part(hw, '/', 0, arch, arch_sz) > 0;
+}
+
+/* "stack/version[+low]" -- the low half is the bootloader or equivalent, and is absent more often
+   than not (a project that did not declare esp_bootloader_format reports none). */
+static inline bool iotdata_version_firmware_split(const char *const fw, char *const stack, const size_t stack_sz, char *const version, const size_t version_sz, char *const low, const size_t low_sz) {
+    if (low != NULL && low_sz > 0)
+        low[0] = '\0';
+    if (iotdata_version_part(fw, '/', 0, stack, stack_sz) <= 0)
+        return false;
+    char rest[IOTDATA_VERSION_FIRMWARE_MAX + 1];
+    if (iotdata_version_part(fw, '/', 1, rest, sizeof(rest)) <= 0)
+        return false;
+    (void)iotdata_version_part(rest, '+', 1, low, low_sz); /* absent is normal, not a failure */
+    return iotdata_version_part(rest, '+', 0, version, version_sz) > 0;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#if !defined(IOTDATA_NO_JSON)
+
+#include <cjson/cJSON.h>
+
+/* The reverse of iotdata_version_cap_name, for reading a report back. -1 if unknown. */
+static inline int iotdata_version_cap_key(const char *const name) {
+    if (name != NULL)
+        for (uint8_t k = 0; k < IOTDATA_VERSION_CAP_COUNT; k++)
+            if (strcmp(iotdata_version_cap_name(k), name) == 0)
+                return (int)k;
+    return -1;
+}
+
+static inline cJSON *iotdata_version_caps_to_json(const iotdata_version_caps_t *const caps) {
+    cJSON *const o = cJSON_CreateObject();
+    if (o == NULL || caps == NULL)
+        return o;
+    char names[IOTDATA_VERSION_CAPS_STR_MAX + 1];
+    cJSON_AddStringToObject(o, "names", iotdata_version_caps_str(caps, names, sizeof(names)));
+    cJSON *const arr = cJSON_CreateArray();
+    for (uint8_t i = 0; i < caps->count; i++) {
+        cJSON *const e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "category", iotdata_version_cap_name((uint8_t)(caps->entry[i] >> 12)));
+        cJSON_AddNumberToObject(e, "mask", (double)(caps->entry[i] & IOTDATA_VERSION_CAP_MASK_MAX));
+        cJSON_AddItemToArray(arr, e);
+    }
+    cJSON_AddItemToObject(o, "entries", arr);
+    return o;
+}
+
+static inline bool iotdata_version_caps_from_json(const cJSON *const obj, iotdata_version_caps_t *const caps) {
+    memset(caps, 0, sizeof(*caps));
+    if (obj == NULL)
+        return false;
+    const cJSON *const arr = cJSON_GetObjectItemCaseSensitive(obj, "entries");
+    if (!cJSON_IsArray(arr))
+        return false;
+    const cJSON *e = NULL;
+    cJSON_ArrayForEach(e, arr) {
+        const cJSON *const cat = cJSON_GetObjectItemCaseSensitive(e, "category");
+        const cJSON *const mask = cJSON_GetObjectItemCaseSensitive(e, "mask");
+        if (!cJSON_IsString(cat) || !cJSON_IsNumber(mask))
+            continue;
+        const int key = iotdata_version_cap_key(cat->valuestring);
+        if (key >= 0)
+            (void)iotdata_version_caps_add(caps, (uint8_t)key, (uint16_t)mask->valuedouble);
+    }
+    return true;
+}
+
+static inline bool iotdata_version_json_key(cJSON *const obj, const char *const name, const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
+    if (key != IOTDATA_NODE_VERSION_CAPABILITIES)
+        return false;
+    iotdata_version_caps_t caps;
+    if (iotdata_version_caps_parse(val, vlen, &caps))
+        cJSON_AddItemToObject(obj, name, iotdata_version_caps_to_json(&caps));
+    else /* an odd length is malformed, and saying so beats rendering a guess */
+        cJSON_AddStringToObject(obj, name, "malformed");
+    return true;
+}
+
+#endif /* !IOTDATA_NO_JSON */
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline int iotdata_version_pack(iotdata_kvr_t *const kv, const iotdata_version_caps_t *const caps) {
     char hw[IOTDATA_VERSION_HARDWARE_MAX + 1], fw[IOTDATA_VERSION_FIRMWARE_MAX + 1], sw[IOTDATA_VERSION_SOFTWARE_MAX + 1], sn[IOTDATA_VERSION_SERIAL_MAX + 1];
@@ -659,8 +792,6 @@ static inline int iotdata_version_pack(iotdata_kvr_t *const kv, const iotdata_ve
     }
     return kv->overflow ? -1 : (int)kv->len;
 }
-
-#endif /* IOTDATA_NODE_H */
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

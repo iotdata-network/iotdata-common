@@ -19,6 +19,7 @@ TEST_CFLAGS ?= -std=c11 -Wall -Wextra -Werror -Wconversion -Wshadow \
                -I$(IOTDATA_SRC_LIBRARY) -I$(IOTDATA_SRC_COMMON)/include -I$(IOTDATA_SRC_EXAMPLE)/include \
                -DIOTDATA_VARIANT='"$(IOTDATA_VARIANT)"' -DIOTDATA_NO_JSON
 TEST_DIR    ?= build-test
+TEST_VERSION_DEFS ?= -DIOTDATA_VERSION_APP='"testapp"' -DIOTDATA_VERSION_SEMVER='"1.2.3"' -DIOTDATA_VERSION_STAMP='"$(shell date -u +%Y%m%d%H%M)"'
 
 .PHONY: test test-clean
 
@@ -26,8 +27,13 @@ test:
 	@mkdir -p $(TEST_DIR)
 	@$(TEST_CC) $(TEST_CFLAGS) test_node_endpoint.c $(IOTDATA_SRC_LIBRARY)/iotdata.c -o $(TEST_DIR)/test_node_endpoint -lm
 	@$(TEST_DIR)/test_node_endpoint
-	@$(TEST_CC) $(TEST_CFLAGS) -DPLATFORM_LINUX -DIOTDATA_VERSION_APP='"testapp"' -DIOTDATA_VERSION_SEMVER='"1.2.3"' -DIOTDATA_VERSION_STAMP='"$(shell date -u +%Y%m%d%H%M)"' test_version.c -o $(TEST_DIR)/test_version -lm
+# JSON ON for this one: -UIOTDATA_NO_JSON and cJSON, because the version header's encoders are
+# only compiled when a project has JSON, and a test that skips them tests nothing.
+	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON -DPLATFORM_LINUX $(TEST_VERSION_DEFS) test_version.c -o $(TEST_DIR)/test_version -lm -lcjson
 	@$(TEST_DIR)/test_version
+# JSON on: the point of this suite is that the two media agree, so it needs both of them.
+	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_control.c -o $(TEST_DIR)/test_node_control -lm -lcjson
+	@$(TEST_DIR)/test_node_control
 	@$(TEST_CC) $(TEST_CFLAGS) test_format.c -o $(TEST_DIR)/test_format
 	@$(TEST_DIR)/test_format
 	@$(TEST_CC) $(TEST_CFLAGS) test_module_buffers.c -o $(TEST_DIR)/test_module_buffers
