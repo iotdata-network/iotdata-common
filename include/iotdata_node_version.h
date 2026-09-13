@@ -231,7 +231,10 @@ static inline void iotdata_version_caps_init(iotdata_version_caps_t *const c) {
 #if defined(IOTDATA_VERSION_HAS_MESH)
     f |= IOTDATA_VERSION_FEATURE_MESH;
 #endif
-#if defined(IOTDATA_VERSION_HAS_BLACKBOX)
+/* Declared by the app, or implied by having turned the recorder on -- see iotdata_node_diagnostics.h.
+   Two of three apps used to declare it by hand and the third forgot, so its VERSION did not mention
+   a recorder it was carrying. */
+#if defined(IOTDATA_VERSION_HAS_BLACKBOX) || (defined(IOTDATA_DIAGNOSTICS) && IOTDATA_DIAGNOSTICS)
     f |= IOTDATA_VERSION_FEATURE_BLACKBOX;
 #endif
 #if defined(IOTDATA_VERSION_HAS_OTA)

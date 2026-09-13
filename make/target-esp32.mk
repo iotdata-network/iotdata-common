@@ -68,7 +68,33 @@ SDKCONFIG_HOST_DEFAULTS    ?= sdkconfig.$(IOTDATA_HOST).defaults
 
 all: $(TARGET)
 
-$(TARGET): $(SOURCES) $(BUILDER_CFGS)
+# A CHANGED -D is invisible to make. Its prerequisites are source files, so `make BENCH_BUSY_SLEEP=1`
+# straight after a normal build is "Nothing to be done" -- and cmake, which would have noticed, is
+# never invoked, so the old image silently stands. (The reverse bites too: cmake CACHES every -D, so
+# a later plain `make` inherits the option unless it is passed again, possibly empty.) Recording the
+# cache entries in a file and depending on it makes the option a real prerequisite in both
+# directions. The build stamp is excluded deliberately: it changes on every invocation, and
+# depending on it would rebuild the world every time.
+BUILDER_DEFS_TRACKED = $(filter-out -DIOTDATA_VERSION_STAMP=%,$(BUILDER_DEFS))
+BUILDER_DEFS_FILE   ?= build/.builder-defs
+BUILDER_DEFS_DEP     =
+# Only once the project is CONFIGURED. The stamp lives in the build directory, and creating that
+# directory early is actively harmful: idf.py's set-target runs fullclean first, and fullclean
+# REFUSES a build/ it does not recognise as a cmake directory ("Refusing to automatically delete
+# files"), so a tree that had never been built -- or had just been fullcleaned -- could no longer
+# configure itself. Before the first configure there is nothing to force anyway.
+ifneq ($(wildcard $(BUILDER_CFGS)),)
+BUILDER_DEFS_DEP = $(BUILDER_DEFS_FILE)
+# Written whenever it does not match, MISSING INCLUDED. An absent stamp cannot tell us what the
+# existing image was built with, so the only safe reading is "unknown, rebuild" -- seeding it
+# silently to the current entries instead would swallow exactly the first option change after a
+# fresh configure, which is the one most likely to be deliberate. The cost is one rebuild the first
+# time a configured tree meets this mechanism.
+$(shell printf '%s\n' '$(BUILDER_DEFS_TRACKED)' | cmp -s - $(BUILDER_DEFS_FILE) 2>/dev/null || \
+        printf '%s\n' '$(BUILDER_DEFS_TRACKED)' > $(BUILDER_DEFS_FILE))
+endif
+
+$(TARGET): $(SOURCES) $(BUILDER_CFGS) $(BUILDER_DEFS_DEP)
 	$(BUILDER) $(BUILDER_DEFS) build
 
 $(BUILDER_CFGS): | $(SDKCONFIG_DEFAULTS)

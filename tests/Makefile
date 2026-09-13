@@ -10,6 +10,7 @@ IOTDATA_SRC          = ../..
 IOTDATA_SRC_LIBRARY  = $(IOTDATA_SRC)/iotdata-library
 IOTDATA_SRC_COMMON   = $(IOTDATA_SRC)/iotdata-common
 IOTDATA_SRC_EXAMPLE  = $(IOTDATA_SRC)/iotdata-example
+IOTDATA_SRC_BLACKBOX = $(IOTDATA_SRC)/iotdata-depend/blackbox/include
 
 ## a variant has to be named: the library includes no default by design
 IOTDATA_VARIANT ?= $(abspath $(IOTDATA_SRC_COMMON)/include/iotdata_variant_weather_station.h)
@@ -32,6 +33,11 @@ test:
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON -DPLATFORM_LINUX $(TEST_VERSION_DEFS) test_version.c -o $(TEST_DIR)/test_version -lm -lcjson
 	@$(TEST_DIR)/test_version
 # JSON on: the point of this suite is that the two media agree, so it needs both of them.
+# built both ways: the disabled build is the one that used to be a per-app deletion
+	@$(TEST_CC) $(TEST_CFLAGS) -DIOTDATA_DIAGNOSTICS=1 -I$(IOTDATA_SRC_BLACKBOX) test_node_diagnostics.c -o $(TEST_DIR)/test_node_diagnostics_on -lm
+	@$(TEST_DIR)/test_node_diagnostics_on
+	@$(TEST_CC) $(TEST_CFLAGS) -DIOTDATA_DIAGNOSTICS=0 -I$(IOTDATA_SRC_BLACKBOX) test_node_diagnostics.c -o $(TEST_DIR)/test_node_diagnostics_off -lm
+	@$(TEST_DIR)/test_node_diagnostics_off
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_status.c -o $(TEST_DIR)/test_node_status -lm -lcjson
 	@$(TEST_DIR)/test_node_status
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_control.c -o $(TEST_DIR)/test_node_control -lm -lcjson

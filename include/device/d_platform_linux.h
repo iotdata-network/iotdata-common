@@ -201,30 +201,24 @@ static inline uint32_t esp_cpu_get_cycle_count(void) {
 }
 
 static inline void ets_delay_us(const uint32_t us) {
-    struct timespec ts = { .tv_sec = 0, .tv_nsec = (long)us * 1000L };
-    (void)nanosleep(&ts, NULL);
+    (void)nanosleep(&(struct timespec){ .tv_sec = 0, .tv_nsec = (long)us * 1000L }, NULL);
 }
 
-/* No watchdog to feed: on a host that is systemd's job, not ours. */
 static inline int esp_task_wdt_reset(void) {
     return ESP_OK;
 }
 
 static inline void esp_rom_delay_us(const uint32_t us) {
-    struct timespec ts = { .tv_sec = (time_t)(us / 1000000u), .tv_nsec = (long)(us % 1000000u) * 1000L };
-    (void)nanosleep(&ts, NULL);
+    (void)nanosleep(&(struct timespec){ .tv_sec = (time_t)(us / 1000000u), .tv_nsec = (long)(us % 1000000u) * 1000L }, NULL);
 }
 
-/* FreeRTOS delay, in the same units the callers use (pdMS_TO_TICKS is the identity here, so a
-   "tick" is a millisecond). */
 #define pdMS_TO_TICKS(ms) (ms)
 static inline void vTaskDelay(const uint32_t ms) {
-    struct timespec ts = { .tv_sec = (time_t)(ms / 1000u), .tv_nsec = (long)(ms % 1000u) * 1000000L };
-    (void)nanosleep(&ts, NULL);
+    (void)nanosleep(&(struct timespec){ .tv_sec = (time_t)(ms / 1000u), .tv_nsec = (long)(ms % 1000u) * 1000000L }, NULL);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
-// GPIO -- accepted and ignored; see the note at the top
+// GPIO
 // ------------------------------------------------------------------------------------------------------------------------
 
 typedef int gpio_num_t;
@@ -234,50 +228,32 @@ typedef int gpio_num_t;
 #define GPIO_IS_VALID_OUTPUT_GPIO(n) ((n) >= 0)
 #define GPIO_IS_VALID_INPUT_GPIO(n)  ((n) >= 0)
 
-static inline esp_err_t gpio_hold_en(const gpio_num_t pin) {
-    (void)pin;
+static inline esp_err_t gpio_hold_en(__attribute__ ((unused)) const gpio_num_t pin) {
     return ESP_OK;
 }
-static inline esp_err_t gpio_hold_dis(const gpio_num_t pin) {
-    (void)pin;
+static inline esp_err_t gpio_hold_dis(__attribute__ ((unused)) const gpio_num_t pin) {
     return ESP_OK;
 }
 static inline void gpio_deep_sleep_hold_en(void) {
 }
 static inline void gpio_deep_sleep_hold_dis(void) {
 }
-
-static inline void hw_gpio_cfg_enable_input(const gpio_num_t pin, const bool pullup) {
-    (void)pin;
-    (void)pullup;
+static inline void hw_gpio_cfg_enable_input(__attribute__ ((unused)) const gpio_num_t pin, __attribute__ ((unused)) const bool pullup) {
 }
-static inline void hw_gpio_cfg_enable_output(const gpio_num_t pin) {
-    (void)pin;
+static inline void hw_gpio_cfg_enable_output(__attribute__ ((unused)) const gpio_num_t pin) {
 }
-static inline void hw_gpio_cfg_disable(const gpio_num_t pin) {
-    (void)pin;
+static inline void hw_gpio_cfg_disable(__attribute__ ((unused)) const gpio_num_t pin) {
 }
-static inline void hw_gpio_cfg_disable_two(const gpio_num_t a, const gpio_num_t b) {
-    (void)a;
-    (void)b;
+static inline void hw_gpio_cfg_disable_two(__attribute__ ((unused)) const gpio_num_t a, __attribute__ ((unused)) const gpio_num_t b) {
 }
-static inline void hw_gpio_cfg_disable_four(const gpio_num_t a, const gpio_num_t b, const gpio_num_t c, const gpio_num_t d) {
-    (void)a;
-    (void)b;
-    (void)c;
-    (void)d;
+static inline void hw_gpio_cfg_disable_four(__attribute__ ((unused)) const gpio_num_t a, __attribute__ ((unused)) const gpio_num_t b, __attribute__ ((unused)) const gpio_num_t c, __attribute__ ((unused)) const gpio_num_t d) {
 }
-static inline void hw_gpio_set(const gpio_num_t pin, const bool level) {
-    (void)pin;
-    (void)level;
+static inline void hw_gpio_set(__attribute__ ((unused)) const gpio_num_t pin, __attribute__ ((unused)) const bool level) {
 }
-static inline bool hw_gpio_get(const gpio_num_t pin) {
-    (void)pin;
+static inline bool hw_gpio_get(__attribute__ ((unused)) const gpio_num_t pin) {
     return true;
 }
-static inline void hw_gpio_revoke_two(const gpio_num_t a, const gpio_num_t b) {
-    (void)a;
-    (void)b;
+static inline void hw_gpio_revoke_two(__attribute__ ((unused)) const gpio_num_t a, __attribute__ ((unused)) const gpio_num_t b) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -327,12 +303,7 @@ static inline speed_t _hw_uart_speed(const int baud) {
     }
 }
 
-static inline esp_err_t hw_uart_start(const gpio_num_t tx, const gpio_num_t rx, const int baud, const int rx_buf_size, const int tx_buf_size) {
-    (void)tx;
-    (void)rx;
-    (void)rx_buf_size;
-    (void)tx_buf_size;
-
+static inline esp_err_t hw_uart_start(__attribute__ ((unused)) const gpio_num_t tx, __attribute__ ((unused)) const gpio_num_t rx, const int baud, __attribute__ ((unused)) const int rx_buf_size, __attribute__ ((unused)) const int tx_buf_size) {
     if (s_hw_uart_fd >= 0)
         return ESP_ERR_INVALID_STATE;
 
@@ -389,8 +360,7 @@ static inline int hw_uart_write(const uint8_t *const data, const size_t len) {
     return (int)off;
 }
 
-static inline esp_err_t hw_uart_wait_tx_done(const int timeout_ms) {
-    (void)timeout_ms; /* tcdrain has no timeout; the kernel bounds it by the baud rate */
+static inline esp_err_t hw_uart_wait_tx_done(__attribute__ ((unused)) const int timeout_ms) {
     if (s_hw_uart_fd < 0)
         return ESP_ERR_INVALID_STATE;
     return tcdrain(s_hw_uart_fd) == 0 ? ESP_OK : ESP_FAIL;
