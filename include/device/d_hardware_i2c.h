@@ -145,7 +145,7 @@ int hw_i2c_bus_scan(uint8_t *const out, const int out_max) {
             found++;
         }
     }
-    ESP_LOGW("hw_i2c", "scan: %d device(s)%s", found, s_i2c_sda, s_i2c_scl, found ? ": " : "", list);
+    ESP_LOGW("hw_i2c", "scan: %d device(s)%s", found, found ? ": " : "", list);
     return found;
 }
 

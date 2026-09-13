@@ -172,6 +172,42 @@ esp_err_t ltr390_sleep(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+/* PART_ID is [7:4] part number, [3:0] revision, so the family is the high nibble and an
+   unexpected low nibble is a different silicon revision rather than a different part. */
+static const char *_ltr390_part_name(const uint8_t id) {
+    return ((id >> 4) == (_LTR390_PART_ID_VAL >> 4)) ? "LTR390" : "unknown";
+}
+
+void ltr390_diagnose(void) {
+    if (hw_i2c_bus_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT) != ESP_OK) {
+        ESP_LOGE(__tag_device_ltr390, "diag: cannot open the i2c bus on gpio%d/%d", PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL);
+        return;
+    }
+    uint8_t addr[8];
+    const int n = hw_i2c_bus_scan(addr, (int)(sizeof(addr) / sizeof(addr[0])));
+    if (n <= 0) {
+        ESP_LOGE(__tag_device_ltr390, "diag: module is unpowered, unconnected or faulty (check VCC at 3V3, and SDA/SCL to gpio%d/%d)", PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL);
+    } else {
+        for (int i = 0; i < n && i < (int)(sizeof(addr) / sizeof(addr[0])); i++) {
+            i2c_master_dev_handle_t dev;
+            if (hw_i2c_dev_add(addr[i], &dev) == ESP_OK) {
+                uint8_t id = 0;
+                if (hw_i2c_dev_reg_read(dev, _LTR390_REG_PART_ID, &id, 1) != ESP_OK)
+                    ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " answers, but register 0x%02X would not read", addr[i], _LTR390_REG_PART_ID);
+                else if ((id >> 4) == (_LTR390_PART_ID_VAL >> 4) && addr[i] != _LTR390_I2C_ADDR)
+                    ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " part-id=0x%02" PRIX8 " %s <-- THE SENSOR IS HERE, not at 0x%02X, rebuild with -DUSE__LTR390_I2C_ADDR=0x%02X", addr[i], id, _ltr390_part_name(id),
+                             _LTR390_I2C_ADDR, addr[i]);
+                else
+                    ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " part-id=0x%02" PRIX8 " %s", addr[i], id, _ltr390_part_name(id));
+                (void)hw_i2c_dev_del(dev);
+            }
+        }
+    }
+    hw_i2c_bus_stop();
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
 esp_err_t ltr390_setup(const ltr390_config_t *const config) {
 
     ESP_ERROR_CHECK_BOOLEAN(GPIO_IS_VALID_INPUT_GPIO(PIN_DEVICE_I2C_SDA) && GPIO_IS_VALID_OUTPUT_GPIO(PIN_DEVICE_I2C_SDA));

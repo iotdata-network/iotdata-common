@@ -39,6 +39,13 @@
  * carries more than control answers -- reports and diagnostics land there too -- but it is one
  * channel, and the alternative was a hodgepodge of topics per producer.
  */
+/* How many stations one request may name. Bounded because each becomes its own DOWN frame in the
+   gateway's staging queue: a request that would outrun that queue is refused whole, rather than
+   half-delivered with no way to say which half. */
+#ifndef IOTDATA_CONTROL_TARGETS_MAX
+#define IOTDATA_CONTROL_TARGETS_MAX 8
+#endif
+
 #define IOTDATA_MQTT_MANAGE_TOPIC_REQ  "/manage/req"
 #define IOTDATA_MQTT_MANAGE_TOPIC_RESP "/manage/resp"
 
@@ -66,11 +73,19 @@ typedef struct {
 /* Everything a command might need, however the medium expressed it. One struct rather than a
    parameter list, because the next medium fills the same fields from argv. */
 typedef struct {
-    uint16_t target;      /* the node to drive; BROADCAST when unsaid */
-    uint16_t station;     /* the station a mesh command acts ON, which is not the target */
-    uint8_t scope_status; /* STATUS_SCOPE_* bits; 0 = every group */
-    uint8_t scope_filter; /* FILTER_SCOPE_*; ALL when unsaid */
-    uint8_t action;       /* FILTERS_BLOCK / _ALLOW / _NONE */
+    /* Who it is for. `target` is simply the first of `targets`, so a request naming one station --
+       which is most of them -- reads exactly as it always did. A LIST is the general case: the
+       wire carries ONE 12-bit station per DOWN frame, so addressing several means the gateway
+       emitting several frames, and that fan-out is the gateway's business rather than the
+       requester's. Broadcast absorbs the rest: asking for "all, plus 0537" is asking for all. */
+    uint16_t target; /* the node to drive; BROADCAST when unsaid */
+    uint16_t targets[IOTDATA_CONTROL_TARGETS_MAX];
+    uint8_t targets_count;
+    bool targets_overflow; /* the request named more than fit: it must be refused, not truncated */
+    uint16_t station;      /* the station a mesh command acts ON, which is not the target */
+    uint8_t scope_status;  /* STATUS_SCOPE_* bits; 0 = every group */
+    uint8_t scope_filter;  /* FILTER_SCOPE_*; ALL when unsaid */
+    uint8_t action;        /* FILTERS_BLOCK / _ALLOW / _NONE */
 } iotdata_control_args_t;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -391,7 +406,8 @@ static inline const iotdata_control_command_t *iotdata_control_from_argv(const i
     if (argv == NULL || args == NULL || argc <= 0)
         return NULL;
     memset(args, 0, sizeof(*args));
-    args->target = IOTDATA_STATION_BROADCAST;
+    args->target = args->targets[0] = IOTDATA_STATION_BROADCAST;
+    args->targets_count = 1;
     args->scope_filter = IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_ALL;
 
     for (int words = argc; words >= 1; words--) {
@@ -458,12 +474,46 @@ static inline const char *_iotdata_control_json_str(const cJSON *const root, con
 
 /* A request object -> the command and its arguments. Returns NULL when the object names no command
    this node knows, which the caller reports rather than guessing at. */
+/* One station, or a list of them. Duplicates are dropped and a broadcast anywhere in the list
+   collapses it to a single broadcast -- both because sending the same node the same command twice
+   is airtime for nothing, and because the alternative is a caller having to reason about whether
+   its list overlaps. Returns how many are in `out`, always at least one. */
+static inline uint8_t _iotdata_control_json_targets(const cJSON *const j, uint16_t *const out, const uint8_t max, bool *const overflow) {
+    uint8_t n = 0;
+    *overflow = false;
+    if (cJSON_IsArray(j)) {
+        const cJSON *e = NULL;
+        cJSON_ArrayForEach(e, j) {
+            const uint16_t st = _iotdata_control_json_station(e, IOTDATA_STATION_BROADCAST);
+            if (st == IOTDATA_STATION_BROADCAST) {
+                out[0] = IOTDATA_STATION_BROADCAST;
+                return 1;
+            }
+            bool seen = false;
+            for (uint8_t i = 0; i < n; i++)
+                seen = seen || (out[i] == st);
+            if (seen)
+                continue;
+            if (n < max)
+                out[n++] = st;
+            else
+                *overflow = true; /* silently dropping a station the caller named is not an option */
+        }
+    }
+    if (n == 0) { /* not a list, or an empty one: the single-target reading, broadcast when absent */
+        out[0] = _iotdata_control_json_station(j, IOTDATA_STATION_BROADCAST);
+        n = 1;
+    }
+    return n;
+}
+
 static inline const iotdata_control_command_t *iotdata_control_from_json(const cJSON *const root, iotdata_control_args_t *const args) {
     if (root == NULL || args == NULL)
         return NULL;
     /* absent target means BROADCAST -- "this command, to whoever hears it" -- while an absent
        station means none, because a mesh command with no subject has nothing to act on */
-    args->target = _iotdata_control_json_station(cJSON_GetObjectItem(root, "target"), IOTDATA_STATION_BROADCAST);
+    args->targets_count = _iotdata_control_json_targets(cJSON_GetObjectItem(root, "target"), args->targets, IOTDATA_CONTROL_TARGETS_MAX, &args->targets_overflow);
+    args->target = args->targets[0];
     args->station = _iotdata_control_json_station(cJSON_GetObjectItem(root, "station"), 0);
     const char *const scope = _iotdata_control_json_str(root, "scope");
     args->scope_status = iotdata_control_scope_status(scope);

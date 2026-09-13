@@ -286,6 +286,10 @@ static const char *_bme280_chip_name(const uint8_t id) {
 }
 
 void bme280_diagnose(void) {
+    if (hw_i2c_bus_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT) != ESP_OK) {
+        ESP_LOGE(__tag_device_bme280, "diag: cannot open the i2c bus on gpio%d/%d", PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL);
+        return;
+    }
     uint8_t addr[8];
     const int n = hw_i2c_bus_scan(addr, (int)(sizeof(addr) / sizeof(addr[0])));
     if (n <= 0) {
@@ -347,7 +351,6 @@ esp_err_t bme280_setup(const bme280_config_t *const config) {
 
 bme280_setup_failed:
     (void)bme280_sleep();
-    bme280_diagnose();
     hw_i2c_stop();
     return ret;
 }
