@@ -94,8 +94,17 @@ $(shell printf '%s\n' '$(BUILDER_DEFS_TRACKED)' | cmp -s - $(BUILDER_DEFS_FILE) 
         printf '%s\n' '$(BUILDER_DEFS_TRACKED)' > $(BUILDER_DEFS_FILE))
 endif
 
-$(TARGET): $(SOURCES) $(BUILDER_CFGS) $(BUILDER_DEFS_DEP)
+# FORCE, because make is the wrong tool to decide this and cannot be made right. SOURCES is a
+# hand-kept list -- most projects name only main/app.c -- so editing a shared header under
+# iotdata-common leaves make certain the image is current, and it hands you a stale binary with no
+# indication. ninja already tracks every header through the compiler's own depfiles, so the honest
+# arrangement is: make always asks, ninja decides. A no-op build costs a second or two; a silently
+# stale image costs however long you spend debugging the firmware you did not flash.
+$(TARGET): $(SOURCES) $(BUILDER_CFGS) $(BUILDER_DEFS_DEP) FORCE
 	$(BUILDER) $(BUILDER_DEFS) build
+
+.PHONY: FORCE
+FORCE:
 
 $(BUILDER_CFGS): | $(SDKCONFIG_DEFAULTS)
 	$(BUILDER) $(BUILDER_DEFS) set-target $(PLATFORM)

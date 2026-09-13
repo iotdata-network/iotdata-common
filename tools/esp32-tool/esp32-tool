@@ -49,9 +49,17 @@ Examples:
     esp32-tool diag extract -p /dev/ttyACM0 --raw diag.bin --out diag.csv
     esp32-tool diag decode diag.bin          # offline, re-decode an image pulled earlier
 
-With two boards attached, ttyACM numbering can move across a reset/re-enumerate; to
-pin a physical board use a stable path, e.g. -p /dev/serial/by-path/<...> (see
-`ls -l /dev/serial/by-path`).
+Several identical boards on one host all enumerate as "USB JTAG/serial debug unit", and
+ttyACM numbering moves across a reset or a re-enumerate. Name the BOARD instead: its USB
+iSerial is the chip's MAC -- unique, and the same sn= it reports in VERSION.
+
+    esp32-tool list                          # serial (MAC), port, by-id path
+    esp32-tool deploy -s 14:63:93:6F:F0:90   # find that board, whatever it enumerated as
+    esp32-tool deploy -s f090                # any unambiguous tail of the serial
+    esp32-tool deploy -s 90 -p /dev/ttyACM0  # -p names the port, -s REFUSES if it is not that board
+
+$ESP32_SERIAL sets it per shell, as $ESP32_PORT does for the port. /dev/serial/by-id/<...>
+works too, and needs no udev rule -- the kernel builds it from the same serial.
 
 Dependencies on the target host (none are the compiler toolchain):
     python3, pyserial          monitor           -- already present for esp32-boot
@@ -143,6 +151,102 @@ def print_line(line):
         print(line)
     log_line(line)
 
+# --------------------------------------------------------------------------------------
+# WHICH BOARD IS THIS?
+#
+# Several identical boards on one host all enumerate as "USB JTAG/serial debug unit", and ttyACM
+# numbering is assigned in the order they happen to appear -- so it moves across a reset, and after
+# a reboot the board you flashed yesterday may not be the one you flash today.
+#
+# What saves it is that the ESP32-C3/S3 USB-Serial-JTAG reports the chip's MAC as its USB iSerial.
+# That is unique per board, the kernel already exposes it (/dev/serial/by-id, and ATTRS{serial} in
+# sysfs), and it is the SAME value the node reports as sn= in its VERSION TLV -- so one identifier
+# names the board on the bench, in udev, and in the fleet.
+# --------------------------------------------------------------------------------------
+
+def serial_norm(spec):
+    """A board's identity however it was written: 14:63:93:6F:F0:90, 1463936ff090, 14-63-...."""
+    return re.sub(r"[^0-9a-fA-F]", "", spec or "").lower() or None
+
+def board_serial(port):
+    """The USB iSerial behind a tty -- the chip's MAC. None if this port is not a USB device."""
+    try:
+        node = os.path.basename(os.path.realpath(port))
+        d = os.path.realpath(f"/sys/class/tty/{node}/device")
+        for _ in range(4):  # the tty hangs off an interface; the serial is on the device above it
+            f = os.path.join(d, "serial")
+            if os.path.exists(f):
+                with open(f) as fh:
+                    return fh.read().strip()
+            d = os.path.dirname(d)
+    except OSError:
+        pass
+    return None
+
+def boards():
+    """Every attached USB serial device, as (port, serial), sorted by port."""
+    found = []
+    try:
+        nodes = os.listdir("/sys/class/tty")
+    except OSError:
+        return found
+    for node in sorted(nodes):
+        if not (node.startswith("ttyACM") or node.startswith("ttyUSB")):
+            continue
+        port = "/dev/" + node
+        sn = board_serial(port)
+        if sn:
+            found.append((port, sn))
+    return found
+
+def board_find(spec, wait=False):
+    """The port of the board with this serial. As short a TAIL as is UNAMBIGUOUS -- `-s 90` is fine
+    when only one board ends in 90, and the boards on a bench usually differ in the last byte. It
+    is uniqueness that makes this safe, not length: two matches is an error, never a guess."""
+    want = serial_norm(spec)
+    if not want:
+        die(f"-s {spec}: expected a board serial (its MAC) or a tail of one, e.g. 14:63:93:6F:F0:90, 1463936ff090, or 90")
+    announced = False
+    while True:
+        hits = [(p, sn) for p, sn in boards() if serial_norm(sn) == want or serial_norm(sn).endswith(want)]
+        if len(hits) == 1:
+            if announced:
+                print()
+            return hits[0][0]
+        if len(hits) > 1:
+            die(f"-s {spec} matches {len(hits)} boards: " + ", ".join(f"{sn} on {p}" for p, sn in hits) + " -- give more of the tail")
+        if not wait:
+            attached = boards()
+            listing = "\n  ".join(f"{sn}  {p}" for p, sn in attached) if attached else "(none attached)"
+            die(f"no board with serial {spec}. Attached:\n  {listing}")
+        if not announced:
+            print(f"waiting for board {spec} (Ctrl-C to give up)", end="", flush=True)
+            announced = True
+        print(".", end="", flush=True)
+        time.sleep(0.5)
+
+def port_select(args):
+    """-s picks the board, -p names the port, and both together means -p with -s as a GUARD."""
+    port, spec = getattr(args, "port", None), getattr(args, "serial", None)
+    if spec and not port:
+        return board_find(spec, wait=getattr(args, "wait", False))
+    return port or os.environ.get("ESP32_PORT", "/dev/ttyACM0")
+
+def do_list():
+    attached = boards()
+    if not attached:
+        print("no USB serial devices attached")
+        return 1
+    for port, sn in attached:
+        by_id = ""
+        d = "/dev/serial/by-id"
+        for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            if os.path.realpath(os.path.join(d, name)) == os.path.realpath(port):
+                by_id = os.path.join(d, name)
+                break
+        print(f"{sn}  {port}  {by_id}")
+    return 0
+
 def wait_for_port(port, timeout=None):
     """Block until `port` exists. Returns True if it appeared, False on timeout.
 
@@ -162,14 +266,23 @@ def wait_for_port(port, timeout=None):
     return True
 
 def require_port(args):
-    """Every port-using subcommand's precondition: the port is there, or -w waits for it."""
-    if os.path.exists(args.port):
+    """Every port-using subcommand's precondition: the port is there, or -w waits for it -- and it
+    is the board we meant. The check is what makes -s safe to combine with a habitual -p: flashing
+    the wrong one of three identical boards is otherwise silent, and only obvious later."""
+    if not os.path.exists(args.port):
+        if not getattr(args, "wait", False):
+            die(f"{args.port} not found (use -w to wait for it)")
+        print(f"waiting for {args.port} (Ctrl-C to give up)", end="", flush=True)
+        wait_for_port(args.port)
+        print()
+    spec = getattr(args, "serial", None)
+    if not spec:
         return
-    if not getattr(args, "wait", False):
-        die(f"{args.port} not found (use -w to wait for it)")
-    print(f"waiting for {args.port} (Ctrl-C to give up)", end="", flush=True)
-    wait_for_port(args.port)
-    print()
+    want, got = serial_norm(spec), board_serial(args.port)
+    if got is None:
+        die(f"{args.port} reports no USB serial, so -s {spec} cannot be checked")
+    if serial_norm(got) != want and not serial_norm(got).endswith(want):
+        die(f"{args.port} is board {got}, not {spec} -- refusing")
 
 def monitor(port, command=None, reset=False):
     import serial  # imported lazily so `flash` works without pyserial
@@ -559,7 +672,10 @@ def main():
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     def add_common(p, build=False):
-        p.add_argument("-p", "--port", default=os.environ.get("ESP32_PORT", "/dev/ttyACM0"), help="serial port (default: $ESP32_PORT or /dev/ttyACM0)")
+        p.add_argument("-p", "--port", default=None, help="serial port (default: $ESP32_PORT or /dev/ttyACM0)")
+        # The board's MAC, which is what its USB iSerial reports and what it calls itself in
+        # VERSION. Alone it FINDS the port; alongside -p it GUARDS it. Any unambiguous tail will do.
+        p.add_argument("-s", "--serial", default=os.environ.get("ESP32_SERIAL"), help="board serial (its MAC), or any unambiguous tail: finds the port, or verifies -p [$ESP32_SERIAL]")
         # -w is the answer to a board that deep-sleeps: it is only enumerated for a few seconds per
         # cycle, so "not found" is usually "not awake yet" rather than "not plugged in".
         p.add_argument("-w", "--wait", action="store_true", help="wait for the port to appear instead of failing (for a board that sleeps between cycles)")
@@ -567,6 +683,7 @@ def main():
             p.add_argument("-b", "--build-dir", default=None, help="ESP-IDF build directory (default: ./build, or the --pull staging dir)")
             p.add_argument("--pull", metavar="HOST:PATH", default=None, help="rsync the build's binaries from a remote build dir first")
             p.add_argument("--baud", type=int, default=460800, help="flash baud (ignored on USB-JTAG)")
+    sub.add_parser("list", help="show the attached boards: serial (MAC), port, by-id path")
     p_flash = sub.add_parser("flash", help="write a build dir to the chip")
     add_common(p_flash, build=True)
     p_mon = sub.add_parser("monitor", help="print the serial console (interactive; -r resets first)")
@@ -597,6 +714,11 @@ def main():
     p_cmd.add_argument("request", nargs="+", help="the command to send, e.g. 'vers', or 'logl debug'")
 
     args = parser.parse_args()
+    if args.cmd == "list":
+        sys.exit(do_list())
+    # -s and -p are reconciled once, here, so every subcommand below sees a plain resolved port.
+    if hasattr(args, "port"):
+        args.port = port_select(args)
     if args.cmd == "flash":
         build = resolve_build_dir(args)  # resolve (and --pull) BEFORE waiting, so the window is spent flashing
         require_port(args)

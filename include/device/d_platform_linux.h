@@ -51,6 +51,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -228,32 +229,32 @@ typedef int gpio_num_t;
 #define GPIO_IS_VALID_OUTPUT_GPIO(n) ((n) >= 0)
 #define GPIO_IS_VALID_INPUT_GPIO(n)  ((n) >= 0)
 
-static inline esp_err_t gpio_hold_en(__attribute__ ((unused)) const gpio_num_t pin) {
+static inline esp_err_t gpio_hold_en(__attribute__((unused)) const gpio_num_t pin) {
     return ESP_OK;
 }
-static inline esp_err_t gpio_hold_dis(__attribute__ ((unused)) const gpio_num_t pin) {
+static inline esp_err_t gpio_hold_dis(__attribute__((unused)) const gpio_num_t pin) {
     return ESP_OK;
 }
 static inline void gpio_deep_sleep_hold_en(void) {
 }
 static inline void gpio_deep_sleep_hold_dis(void) {
 }
-static inline void hw_gpio_cfg_enable_input(__attribute__ ((unused)) const gpio_num_t pin, __attribute__ ((unused)) const bool pullup) {
+static inline void hw_gpio_cfg_enable_input(__attribute__((unused)) const gpio_num_t pin, __attribute__((unused)) const bool pullup) {
 }
-static inline void hw_gpio_cfg_enable_output(__attribute__ ((unused)) const gpio_num_t pin) {
+static inline void hw_gpio_cfg_enable_output(__attribute__((unused)) const gpio_num_t pin) {
 }
-static inline void hw_gpio_cfg_disable(__attribute__ ((unused)) const gpio_num_t pin) {
+static inline void hw_gpio_cfg_disable(__attribute__((unused)) const gpio_num_t pin) {
 }
-static inline void hw_gpio_cfg_disable_two(__attribute__ ((unused)) const gpio_num_t a, __attribute__ ((unused)) const gpio_num_t b) {
+static inline void hw_gpio_cfg_disable_two(__attribute__((unused)) const gpio_num_t a, __attribute__((unused)) const gpio_num_t b) {
 }
-static inline void hw_gpio_cfg_disable_four(__attribute__ ((unused)) const gpio_num_t a, __attribute__ ((unused)) const gpio_num_t b, __attribute__ ((unused)) const gpio_num_t c, __attribute__ ((unused)) const gpio_num_t d) {
+static inline void hw_gpio_cfg_disable_four(__attribute__((unused)) const gpio_num_t a, __attribute__((unused)) const gpio_num_t b, __attribute__((unused)) const gpio_num_t c, __attribute__((unused)) const gpio_num_t d) {
 }
-static inline void hw_gpio_set(__attribute__ ((unused)) const gpio_num_t pin, __attribute__ ((unused)) const bool level) {
+static inline void hw_gpio_set(__attribute__((unused)) const gpio_num_t pin, __attribute__((unused)) const bool level) {
 }
-static inline bool hw_gpio_get(__attribute__ ((unused)) const gpio_num_t pin) {
+static inline bool hw_gpio_get(__attribute__((unused)) const gpio_num_t pin) {
     return true;
 }
-static inline void hw_gpio_revoke_two(__attribute__ ((unused)) const gpio_num_t a, __attribute__ ((unused)) const gpio_num_t b) {
+static inline void hw_gpio_revoke_two(__attribute__((unused)) const gpio_num_t a, __attribute__((unused)) const gpio_num_t b) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -303,7 +304,7 @@ static inline speed_t _hw_uart_speed(const int baud) {
     }
 }
 
-static inline esp_err_t hw_uart_start(__attribute__ ((unused)) const gpio_num_t tx, __attribute__ ((unused)) const gpio_num_t rx, const int baud, __attribute__ ((unused)) const int rx_buf_size, __attribute__ ((unused)) const int tx_buf_size) {
+static inline esp_err_t hw_uart_start(__attribute__((unused)) const gpio_num_t tx, __attribute__((unused)) const gpio_num_t rx, const int baud, __attribute__((unused)) const int rx_buf_size, __attribute__((unused)) const int tx_buf_size) {
     if (s_hw_uart_fd >= 0)
         return ESP_ERR_INVALID_STATE;
 
@@ -360,7 +361,7 @@ static inline int hw_uart_write(const uint8_t *const data, const size_t len) {
     return (int)off;
 }
 
-static inline esp_err_t hw_uart_wait_tx_done(__attribute__ ((unused)) const int timeout_ms) {
+static inline esp_err_t hw_uart_wait_tx_done(__attribute__((unused)) const int timeout_ms) {
     if (s_hw_uart_fd < 0)
         return ESP_ERR_INVALID_STATE;
     return tcdrain(s_hw_uart_fd) == 0 ? ESP_OK : ESP_FAIL;
@@ -395,6 +396,11 @@ static inline int hw_uart_read(uint8_t *const buf, const size_t len, const int t
         got += (size_t)n;
     }
     return (int)got;
+}
+
+static inline size_t hw_uart_available(void) {
+    int n = 0;
+    return (s_hw_uart_fd >= 0 && ioctl(s_hw_uart_fd, FIONREAD, &n) == 0 && n > 0) ? (size_t)n : 0;
 }
 
 static inline esp_err_t hw_uart_flush(void) {

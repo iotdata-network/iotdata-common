@@ -107,6 +107,13 @@ int hw_uart_read(uint8_t *const buf, const size_t len, const int timeout_ms) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+size_t hw_uart_available(void) {
+    size_t n = 0;
+    return (uart_get_buffered_data_len(s_uart_port, &n) == ESP_OK) ? n : 0;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
 esp_err_t hw_uart_flush(void) {
     return uart_flush_input(s_uart_port);
 }

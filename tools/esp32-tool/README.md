@@ -78,15 +78,39 @@ esp32-tool diag clear --confirm          # erase it
 
 NB `diag` and `flash` reset the device; `monitor` does not unless you pass `-r`.
 
+## Installing
+
+The tool is one self-contained python file, so a host with boards plugged into it needs neither
+this repo nor a toolchain — just the script and two python packages from its own distro.
+
+```sh
+make check                      # what is present here, and how to fix what is not
+make deps                       # install the missing python packages
+make install                    # -> /usr/local/bin/esp32-tool   (PREFIX=, BINDIR=, DESTDIR= honoured)
+
+make install-remote HOST=pi@box # copy it to a board host and check ITS dependencies
+```
+
+`make deps` prefers the distro package (`python3-serial`, `esptool`) over pip, because Debian marks
+its python externally-managed (PEP 668) and a plain `pip install` there either refuses or starts
+quietly fighting apt. It falls back to `pip --user`, and to `--break-system-packages` only after
+saying that is what it is doing.
+
 ## Dependencies on the target host
 
-None of these is the compiler toolchain:
+None of these is the compiler toolchain, and the tool is useful before they are all present —
+`make check` reports them per feature rather than pass/fail:
 
 | For | Needs | Install |
 |---|---|---|
-| `monitor`, `command` | python3, pyserial | already present (used by `esp32-boot`) |
-| `flash`, `diag` | esptool | `pip install esptool` |
+| `list`, and everything | python3 | the only hard requirement |
+| `monitor`, `command` | python3, pyserial | `python3-serial`, or `pip install pyserial` |
+| `flash`, `diag` | esptool | `esptool` (apt), or `pip install esptool` |
 | `--pull` | rsync + ssh | usually already present |
+
+Note that an ESP-IDF installation carries its own esptool inside its venv, which is **not** on the
+system python's path — so a machine that builds and flashes happily with `idf.py` can still report
+esptool missing here. They are separate installs.
 
 ## Notes
 

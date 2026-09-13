@@ -125,6 +125,32 @@ void hw_i2c_stop(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+#define I2C_SCAN_TIMEOUT_MS 20
+#define I2C_SCAN_ADDR_FIRST 0x08 /* below is reserved: general call, CBUS, 10-bit prefixes */
+#define I2C_SCAN_ADDR_LAST  0x77
+
+int hw_i2c_bus_scan(uint8_t *const out, const int out_max) {
+    ESP_LOGW("hw_i2c", "scan: sda=%d (%d) scl=%d (%d) (both should be 1)", s_i2c_sda, hw_gpio_get(s_i2c_sda) ? 1 : 0, s_i2c_scl, hw_gpio_get(s_i2c_scl) ? 1 : 0);
+    int found = 0;
+    char list[8 * 6 + 4] = "";
+    size_t at = 0;
+    for (uint8_t addr = I2C_SCAN_ADDR_FIRST; addr <= I2C_SCAN_ADDR_LAST; addr++) {
+        if ((addr & 0x0F) == 0)
+            (void)esp_task_wdt_reset();
+        if (i2c_master_probe(s_i2c_bus, addr, I2C_SCAN_TIMEOUT_MS) == ESP_OK) {
+            if (out != NULL && found < out_max)
+                out[found] = addr;
+            if (at + 6 < sizeof(list))
+                at += (size_t)snprintf(list + at, sizeof(list) - at, "%s0x%02X", at ? " " : "", addr);
+            found++;
+        }
+    }
+    ESP_LOGW("hw_i2c", "scan: %d device(s)%s", found, s_i2c_sda, s_i2c_scl, found ? ": " : "", list);
+    return found;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
 esp_err_t hw_i2c_bus_start(const gpio_num_t sda, const gpio_num_t scl, __attribute__((unused)) const uint32_t freq_hz) {
     assert(!s_i2c_bus && !s_i2c_dev);
 

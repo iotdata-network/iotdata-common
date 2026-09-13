@@ -268,6 +268,49 @@ esp_err_t bme280_sleep(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+static const char *_bme280_chip_name(const uint8_t id) {
+    switch (id) {
+    case 0x60:
+        return "BME280/BMP390";
+    case 0x58:
+        return "BMP280";
+    case 0x61:
+        return "BME680/BME688";
+    case 0x55:
+        return "BMP180/BMP085";
+    case 0x50:
+        return "BMP388";
+    default:
+        return "unknown";
+    }
+}
+
+void bme280_diagnose(void) {
+    uint8_t addr[8];
+    const int n = hw_i2c_bus_scan(addr, (int)(sizeof(addr) / sizeof(addr[0])));
+    if (n <= 0) {
+        ESP_LOGE(__tag_device_bme280, "diag: module is unpowered, unconnected or faulty (check VCC at 3V3, and SDA/SCL to gpio%d/%d)", PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL);
+    } else {
+        for (int i = 0; i < n && i < (int)(sizeof(addr) / sizeof(addr[0])); i++) {
+            i2c_master_dev_handle_t dev;
+            if (hw_i2c_dev_add(addr[i], &dev) == ESP_OK) {
+                uint8_t id = 0;
+                if (hw_i2c_dev_reg_read(dev, _BME280_REG_CHIP_ID, &id, 1) != ESP_OK)
+                    ESP_LOGW(__tag_device_bme280, "diag: 0x%02" PRIX8 " answers, but register 0x%02X would not read", addr[i], _BME280_REG_CHIP_ID);
+                else if (_BME280_CHIP_ID_VALID(id) && addr[i] != BME280_I2C_ADDR)
+                    ESP_LOGW(__tag_device_bme280, "diag: 0x%02" PRIX8 " chip-id=0x%02" PRIX8 " %s <-- THE SENSOR IS HERE, not at 0x%02X, rebuild with -DUSE_BME280_I2C_ADDR=0x%02X, or strap SDO the other way", addr[i], id,
+                             _bme280_chip_name(id), BME280_I2C_ADDR, addr[i]);
+                else
+                    ESP_LOGW(__tag_device_bme280, "diag: 0x%02" PRIX8 " chip-id=0x%02" PRIX8 " %s", addr[i], id, _bme280_chip_name(id));
+                (void)hw_i2c_dev_del(dev);
+            }
+        }
+    }
+    hw_i2c_bus_stop();
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
 esp_err_t bme280_setup(const bme280_config_t *const config) {
 
     ESP_ERROR_CHECK_BOOLEAN(GPIO_IS_VALID_INPUT_GPIO(PIN_DEVICE_I2C_SDA) && GPIO_IS_VALID_OUTPUT_GPIO(PIN_DEVICE_I2C_SDA));
@@ -304,6 +347,7 @@ esp_err_t bme280_setup(const bme280_config_t *const config) {
 
 bme280_setup_failed:
     (void)bme280_sleep();
+    bme280_diagnose();
     hw_i2c_stop();
     return ret;
 }
