@@ -251,18 +251,10 @@ static inline int iotdata_control_pack(iotdata_kvr_t *const kv, const iotdata_co
 // JSON guard, because a node built without JSON still has a console.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* "node", "mesh", "node,mesh". Anything else -- including "all" -- is 0, which already means every
-   group, so there is no separate word for it. */
-static inline uint8_t iotdata_control_scope_status(const char *const s) {
-    if (s == NULL)
-        return 0;
-    uint8_t bits = 0;
-    if (strstr(s, "node") != NULL)
-        bits |= IOTDATA_NODE_STATUS_SCOPE_NODE;
-    if (strstr(s, "mesh") != NULL)
-        bits |= IOTDATA_NODE_STATUS_SCOPE_MESH;
-    return bits;
-}
+/* A STATUS scope: "node", "mesh", "node,mesh". The words belong to the TLV they scope, so they are
+   defined once in iotdata_node_status.h -- which this header therefore expects to have been
+   included first -- and a request typed at a console spells them exactly as the JSON does. */
+#define iotdata_control_scope_status(s) iotdata_status_scope_from_name(s)
 
 static inline uint8_t iotdata_control_scope_filter(const char *const s) {
     if (s != NULL) {
@@ -300,7 +292,7 @@ static inline bool _iotdata_control_is_scope_filter(const char *const s) {
     return s != NULL && (strcmp(s, "all") == 0 || strcmp(s, "manual") == 0 || strcmp(s, "auto") == 0);
 }
 static inline bool _iotdata_control_is_scope_status(const char *const s) {
-    return s != NULL && (strcmp(s, "all") == 0 || iotdata_control_scope_status(s) != 0);
+    return iotdata_status_scope_is_name(s);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

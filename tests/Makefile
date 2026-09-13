@@ -32,6 +32,8 @@ test:
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON -DPLATFORM_LINUX $(TEST_VERSION_DEFS) test_version.c -o $(TEST_DIR)/test_version -lm -lcjson
 	@$(TEST_DIR)/test_version
 # JSON on: the point of this suite is that the two media agree, so it needs both of them.
+	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_status.c -o $(TEST_DIR)/test_node_status -lm -lcjson
+	@$(TEST_DIR)/test_node_status
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_control.c -o $(TEST_DIR)/test_node_control -lm -lcjson
 	@$(TEST_DIR)/test_node_control
 	@$(TEST_CC) $(TEST_CFLAGS) test_format.c -o $(TEST_DIR)/test_format

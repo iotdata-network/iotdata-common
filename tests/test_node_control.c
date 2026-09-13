@@ -18,6 +18,7 @@
 #include "iotdata_variant.h"
 #include "iotdata.c"
 #include "iotdata_node.h"
+#include "iotdata_node_status.h"
 #include "iotdata_node_control.h"
 
 static int fails = 0;

@@ -26,14 +26,16 @@
 #include "iotdata.h"
 #include "iotdata_node.h"
 #include "iotdata_node_version.h"
+#include "iotdata_node_status.h"
 #include "iotdata_node_control.h"
 #include "iotdata_node_endpoint.h"
 
 /* --- stubs standing in for an application ------------------------------------------------- */
 
-static void st_cb(uint16_t s, iotdata_kvr_t *kv) { (void)s; iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_UPTIME, 99); }
+static void st_cb(uint16_t s, iotdata_node_status_t *o) { (void)s; o->uptime_s = 99; }
 static bool tx_cb(const uint8_t *p, size_t n) { (void)p; (void)n; return true; }
-static void mesh_cb(uint16_t s, iotdata_node_status_mesh_t *o) { (void)s; o->present = true; o->state = IOTDATA_NODE_STATUS_MESH_STATE_JOINED; o->cost = 3; }
+/* a node that senses AND relays fills the mesh group in the same struct: no second callback */
+static void both_cb(uint16_t s, iotdata_node_status_t *o) { st_cb(s, o); o->mesh.present = true; o->mesh.state = IOTDATA_NODE_STATUS_MESH_STATE_JOINED; o->mesh.cost = 3; }
 static uint8_t seen_key = 0;
 static bool ctl_cb(uint16_t s, uint8_t k, const uint8_t *v, uint8_t n) {
     (void)s; (void)v; (void)n;
@@ -63,7 +65,7 @@ int main(void) {
     idep_node_t n; uint8_t buf[IDEP_KV_MAX]; int len;
 
     /* a node that senses AND relays: both groups, scopable */
-    const idep_config_t both = { .caps=&caps, .status=st_cb, .tx=tx_cb, .status_mesh=mesh_cb, .control=ctl_cb,
+    const idep_config_t both = { .caps=&caps, .status=both_cb, .tx=tx_cb, .control=ctl_cb,
                                  .control_keys=keys, .control_keys_count=1, .receive_always=true };
     idep_node_init(&n, 0x0537);
     len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), 0);

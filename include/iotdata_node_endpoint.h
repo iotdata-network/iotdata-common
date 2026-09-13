@@ -55,11 +55,11 @@
 
 /* The app adds its own STATUS keys -- battery, temperature, whatever it has. Called with the
    builder mid-flight, so it just appends. */
-typedef void (*idep_status_fn)(uint16_t station, iotdata_kvr_t *kv);
+/* Fill in what is true of this device; iotdata_status_pack does the encoding. The app used to
+   write keys into the payload itself, which is how three nodes came to emit three subsets of the
+   same list in three orders. */
+typedef void (*idep_status_fn)(uint16_t station, iotdata_node_status_t *out);
 typedef bool (*idep_tx_fn)(const uint8_t *packet, size_t len);
-
-/* Fills the mesh group of STATUS; leave .present false to omit it. */
-typedef void (*idep_status_mesh_fn)(uint16_t station, iotdata_node_status_mesh_t *out);
 
 /* A CONTROL key this layer does not know, offered to the application. Returns whether it was
    the app's; false means "not implemented", counted as unknown and skipped rather than failing
@@ -75,12 +75,12 @@ typedef struct {
     /* What this instance HAS -- the rest of VERSION (chip, IDF, stamp, eFuse serial) is detected
        by iotdata_node_version.h and needs nothing from the app. May be NULL. */
     const iotdata_version_caps_t *caps;
+    /* Fills iotdata_node_status_t. A plain end device leaves .mesh.present false -- it is in
+       nobody's mesh and must OMIT the group rather than report a zeroed one. A node that both
+       senses and relays, which is coming, fills the group in and answers the mesh scope as a
+       relay does, without needing a second callback to do it. */
     idep_status_fn status;
     idep_tx_fn tx;
-    /* Optional: the mesh group of STATUS. NULL on a plain end device, which is in nobody's mesh
-       and must therefore OMIT the group rather than report a zeroed one. A node that both senses
-       and relays -- which is coming -- fills it in, and answers the mesh scope as a relay does. */
-    idep_status_mesh_fn status_mesh;
     /* Optional: the same app-control seam the relay and the gateway have. `control_keys` is what
        it implements, so the CONTROL report can advertise it -- this layer cannot know, and a
        hardcoded list here would go stale the first time the app changed. */
@@ -281,15 +281,11 @@ static inline int idep_build_diagnostics(const idep_config_t *const cfg, uint8_t
 static inline int idep_build_status(const idep_config_t *const cfg, const idep_node_t *const n, uint8_t *const buf, const size_t size, const uint8_t scope) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    if (iotdata_node_status_scope_wants(scope, IOTDATA_NODE_STATUS_SCOPE_NODE) && cfg->status != NULL)
-        cfg->status(n->station_id, &kv); /* the app knows its own uptime, battery, heap */
-    if (iotdata_node_status_scope_wants(scope, IOTDATA_NODE_STATUS_SCOPE_MESH) && cfg->status_mesh != NULL) {
-        iotdata_node_status_mesh_t m;
-        memset(&m, 0, sizeof(m));
-        cfg->status_mesh(n->station_id, &m);
-        iotdata_node_status_mesh_emit(&kv, &m); /* a no-op unless .present */
-    }
-    return kv.overflow ? -1 : (int)kv.len;
+    iotdata_node_status_t s;
+    memset(&s, 0, sizeof(s));
+    if (cfg->status != NULL)
+        cfg->status(n->station_id, &s); /* the app knows its own uptime, battery, heap */
+    return iotdata_status_pack(&kv, &s, scope);
 }
 
 /* What a manager can see of our schedule. Read-only until config persistence exists. */
