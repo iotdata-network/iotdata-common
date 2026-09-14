@@ -41,12 +41,6 @@
 #ifndef IDEP_RECEIVE_WINDOW_MS
 #define IDEP_RECEIVE_WINDOW_MS 30000u /* how long the receiver stays on: generous, to be tuned */
 #endif
-#ifndef IDEP_KV_MAX
-#define IDEP_KV_MAX 160
-#endif
-#ifndef IDEP_PACKET_MAX
-#define IDEP_PACKET_MAX 240
-#endif
 #ifndef IDEP_DIAG_RECORD_MAX
 #define IDEP_DIAG_RECORD_MAX 128 /* one diagnostic record: only allocated when a device HAS a recorder */
 #endif
@@ -107,7 +101,13 @@ typedef struct {
     bool receive_always;
     uint32_t receive_every_ms;  /* 0 = never open a window: this node cannot be reached */
     uint16_t receive_window_ms; /* advertised, so a sender can skip one too short to use */
+    uint16_t packet_max;
 } idep_config_t;
+
+static inline size_t idep_packet_budget(const idep_config_t *const cfg) {
+    const size_t want = (cfg->packet_max != 0u) ? (size_t)cfg->packet_max : (size_t)IOTDATA_MAX_PACKET_SIZE;
+    return want < (size_t)IOTDATA_MAX_PACKET_SIZE ? want : (size_t)IOTDATA_MAX_PACKET_SIZE;
+}
 
 /* Per station. On a deep-sleeping sensor this must live in RTC memory to survive the sleep. */
 typedef struct {
@@ -191,9 +191,9 @@ static inline bool idep_receive_announce(const idep_config_t *const cfg, idep_no
     if (cfg->tx == NULL)
         return false;
     static iotdata_encoder_t enc;
-    static uint8_t packet[IDEP_PACKET_MAX];
+    static uint8_t packet[IOTDATA_MAX_PACKET_SIZE]; // XXX 
     size_t len = 0;
-    if (iotdata_encode_begin(&enc, packet, sizeof(packet), 0, n->station_id, n->sequence) != IOTDATA_OK)
+    if (iotdata_encode_begin(&enc, packet, idep_packet_budget(cfg), 0, n->station_id, n->sequence) != IOTDATA_OK)
         return false;
     if (!idep_receive_append(cfg, &enc))
         return false;
@@ -223,25 +223,42 @@ static inline int idep_build_version(const idep_config_t *const cfg, uint8_t *co
 
 /* Unlike a relay or a gateway, an end device DOES produce telemetry, so this is the one place the
    variant suite is actually reported. The manifest goes in every chunk (see iotdata_node.h) and
-   the cursor resumes where the last frame stopped -- a whole suite does not fit one frame. */
-static inline int idep_build_variant(uint8_t *const buf, const size_t size, uint8_t *const cursor) {
+   the cursor resumes where the last frame stopped -- a whole suite does not fit one frame.
+ *
+ * This is the builder PARTIAL was built for: it has always broken a suite across frames and until
+ * now said nothing, so a reader had no way to tell a truncated suite from a short one. With a
+ * partial it reports index/total and the marker goes out beside it; with NULL it behaves exactly
+ * as before, which is what a caller that does not page still gets. */
+static inline int idep_build_variant(uint8_t *const buf, const size_t size, iotdata_partial_t *const p) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
     iotdata_kvr_add_u16(&kv, IOTDATA_NODE_VARIANT_MANIFEST, iotdata_node_variant_manifest());
-    for (; *cursor <= IOTDATA_VARIANT_MAX; (*cursor)++) {
-        const iotdata_variant_def_t *const d = iotdata_get_variant(*cursor);
+    /* Counted over the whole suite, not the chunk, so every chunk of one report agrees on it. */
+    uint8_t total = 0;
+    for (int v = 0; v <= IOTDATA_VARIANT_MAX; v++)
+        if (iotdata_get_variant((uint8_t)v) != NULL)
+            total++;
+    int v = (p != NULL) ? (int)p->cursor : 0;
+    uint8_t packed = 0;
+    for (; v <= IOTDATA_VARIANT_MAX; v++) {
+        const iotdata_variant_def_t *const d = iotdata_get_variant((uint8_t)v);
         if (d == NULL)
             continue;
-        static uint8_t val[IDEP_KV_MAX];
+        static uint8_t val[IOTDATA_MAX_PACKET_SIZE];
         const size_t n = iotdata_node_variant_encode(d, val, sizeof(val));
         if (n == 0)
             continue;
         if (kv.len + 2u + n > size)
             break; /* leave it for the next frame */
-        iotdata_kvr_add(&kv, *cursor, val, (uint8_t)n);
+        iotdata_kvr_add(&kv, (uint8_t)v, val, (uint8_t)n);
+        packed++;
     }
-    if (*cursor > IOTDATA_VARIANT_MAX)
-        *cursor = 0; /* wrapped: a later request starts the suite again */
+    if (p != NULL) {
+        p->total = total;
+        p->chunk = packed;
+        p->more = (v <= IOTDATA_VARIANT_MAX);
+        p->cursor = p->more ? (uint32_t)v : 0u; /* 0: the suite is done, a later request starts it again */
+    }
     return kv.overflow ? -1 : (int)kv.len;
 }
 
@@ -259,18 +276,32 @@ static inline int idep_build_control(const idep_config_t *const cfg, uint8_t *co
  * absent: absent is indistinguishable from a node that ignored the request, which is precisely
  * what its own CONTROL report promised it would not do.
  */
-static inline int idep_build_diagnostics(const idep_config_t *const cfg, uint8_t *const buf, const size_t size) {
+static inline int idep_build_diagnostics(const idep_config_t *const cfg, uint8_t *const buf, const size_t size, iotdata_partial_t *const p) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
+    uint8_t packed = 0;
+    bool more = false;
     if (cfg->diag != NULL) {
         static char rec[IDEP_DIAG_RECORD_MAX]; /* static: too large for a sensor's stack frame */
         size_t cursor = 0, n;
         iotdata_kvr_add_u8(&kv, IOTDATA_NODE_DIAGNOSTICS_TYPE, IOTDATA_NODE_DIAG_BLACKBOX);
         while ((n = cfg->diag(&cursor, rec, sizeof(rec))) > 0) {
-            if (n > 255u || kv.len + 2u + n > size)
-                break; /* what does not fit waits for the next request */
+            if (n > 255u || kv.len + 2u + n > size) {
+                more = true; /* what does not fit waits for the next request */
+                break;
+            }
             iotdata_kvr_add(&kv, IOTDATA_NODE_DIAGNOSTICS_DATA, rec, (uint8_t)n);
+            packed++;
         }
+    }
+    /* The recorder is a ring being written while it is read, so a total counted up front would be
+       a guess. What this CAN say honestly is how many went out and whether more were waiting --
+       total is the running tally, which is why a diagnostics dump is assembled by identifier
+       rather than by counting down to a promised total. */
+    if (p != NULL) {
+        p->chunk = packed;
+        p->more = more;
+        p->total = (uint8_t)(p->index + packed + (more ? 1u : 0u));
     }
     return kv.overflow ? -1 : (int)kv.len;
 }
@@ -297,13 +328,15 @@ static inline int idep_build_config(const idep_config_t *const cfg, uint8_t *con
     return kv.overflow ? -1 : (int)kv.len;
 }
 
-static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *const n, const uint8_t type, uint8_t *const buf, const size_t size, const uint8_t scope) {
-    static uint8_t variant_cursor = 0;
+/* `partial` may be NULL, and NULL is the whole of the no-cost path: every builder then behaves as
+   it always did -- pack what fits, fail if it does not. The state used to be a file-static cursor
+   in here, which meant one variant walk shared by every node a simulator stood up. */
+static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *const n, const uint8_t type, uint8_t *const buf, const size_t size, const uint8_t scope, iotdata_partial_t *const partial) {
     switch (type) {
     case IOTDATA_NODE_TLV_VERSION:
         return idep_build_version(cfg, buf, size);
     case IOTDATA_NODE_TLV_VARIANT:
-        return idep_build_variant(buf, size, &variant_cursor);
+        return idep_build_variant(buf, size, partial);
     case IOTDATA_NODE_TLV_CONTROL:
         return idep_build_control(cfg, buf, size);
     case IOTDATA_NODE_TLV_STATUS:
@@ -311,7 +344,7 @@ static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *
     case IOTDATA_NODE_TLV_CONFIG:
         return idep_build_config(cfg, buf, size);
     case IOTDATA_NODE_TLV_DIAGNOSTICS:
-        return idep_build_diagnostics(cfg, buf, size);
+        return idep_build_diagnostics(cfg, buf, size, partial);
     default:
         return -1;
     }
@@ -325,17 +358,33 @@ static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *
    no addressing to do -- whoever is listening republishes it. */
 /* `scope` only means anything to STATUS; 0 is "every group", which is what every caller that is
    not answering an explicit request wants. */
-static inline bool idep_report_scoped(const idep_config_t *const cfg, idep_node_t *const n, const uint8_t type, const uint8_t scope) {
+/* One chunk of a report. `partial` NULL is the old behaviour exactly; non-NULL carries the walk
+   across calls and comes back with `more` set while records remain.
+ *
+ * The CALLER decides when to send the next one. Looping in here would put a whole report on the
+ * air back-to-back, and at 2.4kbps against a 180ms inter-frame floor that is a node colliding with
+ * itself -- so a paged report goes out on the application's own transmit cadence, one chunk a
+ * cycle. */
+static inline bool idep_report_paged(const idep_config_t *const cfg, idep_node_t *const n, const uint8_t type, const uint8_t scope, iotdata_partial_t *const partial) {
     if (cfg->tx == NULL)
         return false;
-    static uint8_t kvbuf[IDEP_KV_MAX]; /* static: too large for a sensor's stack frame */
-    const int kvlen = idep_build(cfg, n, type, kvbuf, sizeof(kvbuf), scope);
+    /* Sized by what the PROTOCOL can express; filled only as far as the caller's radio will carry
+       (idep_packet_budget). The kv buffer cannot need more than the packet it has to fit inside. */
+    static uint8_t kvbuf[IOTDATA_MAX_PACKET_SIZE]; /* static: too large for a sensor's stack frame */ // XXX
+    static uint8_t packet[IOTDATA_MAX_PACKET_SIZE]; // XXX
+    static iotdata_encoder_t enc;
+
+    iotdata_partial_begin(partial, n->sequence);
+    const size_t budget = idep_packet_budget(cfg);
+    const int kvlen = idep_build(cfg, n, type, kvbuf, budget < sizeof(kvbuf) ? budget : sizeof(kvbuf), scope, partial);
     if (kvlen < 0)
         return false;
-    static iotdata_encoder_t enc;
-    static uint8_t packet[IDEP_PACKET_MAX];
+
     size_t len = 0;
-    if (iotdata_encode_begin(&enc, packet, sizeof(packet), 0, n->station_id, n->sequence) != IOTDATA_OK)
+    if (iotdata_encode_begin(&enc, packet, budget, 0, n->station_id, n->sequence) != IOTDATA_OK)
+        return false;
+    /* Immediately before its target: the binding is positional. */
+    if (iotdata_partial_needed(partial) && !iotdata_partial_emit(&enc, partial))
         return false;
     if (iotdata_encode_tlv(&enc, type, kvbuf, (uint8_t)kvlen) != IOTDATA_OK)
         return false;
@@ -343,7 +392,15 @@ static inline bool idep_report_scoped(const idep_config_t *const cfg, idep_node_
         return false;
     n->sequence = iotdata_sequence_next(n->sequence);
     n->stat_reports++;
-    return cfg->tx(packet, len);
+    if (!cfg->tx(packet, len))
+        return false;
+    iotdata_partial_sent(partial); /* only now: a refused frame must not skip its records */
+    return true;
+}
+
+static inline bool idep_report_scoped(const idep_config_t *const cfg, idep_node_t *const n, const uint8_t type, const uint8_t scope) {
+    iotdata_partial_t partial = { 0 };
+    return idep_report_paged(cfg, n, type, scope, &partial); /* one chunk; the rest needs a caller that loops */
 }
 
 static inline bool idep_report(const idep_config_t *const cfg, idep_node_t *const n, const uint8_t type) {

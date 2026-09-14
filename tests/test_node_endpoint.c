@@ -28,6 +28,7 @@
 #include "iotdata_node_version.h"
 #include "iotdata_node_status.h"
 #include "iotdata_node_control.h"
+#include "iotdata_node_partial.h"
 #include "iotdata_node_endpoint.h"
 
 /* --- stubs standing in for an application ------------------------------------------------- */
@@ -62,40 +63,40 @@ static int count_group(const uint8_t *raw, uint8_t rlen, int mesh) {
 int main(void) {
     printf("iotdata_node_endpoint: status scoping, control advertisement, app hook, always-on\n\n");
     int fails = 0;
-    idep_node_t n; uint8_t buf[IDEP_KV_MAX]; int len;
+    idep_node_t n; uint8_t buf[IOTDATA_MAX_PACKET_SIZE]; int len;
 
     /* a node that senses AND relays: both groups, scopable */
     const idep_config_t both = { .caps=&caps, .status=both_cb, .tx=tx_cb, .control=ctl_cb,
                                  .control_keys=keys, .control_keys_count=1, .receive_always=true };
     idep_node_init(&n, 0x0537);
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), 0);
+    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), 0, NULL);
     CHECK(len > 0 && count_group(buf,(uint8_t)len,0) > 0 && count_group(buf,(uint8_t)len,1) > 0, "no scope = both groups");
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH);
+    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
     CHECK(len > 0 && count_group(buf,(uint8_t)len,0) == 0 && count_group(buf,(uint8_t)len,1) > 0, "scope=mesh = mesh only");
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_NODE);
+    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_NODE, NULL);
     CHECK(len > 0 && count_group(buf,(uint8_t)len,0) > 0 && count_group(buf,(uint8_t)len,1) == 0, "scope=node = node only");
 
     /* a plain end device: in no mesh, so the mesh scope yields an EMPTY status, not the node group */
     const idep_config_t plain = { .caps=&caps, .status=st_cb, .tx=tx_cb, .receive_always=true };
-    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH);
+    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
     CHECK(len == 0, "a sensor asked for the mesh group answers empty, not the node group");
 
     /* CONTROL advertises what the app implements, and only that */
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0);
+    len = idep_build(&both, &n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
     bool adv = false, adv_plain = false;
     size_t cur=0; uint8_t k,vl; const uint8_t *v;
     while (iotdata_kvr_next(buf,(uint8_t)len,&cur,&k,&v,&vl)) if (k==IOTDATA_NODE_CONTROL_MESH_PEERS_CLEAR) adv = true;
     CHECK(adv, "CONTROL advertises the app's key");
-    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0);
+    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
     cur=0; while (iotdata_kvr_next(buf,(uint8_t)len,&cur,&k,&v,&vl)) if (k==IOTDATA_NODE_CONTROL_MESH_PEERS_CLEAR) adv_plain = true;
     CHECK(!adv_plain, "a node with no hook advertises no app keys");
 
     /* DIAGNOSTICS is advertised by every node unconditionally, so every node must answer it. A
        device with no recorder answers EMPTY -- absent would look exactly like being ignored. */
-    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0);
+    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
     CHECK(len == 0, "no recorder: an empty report, which is still a report");
     const idep_config_t recorder = { .caps=&caps, .status=st_cb, .tx=tx_cb, .diag=diag_cb, .receive_always=true };
-    len = idep_build(&recorder, &n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0);
+    len = idep_build(&recorder, &n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
     int records = 0; bool typed = false;
     cur = 0;
     while (iotdata_kvr_next(buf,(uint8_t)len,&cur,&k,&v,&vl)) {

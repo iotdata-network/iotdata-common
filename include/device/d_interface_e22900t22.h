@@ -23,6 +23,8 @@ typedef enum { LORA_MODE_NORMAL, LORA_MODE_WAKE_ON_RECEIVE, LORA_MODE_CONFIG, LO
 #define LORA_PACKET_SIZE_DEFAULT            240
 #define LORA_LISTEN_BEFORE_TRANSMIT_DEFAULT true
 #define LORA_CRYPT_DEFAULT                  0x0000
+#define LORA_RSSI_PACKET_DEFAULT            true
+#define LORA_RSSI_CHANNEL_DEFAULT           false
 
 typedef struct {
     lora_module_t module;
@@ -36,7 +38,6 @@ typedef struct {
     uint16_t crypt;
     bool rssi_packet;
     bool rssi_channel;
-    bool host_sleeps;
 } lora_config_t;
 
 const lora_config_t lora_config_default = {
@@ -49,9 +50,8 @@ const lora_config_t lora_config_default = {
     .packet_size = LORA_PACKET_SIZE_DEFAULT,
     .listen_before_transmit = LORA_LISTEN_BEFORE_TRANSMIT_DEFAULT,
     .crypt = LORA_CRYPT_DEFAULT,
-    .rssi_packet = true, /* both default ON: what the hardcoded registers did */
-    .rssi_channel = true,
-    .host_sleeps = true, /* the battery case is the default: an always-on host opts out */
+    .rssi_packet = LORA_RSSI_PACKET_DEFAULT,
+    .rssi_channel = LORA_RSSI_CHANNEL_DEFAULT,
 };
 
 static inline uint8_t _lora_e22_air_data_rate(uint16_t rate) {
@@ -89,9 +89,7 @@ static inline uint8_t _lora_e22_air_data_rate(uint16_t rate) {
  *
  * On a DIP module AUX tells us when the module will accept a command, and every command waits on
  * it. A USB module exposes no AUX, so there is nothing to wait FOR -- and issuing a command before
- * the dongle is ready gets no response at all, not an error. The only available substitute is
- * time, which is what the 50ms `usleep` marked "yuck" in the reference serial_linux.h was actually
- * buying: it sat before every read and every write.
+ * the dongle is ready gets no response at all, not an error. The only available substitute is time.
  */
 #define _LORA_USB_SETTLE_MS                50
 #define _LORA_SETUP_DELAY_MS               100
@@ -132,7 +130,39 @@ static inline uint8_t _lora_e22_air_data_rate(uint16_t rate) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-#define _LORA_E22_RSSI_DBM(b)              (-(256 - (int)(b)))
+/*
+ * The module reports RSSI as 256 + dBm, which only fits a byte for -1 dBm and weaker. A signal at
+ * 0 dBm or stronger -- what a 22 dBm module a few centimetres away actually delivers -- WRAPS it
+ * to 0x00, and the naive decode then reports -256 dBm: the weakest possible link, for the
+ * strongest possible signal.
+ *
+ * That is not just a wrong number in a log. relay_mesh.h ranks candidate parents by cost and then
+ * by RSSI, so a wrapped neighbour is scored worst of all, can never win a tie on cost, and can
+ * never clear the changeover hysteresis. The closest relay on the bench was the one the mesh was
+ * most reluctant to use.
+ *
+ * Nothing below the receiver's sensitivity can be a measurement, so anything under the floor is
+ * read as the saturation it is and reported as "at least 0 dBm" -- which is both true and sorts
+ * correctly against every real reading.
+ */
+/*
+ * What a reading MEANS at this boundary, so nothing above it has to know about module bytes:
+ *
+ *   <= 0     dBm, always. 0 is a saturated reading -- "at least this strong".
+ *   NONE     no reading was available (a fragment, or a read that never reached the RSSI byte).
+ *
+ * The sentinel exists because 0 became a legitimate value the moment saturation was handled, and
+ * a caller using "0 means nothing arrived" would then silently discard the strongest signals it
+ * ever sees. Every genuine reading is negative or zero, so a positive value can carry the absence.
+ */
+#define LORA_RSSI_NONE                     1      /* not a dBm value: no reading was available */
+#define _LORA_E22_RSSI_FLOOR_DBM           (-148) /* SX126x sensitivity: the weakest genuine reading */
+#define _LORA_E22_RSSI_SATURATED_DBM       0      /* wrapped: at least this strong, and we cannot say more */
+
+static inline int _e22_rssi_dbm(const uint8_t raw) {
+    const int dbm = -(256 - (int)raw);
+    return (dbm < _LORA_E22_RSSI_FLOOR_DBM) ? _LORA_E22_RSSI_SATURATED_DBM : dbm;
+}
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -157,22 +187,6 @@ _RTC_DATA_STRUCT _lora_rtc_t _lora_rtc;
 
 #define _LORA_IS_USB()                  (_LORA_CONFIG(module) == LORA_MODULE_USB)
 
-/*
- * The AUX wait has to be DERIVED, not fixed.
- *
- * AUX stays low while the module still holds anything, so the worst case is the air time of what
- * it is holding -- and air time scales with the configured rate. A full 240-byte packet is 800ms
- * at 2.4kbps and 6.4 SECONDS at 0.3kbps, so no single constant serves both: the 1000ms this
- * replaces was nearly right at 2.4kbps and wrong by more than 6x below it.
- *
- * Budget: the air time of a full packet, doubled. The doubling covers the two things that make a
- * write wait longer than its own frame -- one frame already queued ahead of it, and
- * listen-before-transmit deferring the start while the channel is busy. Both happen together on a
- * mesh under load, which is where the fixed value failed: a relay's forward retries filled the
- * module and the write gave up after a second, reporting an error for ordinary back-pressure.
- *
- * Only DIP modules reach this: lora_is_ready() is unconditionally true on USB, which has no AUX.
- */
 static inline uint32_t _lora_transmit_wait_ms(void) {
     const uint16_t bps = _LORA_CONFIG(air_data_rate);
     if (bps == 0)
@@ -186,8 +200,6 @@ static inline uint32_t _lora_transmit_wait_ms(void) {
 
 void _lora_pins_enable(void) {
     if (!_LORA_IS_USB()) {
-        /* Release any hold applied before deep sleep (see lora_hold); a no-op on a cold boot. Must come
-        before the pins are reconfigured, or the hold fights the new direction. */
         gpio_deep_sleep_hold_dis();
         (void)gpio_hold_dis(PIN_DEVICE_LORA_M1);
         if (PIN_DEVICE_LORA_M0 != GPIO_NUM_NC)
@@ -242,10 +254,7 @@ void _lora_pins_disable(void) {
 static uint32_t _lora_tx_guard_until_ms = 0;
 
 bool lora_is_ready(void) {
-    if (!_LORA_IS_USB())
-        return hw_gpio_get(PIN_DEVICE_LORA_AUX);
-    /* wrap-safe, so this still orders correctly across the millisecond clock's rollover */
-    return (int32_t)((uint32_t)__ticks_ms() - _lora_tx_guard_until_ms) >= 0;
+    return _LORA_IS_USB() ? ((int32_t)((uint32_t)__ticks_ms() - _lora_tx_guard_until_ms) >= 0) : hw_gpio_get(PIN_DEVICE_LORA_AUX);
 }
 
 static inline void _lora_settle(void) {
@@ -341,25 +350,10 @@ esp_err_t _lora_mode_set_usb(const lora_mode_t mode) {
     return ESP_OK;
 }
 
-/* Only meaningful when the host does not sleep: then setup leaves the link up and start has
-   nothing to do. A sleeping host loses statics anyway, which is what _lora_rtc is for. */
-static bool s_lora_link_up = false;
-
 esp_err_t _lora_mode_set(const lora_mode_t mode) {
     return _LORA_IS_USB() ? _lora_mode_set_usb(mode) : _lora_mode_set_dip(mode);
 }
 
-/*
- * Keep the module in the mode it was left in across the host's deep sleep.
- *
- * Deep sleep leaves the pads floating, which drops a DIP module straight out of the sleep mode
- * lora_stop() just selected -- so it wakes up drawing radio current for the whole interval instead
- * of ~2uA. Holding M0/M1 pins it there for as long as we are down. The hold is released in
- * _lora_pins_enable() on the next wake.
- *
- * Call immediately before esp_deep_sleep(), after lora_stop(). A no-op on USB, which has no pins
- * (and no host that deep-sleeps).
- */
 void lora_hold(void) {
     if (!_LORA_IS_USB()) {
         (void)gpio_hold_en(PIN_DEVICE_LORA_M1);
@@ -521,14 +515,9 @@ esp_err_t lora_setup(const lora_config_t *const config) {
 
     ESP_GOTO_ON_ERROR(_lora_read_and_update_config(), lora_setup_exit, __tag_device_e22900t22, "setup: config");
 
-    if (!_LORA_CONFIG(host_sleeps)) {
-        ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_NORMAL), lora_setup_exit, __tag_device_e22900t22, "setup: mode normal");
-        s_lora_link_up = true;
-    } else {
-        ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_DEEP_SLEEP), lora_setup_exit, __tag_device_e22900t22, "setup: mode deep sleep");
-        hw_uart_stop();
-        _lora_pins_disable();
-    }
+    ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_DEEP_SLEEP), lora_setup_exit, __tag_device_e22900t22, "setup: mode deep sleep");
+    hw_uart_stop();
+    _lora_pins_disable();
 
     ESP_LOGI(__tag_device_e22900t22, "setup: name=0x%04" PRIX16 ", version=%d, power=%ddBm", (uint16_t)((_lora_rtc.product[0] << 8) | _lora_rtc.product[1]), _lora_rtc.product[2], _lora_rtc.product[3]);
 
@@ -548,11 +537,6 @@ esp_err_t lora_start(void) {
 
     ESP_RETURN_ON_FALSE(_LORA_RTC_VALID(), DEV_ERR_RTC, __tag_device_e22900t22, "start: rtc invalid");
     ESP_RETURN_ON_FALSE(_LORA_PRODUCT_ID_VALID(lora_rtc.product), DEV_ERR_PRODUCT_ID, __tag_device_e22900t22, "start: product invalid");
-
-    if (s_lora_link_up) {
-        ESP_LOGI(__tag_device_e22900t22, "started (link already up)");
-        return ESP_OK; /* setup left it in NORMAL with the UART open: there is nothing to do */
-    }
 
     esp_err_t ret;
 
@@ -583,7 +567,7 @@ esp_err_t lora_read_channel_rssi(int *const rssi_dbm) {
     ESP_RETURN_ON_FALSE(n >= (int)sizeof(res), ESP_FAIL, __tag_device_e22900t22, "channel rssi: got %d bytes, expected %d", n, (int)sizeof(res));
     ESP_RETURN_ON_FALSE(res[0] == 0xC1 && res[1] == 0x00 && res[2] == 0x01, ESP_FAIL, __tag_device_e22900t22, "channel rssi: bad header %02" PRIX8 " %02" PRIX8 " %02" PRIX8, res[0], res[1], res[2]);
 
-    *rssi_dbm = _LORA_E22_RSSI_DBM(res[3]);
+    *rssi_dbm = _e22_rssi_dbm(res[3]);
     ESP_LOGI(__tag_device_e22900t22, "channel rssi: %d dBm", *rssi_dbm);
 
     return ESP_OK;
@@ -603,16 +587,26 @@ esp_err_t lora_read_channel_rssi(int *const rssi_dbm) {
  * WRONG and the history is worth keeping, because the symptom looks identical either way: the
  * byte was never lost on this side at all. It was dropped by the USB module at the OTHER end,
  * which had been handed a frame while still radiating the previous one -- see
- * _LORA_TX_GUARD_USB_MS. The proof was _LORA_RX_FRAME_MIN below: a read-side split now reports a
- * runt and logs its cause, and across two hours of the 50ms build not one fired while the
- * phantoms kept coming. So 20ms stands, and there is no evidence a DIP module has ever split a
- * frame.
+ * _LORA_TX_GUARD_USB_MS. The proof was _LORA_RX_FRAME_MIN below: a read-side split reports a runt
+ * and logs its cause, and across two hours of the 50ms build not one fired while the phantoms kept
+ * coming. So 20ms stood, on the stated condition that if a DIP module ever did split a frame the
+ * fragment warning would say so and 50ms was the answer.
  *
- * If one ever does, the fragment warning will say so and 50ms is the answer -- measured rather
- * than guessed: across 1188 receives on that link the shortest gap between two frames was 180ms,
- * with nothing below 100ms, so there is room to raise this without merging two frames into one.
- * Keep DIP below USB rather than collapsing them, though: that 180ms floor is a property of one
- * network's beacon and ack cadence at 2.4kbps, not a guarantee.
+ * 2026-09-13: IT SAID SO, and 20ms is now 50ms. Two relays, repeatedly, three bytes read and the
+ * remaining six arriving later -- and the evidence the earlier investigation could not have had is
+ * `buffered=0` in the forensic line beside it: the UART held NOTHING more at the instant the read
+ * gave up. The rest of that packet had not been delivered yet, so it was not a byte missed on this
+ * side and not a byte dropped at the far end. The DIP module does pace its delivery across more
+ * than 20ms, at least sometimes.
+ *
+ * 50ms is measured rather than guessed: across 1188 receives on that link the shortest gap between
+ * two frames was 180ms, with nothing below 100ms, so there is room to raise this without merging
+ * two frames into one. Keep DIP below USB rather than collapsing them, though: that 180ms floor is
+ * a property of one network's beacon and ack cadence at 2.4kbps, not a guarantee.
+ *
+ * Note also that FreeRTOS tick granularity works against the smaller number -- pdMS_TO_TICKS(20) is
+ * two ticks at 100Hz, so the effective wait could be nearer 10ms than 20ms. At 50ms that error is
+ * proportionally much smaller.
  *
  * Behind a USB-serial dongle the host schedules URBs, and a frame longer than one bulk transfer
  * arrives as two, tens of milliseconds apart, with nothing wrong. At 20ms that reads as a frame
@@ -628,7 +622,7 @@ esp_err_t lora_read_channel_rssi(int *const rssi_dbm) {
  * which is the other reason not to raise this without evidence: it is paid on every frame, by a
  * loop that has to keep reading.
  */
-#define _LORA_RX_GAP_DIP_MS 20
+#define _LORA_RX_GAP_DIP_MS 50
 #define _LORA_RX_GAP_USB_MS 100
 
 /* The shortest thing that could be a frame: an iotdata/mesh header is 4 bytes (variant+station,
@@ -642,30 +636,118 @@ esp_err_t lora_read_channel_rssi(int *const rssi_dbm) {
 #define _LORA_RX_FRAME_MIN  4
 #define _LORA_RX_GAP_MS     (_LORA_IS_USB() ? _LORA_RX_GAP_USB_MS : _LORA_RX_GAP_DIP_MS)
 
+/* Set when a fragment was read, because the REMAINDER of that packet is still coming and will be
+   read next as a frame in its own right -- headerless, and so wearing whatever its payload happens
+   to spell. That is not a hypothetical: it is where station 0115 came from on 2026-09-13, out of
+   the gateway ACK `F0 01 15 F7 ...` split after one byte, forwarded into the mesh and ACKed by the
+   gateway before anyone could tell it was not a station.
+   Nothing downstream CAN reject it -- a mid-packet read is a syntactically perfect header -- but
+   here we know, so here it is dropped. The frame was already lost when the split happened; what
+   this prevents is the loss turning into a fictional neighbour. */
+static bool _lora_rx_desynced = false;
+
+/*
+ * RX FORENSICS. Off in one line (set to 0) -- this is instrumentation for an open question, not
+ * something the driver needs to work.
+ *
+ * It prints only on an ANOMALY, never on a healthy frame. EVERY line it produces -- including the
+ * fragment and dropped-tail warnings below, which are not themselves conditional on this flag --
+ * is tagged `rx-forensic`, so one grep over a long capture finds the whole story and nothing else:
+ *
+ *     grep rx-forensic relay0-*.log
+ *
+ * It prints the four things that tell the candidate explanations apart:
+ *
+ *   bytes=     cumulative bytes read since boot. A fault that recurs at multiples of a buffer
+ *              size is a ring-index fault; nothing else produces that.
+ *   since_tx=  ms since our own last transmission. The last phantom hunt ended at a TX/RX
+ *              interaction, so this is the correlate with previous form.
+ *   since_rx=  ms since the previous read returned, which says whether we were even listening.
+ *   buffered=  bytes STILL held by the UART driver the instant the read stopped. Non-zero means
+ *              more had already arrived and we gave up early -- the inter-byte gap is too short.
+ *              Zero means the wire had genuinely gone quiet and the remainder came later, which
+ *              is the module dwelling, not us being impatient. That one field is the question.
+ */
+#define LORA_RX_FORENSICS 1
+
+#if LORA_RX_FORENSICS
+static uint32_t _lora_rx_reads = 0, _lora_rx_bytes = 0, _lora_rx_last_ms = 0, _lora_tx_last_ms = 0;
+
+/* `prev_rx_ms` is passed rather than read from the global because the global is advanced as soon
+   as this read ends, and every caller below that point would otherwise measure the gap against
+   itself. */
+static void _lora_rx_forensic(const char *const why, const uint32_t started_ms, const uint32_t prev_rx_ms) {
+    const uint32_t now = (uint32_t)__ticks_ms();
+    ESP_LOGW(__tag_device_e22900t22, "rx-forensic: %s | read=#%" PRIu32 " bytes=%" PRIu32 " since_rx=%" PRIu32 "ms since_tx=%" PRIu32 "ms took=%" PRIu32 "ms buffered=%u", why, _lora_rx_reads, _lora_rx_bytes,
+             prev_rx_ms ? started_ms - prev_rx_ms : 0, _lora_tx_last_ms ? now - _lora_tx_last_ms : 0, now - started_ms, (unsigned)hw_uart_available());
+}
+#endif
+
+static const char *_lora_rx_hex(char *const out, const size_t size, const uint8_t *const buf, const size_t len) {
+    size_t at = 0;
+    for (size_t i = 0; i < len && i < 8 && at + 3 < size; i++)
+        at += (size_t)snprintf(out + at, size - at, "%s%02" PRIX8, at ? " " : "", buf[i]);
+    out[at] = '\0';
+    return out;
+}
+
 esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, int *const out_rssi_dbm, const int first_byte_timeout_ms) {
 
     ESP_RETURN_ON_FALSE(buf != NULL && out_len != NULL && max > 0, ESP_ERR_INVALID_ARG, __tag_device_e22900t22, "read: bad args");
 
     *out_len = 0;
     if (out_rssi_dbm != NULL)
-        *out_rssi_dbm = 0;
+        *out_rssi_dbm = LORA_RSSI_NONE;
 
+#if LORA_RX_FORENSICS
+    const uint32_t forensic_started_ms = (uint32_t)__ticks_ms(); /* BEFORE the first byte: `took` is the whole read */
+#endif
     if (hw_uart_read(buf, 1, first_byte_timeout_ms) <= 0)
         return ESP_OK;
     size_t total = 1;
     while (total < max && hw_uart_read(buf + total, 1, _LORA_RX_GAP_MS) > 0)
         total++;
+#if LORA_RX_FORENSICS
+    _lora_rx_reads++;
+    _lora_rx_bytes += (uint32_t)total;
+    const uint32_t forensic_prev_rx_ms = _lora_rx_last_ms; /* the gap BEFORE this read */
+    _lora_rx_last_ms = (uint32_t)__ticks_ms();
+    if (total >= max)
+        _lora_rx_forensic("READ FILLED THE BUFFER -- the rest of this frame is still in the uart", forensic_started_ms, forensic_prev_rx_ms);
+#endif
     if (total >= (size_t)_LORA_RX_FRAME_MIN + 1) {
+        if (_lora_rx_desynced) {
+            _lora_rx_desynced = false;
+#if LORA_RX_FORENSICS
+            _lora_rx_forensic("DROPPING THE TAIL", forensic_started_ms, forensic_prev_rx_ms);
+#endif
+            char hex[3 * 8 + 1];
+            ESP_LOGW(__tag_device_e22900t22, "rx-forensic: DROPPED TAIL, %u bytes [%s] -- the remainder of the packet that split, not a frame", (unsigned)total, _lora_rx_hex(hex, sizeof(hex), buf, total));
+            return ESP_OK; /* *out_len stays 0: nothing arrived that we can honestly hand upwards */
+        }
         if (out_rssi_dbm != NULL)
-            *out_rssi_dbm = _LORA_E22_RSSI_DBM(buf[total - 1]);
+            *out_rssi_dbm = _e22_rssi_dbm(buf[total - 1]);
+#if LORA_RX_FORENSICS
+        /* 0x00 and 0xFF are the two values the module never legitimately reports: -256 dBm is
+           below any receiver, -1 dBm above any signal we could survive. Either means the byte we
+           took for RSSI is not one -- and unlike a fragment, this is happening often enough to
+           correlate against something. */
+        if (_e22_rssi_dbm(buf[total - 1]) >= 0) /* every real reading is negative; 0 is the saturation flag */
+            _lora_rx_forensic("RSSI WRAPPED (saturated: the sender is very close), reported as 0dBm", forensic_started_ms, forensic_prev_rx_ms);
+#endif
         total -= 1;
     } else {
+        _lora_rx_desynced = true;
+#if LORA_RX_FORENSICS
+        _lora_rx_forensic("FRAGMENT", forensic_started_ms, forensic_prev_rx_ms);
+#endif
         /* A fragment. Hand back every byte read, with no RSSI claimed, so the caller counts it as
            the runt it is rather than being told nothing happened. The stream is already
            desynchronised at this point and these bytes cannot be un-read -- what this buys is
            that the NEXT frame's bogus header has a logged cause sitting immediately before it. */
-        ESP_LOGW(__tag_device_e22900t22, "read: %u byte fragment, not a frame -- a packet split across the %dms gap; the next read will start mid-packet", (unsigned)total, _LORA_RX_GAP_MS);
-        d_bytes_hex_log(__tag_device_e22900t22, buf, (int)total);
+        char hex[3 * 8 + 1];
+        ESP_LOGW(__tag_device_e22900t22, "rx-forensic: FRAGMENT, %u bytes [%s] -- not a frame: a packet split across the %dms gap, so the next read would have started mid-packet", (unsigned)total, _lora_rx_hex(hex, sizeof(hex), buf, total),
+                 _LORA_RX_GAP_MS);
     }
     *out_len = (int)total;
 
@@ -688,12 +770,11 @@ esp_err_t lora_write(const uint8_t *const data, const size_t len) {
     ESP_RETURN_ON_FALSE(hw_uart_write(data, len) == (int)len, ESP_FAIL, __tag_device_e22900t22, "write: uart write (len=%d)", (int)len);
     // Block until the UART has physically clocked every byte out to the module
     ESP_RETURN_ON_ERROR(hw_uart_wait_tx_done(_LORA_CMD_TIMEOUT_MS), __tag_device_e22900t22, "write: tx drain");
-
-    /* The module is now busy. On DIP, AUX will say so; on USB nothing will, so hold the next
-       write off for the guard interval -- this is the only thing standing between a back-to-back
-       pair and a frame going out a byte short. */
     if (_LORA_IS_USB())
         _lora_tx_guard_until_ms = (uint32_t)__ticks_ms() + _LORA_TX_GUARD_USB_MS;
+#if LORA_RX_FORENSICS
+    _lora_tx_last_ms = (uint32_t)__ticks_ms();
+#endif
 
     ESP_LOGD(__tag_device_e22900t22, "write: sent %d bytes", (int)len);
     d_bytes_hex_log(__tag_device_e22900t22, data, (int)len);
@@ -717,10 +798,9 @@ esp_err_t lora_wait_complete(void) {
 
 esp_err_t lora_stop(void) {
 
-    if (_LORA_CONFIG(host_sleeps) && lora_sleep() == ESP_OK)
+    if (lora_sleep() == ESP_OK)
         if (_LORA_SLEEP_DELAY_MS > 0)
             hw_delay_ms_yieldable(_LORA_SLEEP_DELAY_MS);
-    s_lora_link_up = false;
     hw_uart_stop();
     _lora_pins_disable();
 
