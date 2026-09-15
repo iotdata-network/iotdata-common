@@ -548,7 +548,13 @@ function actionUninstall() {
 function actionRun(argv) {
     const force = argv.includes('--force');
     try {
-        if (run('systemctl', ['is-active', 'dialout-server']) === 'active' && !force) die("the dialout-server service is already running -- stop it, or pass --force if you know what you're doing");
+        // Under systemd this process IS the service, and is-active says so -- refusing on that alone
+        // made the unit kill itself on every start and restart forever. Only a DIFFERENT process
+        // owning the service is a conflict, so compare its main pid with ours.
+        if (run('systemctl', ['is-active', 'dialout-server']) === 'active' && !force) {
+            const mainPid = parseInt(run('systemctl', ['show', '-p', 'MainPID', '--value', 'dialout-server']), 10);
+            if (mainPid !== process.pid) die("the dialout-server service is already running -- stop it, or pass --force if you know what you're doing");
+        }
     } catch {
         /* not installed, or systemctl absent: fine, that is the common case for a hand-run */
     }
