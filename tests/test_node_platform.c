@@ -2,7 +2,7 @@
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 //
-// test_node_endpoint.c - host tests for iotdata_node_endpoint.h, the END-DEVICE half of the node
+// test_node_platform.c - host tests for iotdata_node_platform.h, the END-DEVICE half of the node
 // protocol (a sensor, a simulator, and in due course a node that both senses and relays).
 //
 // It is tested here rather than in a project because it belongs to neither: both consumers are
@@ -31,7 +31,7 @@
 #include "iotdata_node_partial.h"
 #include "device/d_module_datastore_linux.h"
 #include "iotdata_node_state.h"
-#include "iotdata_node_endpoint.h"
+#include "iotdata_node_platform.h"
 
 /* --- stubs standing in for an application ------------------------------------------------- */
 

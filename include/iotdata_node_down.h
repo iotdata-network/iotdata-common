@@ -1,11 +1,11 @@
 
-#ifndef IOTDATA_DOWN_H
-#define IOTDATA_DOWN_H
+#ifndef IOTDATA_NODE_DOWN_H
+#define IOTDATA_NODE_DOWN_H
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 //
-// iotdata_down.h - holding a down frame for a node that is not listening yet.
+// iotdata_node_down.h - holding a down frame for a node that is not listening yet.
 //
 // A down frame (sequence == IOTDATA_SEQUENCE_DOWN, station == the target) reaches a
 // node that happens to be awake when it is sent, and no other. Most nodes are asleep most of the
@@ -381,4 +381,4 @@ static inline int iotdata_down_clear(iotdata_down_t *const ds) {
     return n;
 }
 
-#endif /* IOTDATA_DOWN_H */
+#endif /* IOTDATA_NODE_DOWN_H */

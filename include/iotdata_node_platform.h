@@ -1,11 +1,11 @@
 
-#ifndef IOTDATA_NODE_ENDPOINT_H
-#define IOTDATA_NODE_ENDPOINT_H
+#ifndef IOTDATA_NODE_PLATFORM_H
+#define IOTDATA_NODE_PLATFORM_H
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 //
-// iotdata_node_endpoint.h - the NODE personality of an end device: a sensor, or one of the virtual
+// iotdata_node_platform.h - the NODE personality of an end device: a sensor, or one of the virtual
 // sensors a simulator stands up. The counterpart to relay_node.h and iotdata_gateway_node.h, for
 // the nodes at the leaves.
 //
@@ -13,7 +13,7 @@
 // almost always. It cannot be commanded whenever a manager feels like it, because there is nothing
 // listening. So it advertises: every IDEP_RECEIVE_EVERY_MS it puts a RECEIVE TLV in its next
 // outbound frame and then holds its receiver on for IDEP_RECEIVE_WINDOW_MS. Whoever is holding a
-// downstream frame for it -- gateway or relay, see iotdata_down.h -- sends it in that window.
+// downstream frame for it -- gateway or relay, see iotdata_node_down.h -- sends it in that window.
 //
 // THE DEVICE DECIDES. Only it knows its power budget. A node that never advertises is never sent
 // to, and that is the default, costing nothing. Everything above is the node choosing to be
@@ -88,7 +88,7 @@ typedef struct {
      * The receiver is NEVER off: a simulator on the bench, or any mains-powered end device.
      *
      * Such a node does not advertise at all, and the other two fields are ignored. A DOWN frame is
-     * always TRANSMITTED first and only then held (see iotdata_down.h), so a node that is always
+     * always TRANSMITTED first and only then held (see iotdata_node_down.h), so a node that is always
      * listening hears the immediate transmission -- the advertisement exists purely to tell a
      * holder when a SLEEPING node is briefly awake, and there is nothing to tell about a node that
      * never sleeps. The held copy simply goes unused and expires.
@@ -524,4 +524,4 @@ static inline bool idep_on_frame(const idep_config_t *const cfg, idep_node_t *co
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#endif /* IOTDATA_NODE_ENDPOINT_H */
+#endif /* IOTDATA_NODE_PLATFORM_H */

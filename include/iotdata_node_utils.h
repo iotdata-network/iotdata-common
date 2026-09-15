@@ -2,7 +2,7 @@
 #ifndef IOTDATA_NODE_UTILS_H
 #define IOTDATA_NODE_UTILS_H
 
-static uint16_t iotdata_node_station_from_mac(const char *const tag) {
+static inline uint16_t iotdata_node_station_from_mac(const char *const tag) {
 #ifdef PLATFORM_ESP32
     uint8_t mac[6] = { 0 };
     (void)esp_efuse_mac_get_default(mac);
@@ -11,11 +11,12 @@ static uint16_t iotdata_node_station_from_mac(const char *const tag) {
     ESP_LOGI(tag, "board: mac=%02X:%02X:%02X:%02X:%02X:%02X station=%" PRIu16, (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2], (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5], station_id);
     return station_id;
 #else
+    (void)tag;
     return 0; // XXX
 #endif
 }
 
-static uint8_t iotdata_node_reason_reset(void) {
+static inline uint8_t iotdata_node_reason_reset(void) {
 #ifdef PLATFORM_ESP32
     switch (esp_reset_reason()) {
     case ESP_RST_POWERON:

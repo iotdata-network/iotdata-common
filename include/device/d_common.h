@@ -113,13 +113,39 @@ void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size)
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
+/*
+ * RTC_NOINIT memory that survives a reset, with a guard that survives a REFLASH.
+ *
+ * The magic alone is not enough, and the way it fails is nasty. RTC_NOINIT survives everything
+ * short of a power cycle -- a USB reset, a watchdog, esp_restart -- so new firmware routinely
+ * starts up on top of the old firmware's RTC image. If the struct's LAYOUT changed in between,
+ * a matching magic says "valid" and every field is then read at the wrong offset. Nothing
+ * crashes; the values are simply wrong, and they look like real values.
+ *
+ * Found the hard way (2026-09-15): a sensor whose state_operating_t had lost a member came up
+ * announcing station 2 instead of its MAC-derived 4003, with an empty capability set, and
+ * transmitted under that identity until it was power-cycled. The only tell in the log was the
+ * ABSENCE of the line that derives the station -- because the init block had been skipped.
+ *
+ * So the stamp carries sizeof too, and a layout change invalidates by itself. Four bytes per
+ * struct, and it turns a silent wrong-identity into a clean re-initialisation.
+ *
+ * What this still does NOT catch is a same-size change of MEANING -- two fields swapped, or a
+ * unit changed. Add the build stamp to the entry if that ever matters; the cost is that every
+ * OTA then discards RTC state, which is why it is not here by default.
+ *
+ * Keep the stamp FIRST in the struct, so the guard itself is always read from a fixed offset.
+ */
 #define _RTC_DATA_STRUCT      RTC_NOINIT_ATTR
-#define _RTC_DATA_STAMP_ENTRY uint32_t magic
-#define _RTC_DATA_VALID(s, m) ((s)->magic == (m))
+#define _RTC_DATA_STAMP_ENTRY \
+    uint32_t magic;           \
+    uint32_t size
+#define _RTC_DATA_VALID(s, m) ((s)->magic == (m) && (s)->size == (uint32_t)sizeof(*(s)))
 #define _RTC_DATA_INIT(s, m) \
     do { \
         memset(s, 0, sizeof(*(s))); \
         (s)->magic = m; \
+        (s)->size = (uint32_t)sizeof(*(s)); \
     } while (0)
 
 // ------------------------------------------------------------------------------------------------------------------------

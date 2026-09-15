@@ -1,5 +1,9 @@
+
+#ifndef IOTDATA_NODE_CONSOLE_H
+#define IOTDATA_NODE_CONSOLE_H
+
 /*
- * iotdata_command.h — a small, generic USB-serial-JTAG command line for esp32 apps.
+ * iotdata_node_console.h — a small, generic USB-serial-JTAG command line for esp32 apps.
  *
  * Non-blocking and verb-based: a set of built-in commands (help, vers, stat, logl, boot) plus any
  * commands the app plugs in on top. Designed to be driven from a cooperative main loop — call
@@ -23,8 +27,6 @@
  * REQUIRES these): esp_driver_usb_serial_jtag, vfs, esp_app_format. (esp_timer / esp_hw_support /
  * heap / log / esp_system come in as common dependencies.)
  */
-#ifndef IOTDATA_COMMAND_H
-#define IOTDATA_COMMAND_H
 
 #include <stddef.h>
 
@@ -291,4 +293,4 @@ void iotdata_command_poll(void) {
 
 #endif /* IOTDATA_COMMAND_IMPLEMENTATION */
 
-#endif /* IOTDATA_COMMAND_H */
+#endif /* IOTDATA_NODE_CONSOLE_H */

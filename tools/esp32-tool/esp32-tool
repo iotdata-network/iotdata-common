@@ -120,13 +120,13 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 def log_open(spec, port):
     """Open the transcript for `spec` and return its path (None when not logging).
 
-    A timestamp is inserted before the extension -- `-l relay.log` writes `relay-20260911-121530.log`
+    A timestamp is inserted before the extension -- `-l relay.log` writes `relay-20260911T121530.log`
     -- so a re-run never appends to, or overwrites, the run you are still reading. Give a directory
     (or a path ending in /) to get `esp32-<stamp>.log` inside it."""
     global _log_fh
     if not spec:
         return None
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stamp = time.strftime("%Y%m%dT%H%M%S")
     if spec.endswith(os.sep) or os.path.isdir(spec):
         path = os.path.join(spec, f"esp32-{stamp}.log")
     else:
@@ -284,7 +284,7 @@ def require_port(args):
     if serial_norm(got) != want and not serial_norm(got).endswith(want):
         die(f"{args.port} is board {got}, not {spec} -- refusing")
 
-def monitor(port, command=None, reset=False):
+def monitor(port, command=None, reset=False, serial_want=None):
     import serial  # imported lazily so `flash` works without pyserial
     # Forward the terminal's stdin to the device so typed commands reach its console CLI. In cooked
     # mode a whole line arrives on Enter; we pass the bytes straight through (the device parses lines).
@@ -299,6 +299,16 @@ def monitor(port, command=None, reset=False):
             print(f"{RED}--- DEVICE DISCONNECTED{RESET}", flush=True)
             log_line("--- DEVICE DISCONNECTED")
             wait_for_port(port)
+            # Same board? Three identical boards share one /dev node namespace, so a reconnect can
+            # hand us a DIFFERENT one at the same path -- which is exactly what -s exists to stop.
+            # Checking only at startup would let that through silently.
+            if serial_want:
+                got = board_serial(port)
+                if got is None or (serial_norm(got) != serial_norm(serial_want) and not serial_norm(got).endswith(serial_norm(serial_want))):
+                    print(f"{RED}--- {port} is board {got}, not {serial_want} -- still waiting{RESET}", flush=True)
+                    while os.path.exists(port):
+                        time.sleep(0.2)
+                    continue
             print(f"\n{RED}--- DEVICE RECONNECTED{RESET}", flush=True)
             log_line("--- DEVICE RECONNECTED")
             buf = b""
@@ -344,7 +354,17 @@ def monitor(port, command=None, reset=False):
                                 s.write(f"{command}\n".encode())
                                 s.flush()
                                 print(f"{CYAN}COMMAND:INJECT: {command}{RESET}")
-        except serial.SerialException:
+        except OSError:
+            # Deliberately OSError and not serial.SerialException: SerialException is a SUBCLASS of
+            # OSError, so catching it does not catch the bare OSError(EIO) that in_waiting's
+            # fcntl.ioctl raises the moment the cable is pulled. That was a traceback and an exit
+            # mid-session; the reconnect loop above was already correct and simply unreachable.
+            #
+            # The node usually vanishes with the cable, but not always -- and while it is still
+            # there wait_for_port returns at once, so a port that fails every open would spin.
+            # A short settle covers that and the never-connected case alike.
+            if os.path.exists(port):
+                time.sleep(0.2)
             continue
 
 # --------------------------------------------------------------------------------------
@@ -688,12 +708,12 @@ def main():
     add_common(p_flash, build=True)
     p_mon = sub.add_parser("monitor", help="print the serial console (interactive; -r resets first)")
     add_common(p_mon)
-    p_mon.add_argument("-l", "--log", metavar="FILE", default=None, help="also write the console to FILE, timestamp-suffixed (relay.log -> relay-20260911-121530.log; a directory gets esp32-<stamp>.log)")
+    p_mon.add_argument("-l", "--log", metavar="FILE", default=None, help="also write the console to FILE, timestamp-suffixed (relay.log -> relay-20260911T121530.log; a directory gets esp32-<stamp>.log)")
     p_mon.add_argument("-r", "--reset", action="store_true", help="reset the device on connect (off by default)")
     p_mon.add_argument("command", nargs="?", default=None, help="command string to inject after boot")
     p_dep = sub.add_parser("deploy", help="flash, then monitor")
     add_common(p_dep, build=True)
-    p_dep.add_argument("-l", "--log", metavar="FILE", default=None, help="also write the console to FILE, timestamp-suffixed (relay.log -> relay-20260911-121530.log; a directory gets esp32-<stamp>.log)")
+    p_dep.add_argument("-l", "--log", metavar="FILE", default=None, help="also write the console to FILE, timestamp-suffixed (relay.log -> relay-20260911T121530.log; a directory gets esp32-<stamp>.log)")
     p_dep.add_argument("command", nargs="?", default=None, help="command string to inject after boot")
     p_diag = sub.add_parser("diag", help="pull + decode the blackbox diagnostics partition")
     add_common(p_diag)
@@ -732,7 +752,7 @@ def main():
     if args.cmd == "monitor":
         require_port(args)
         try:
-            monitor(args.port, args.command, reset=args.reset)
+            monitor(args.port, args.command, reset=args.reset, serial_want=getattr(args, "serial", None))
         except KeyboardInterrupt:
             print()
         return
