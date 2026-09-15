@@ -12,6 +12,10 @@
 //
 // ---------------------------------------------------------------------------------------------------------------------------
 
+#ifdef IOTDATA_VARIANT_MAPS_INSTALLED
+#error "iotdata.c was included BEFORE iotdata_variant.h, so the library built its single default variant map: move #include \"iotdata_variant.h\" above #include \"iotdata.c\"."
+#endif
+
 #ifdef IOTDATA_VARIANT
 #include IOTDATA_VARIANT
 #else

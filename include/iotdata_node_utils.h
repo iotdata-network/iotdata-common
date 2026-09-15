@@ -2,12 +2,21 @@
 #ifndef IOTDATA_NODE_UTILS_H
 #define IOTDATA_NODE_UTILS_H
 
+static inline uint32_t iotdata_node_mac32(void) {
+#ifdef PLATFORM_ESP32
+    uint8_t mac[6] = { 0 };
+    (void)esp_efuse_mac_get_default(mac);
+    return ((uint32_t)mac[2] << 24) | ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
+#else
+    return 0;
+#endif
+}
+
 static inline uint16_t iotdata_node_station_from_mac(const char *const tag) {
 #ifdef PLATFORM_ESP32
     uint8_t mac[6] = { 0 };
     (void)esp_efuse_mac_get_default(mac);
-    const uint32_t mac32 = ((uint32_t)mac[2] << 24) | ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
-    const uint16_t station_id = iotdata_station_from_id(mac32); /* 1..4094: never 0, never broadcast */
+    const uint16_t station_id = iotdata_station_from_id(iotdata_node_mac32()); /* 1..4094: never 0, never broadcast */
     ESP_LOGI(tag, "board: mac=%02X:%02X:%02X:%02X:%02X:%02X station=%" PRIu16, (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2], (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5], station_id);
     return station_id;
 #else

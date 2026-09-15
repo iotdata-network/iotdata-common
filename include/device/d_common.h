@@ -170,7 +170,7 @@ static inline int64_t hw_ticks_ms(void) {
 }
 
 static inline uint32_t hw_time_ms(void) {
-    return (uint32_t)esp_timer_get_time() / US_PER_MS;
+    return (uint32_t)(esp_timer_get_time() / US_PER_MS);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
