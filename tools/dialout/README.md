@@ -91,6 +91,22 @@ A failed `up` aborts the run rather than dialing into a dead link. The script mu
 mode of a modem script is not "returns an error", it is "sits there", and a client wedged on a
 `wwan0` that will never come up has silently left the fleet. Start from `dialout-link.example`.
 
+## Boxes on an always-on link
+
+The timer suits a box that is rarely reachable or pays for every wake. On broadband a box is always
+reachable, and all a 12-hour timer buys is a slow answer to an invite. `watch` stays running instead
+and asks every `watch-every` seconds (default 60, which is the invite record's TTL — asking faster
+only re-reads the cached answer), so a `dialout-server wait` is answered in a minute or two.
+
+Each round is an ordinary `dial` in its own process, so nothing about tunnels, `idle`, `hold-max` or
+cleanup changes: the loop only schedules, and waits while a round holds a tunnel. It logs "not
+invited" once rather than every minute, backs off to at most 10 minutes while dials fail, and refuses
+to run with a `link-script` set — a watch would raise a modem every round.
+
+`install --watch` installs `dialout-client-watch.service` and removes the timer; plain `install` does
+the reverse, so a box is only ever in one mode. The timer refuses intervals under an hour and points
+here instead, because its jitter, restart limit and per-wake logging are built for long gaps.
+
 ## Setting it up
 
 **On the server** (needs `dropbear-bin`, `miniupnpc` if you want the hole punched, `curl`, `node`):
@@ -112,6 +128,8 @@ wants a `link-script` — copy `dialout-link.example`):
 dialout-client keygen                  # prints the public key
 $EDITOR dialout.$(hostname).cfg        # dns-domain at minimum
 dialout-client install                 # service + timer, every 12h (--interval to change)
+#   or, on an always-on link:
+dialout-client install --watch         # stays running, dials whenever invited (--every to change)
 ```
 
 Then hand that public key to the server once:

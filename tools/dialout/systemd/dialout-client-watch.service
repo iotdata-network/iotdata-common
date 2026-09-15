@@ -1,0 +1,23 @@
+# Installed by `dialout-client install --watch [--every 60]`, which substitutes @BIN@ and @EVERY@.
+#
+# The other way to run the client, for a box on an always-on link: instead of dialout-client.timer
+# waking it every 12 hours, `watch` stays running and dials whenever invited. A box is in one mode
+# or the other -- `install` removes whichever it is not installing.
+
+[Unit]
+Description=dialout client watch (dial whenever invited, asking every @EVERY@s)
+Documentation=file:/opt/iotdata/src/iotdata-common/tools/dialout/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@BIN@ watch --every @EVERY@
+
+# The loop backs off by itself when a dial fails, so this restart is only for the loop itself dying.
+# That should not happen -- but a box nobody can reach must not quietly stay off the fleet if it does.
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
