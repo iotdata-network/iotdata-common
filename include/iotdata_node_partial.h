@@ -45,14 +45,14 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 typedef struct {
-    uint16_t id;    /* same value => same content; lets a receiver combine two ATTEMPTS at one report */
-    uint8_t total;  /* records in the whole report */
-    uint8_t index;  /* first record carried by this chunk */
-    uint8_t chunk;  /* records the builder actually packed into it */
+    uint16_t id;     /* same value => same content; lets a receiver combine two ATTEMPTS at one report */
+    uint8_t total;   /* records in the whole report */
+    uint8_t index;   /* first record carried by this chunk */
+    uint8_t chunk;   /* records the builder actually packed into it */
     uint32_t cursor; /* the builder's private resume point; 0 to start. NOT on the wire, so it is
                         as wide as the widest thing a builder resumes by -- a variant id, a table
                         row, a byte offset into a recorder. */
-    bool more;      /* the builder found records it could not fit */
+    bool more;       /* the builder found records it could not fit */
 } iotdata_partial_t;
 
 /* Whether this chunk needs a marker at all. NOT `total > 1`: a report of five records that all fit

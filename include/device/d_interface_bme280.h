@@ -439,7 +439,7 @@ esp_err_t bme280_test(device_test_result_t *const result, const uint32_t duratio
 
     result->passed = false;
     const uint32_t sleeping_ms = 1 * 1000;
-    const __ticks_t start_ms = __ticks_ms();
+    const uint32_t start_ms = hw_time_ms();
 
     esp_err_t rc;
     bme280_reading_t reading;
@@ -454,14 +454,14 @@ esp_err_t bme280_test(device_test_result_t *const result, const uint32_t duratio
         return rc;
     }
 
-    while (rc == ESP_OK && (__ticks_ms() - start_ms) < duration_ms) {
+    while (rc == ESP_OK && (hw_time_ms() - start_ms) < duration_ms) {
         ESP_LOGD(__tag_device_bme280, "%s: bme280_read", __func__);
         if ((rc = bme280_read(&reading, 0, NULL)) != ESP_OK)
             break;
         if (!reading.temp_quality.valid || !reading.pres_quality.valid) {
             snprintf(result->detail, sizeof(result->detail), "quality fail T:%d P:%d H:%d", reading.temp_quality.valid, reading.pres_quality.valid, reading.humi_quality.valid);
             rc = DEV_ERR_BAD_READING;
-        } else if ((__ticks_ms() - start_ms) < duration_ms)
+        } else if ((hw_time_ms() - start_ms) < duration_ms)
             hw_delay_ms_yieldable((uint32_t)sleeping_ms);
     }
 

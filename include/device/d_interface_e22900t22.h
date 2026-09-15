@@ -254,7 +254,7 @@ void _lora_pins_disable(void) {
 static uint32_t _lora_tx_guard_until_ms = 0;
 
 bool lora_is_ready(void) {
-    return _LORA_IS_USB() ? ((int32_t)((uint32_t)__ticks_ms() - _lora_tx_guard_until_ms) >= 0) : hw_gpio_get(PIN_DEVICE_LORA_AUX);
+    return _LORA_IS_USB() ? ((int32_t)(hw_time_ms() - _lora_tx_guard_until_ms) >= 0) : hw_gpio_get(PIN_DEVICE_LORA_AUX);
 }
 
 static inline void _lora_settle(void) {
@@ -677,7 +677,7 @@ static uint32_t _lora_rx_reads = 0, _lora_rx_bytes = 0, _lora_rx_last_ms = 0, _l
    as this read ends, and every caller below that point would otherwise measure the gap against
    itself. */
 static void _lora_rx_forensic(const char *const why, const uint32_t started_ms, const uint32_t prev_rx_ms) {
-    const uint32_t now = (uint32_t)__ticks_ms();
+    const uint32_t now = hw_time_ms();
     ESP_LOGW(__tag_device_e22900t22, "rx-forensic: %s | read=#%" PRIu32 " bytes=%" PRIu32 " since_rx=%" PRIu32 "ms since_tx=%" PRIu32 "ms took=%" PRIu32 "ms buffered=%u", why, _lora_rx_reads, _lora_rx_bytes,
              prev_rx_ms ? started_ms - prev_rx_ms : 0, _lora_tx_last_ms ? now - _lora_tx_last_ms : 0, now - started_ms, (unsigned)hw_uart_available());
 }
@@ -700,7 +700,7 @@ esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, in
         *out_rssi_dbm = LORA_RSSI_NONE;
 
 #if LORA_RX_FORENSICS
-    const uint32_t forensic_started_ms = (uint32_t)__ticks_ms(); /* BEFORE the first byte: `took` is the whole read */
+    const uint32_t forensic_started_ms = hw_time_ms(); /* BEFORE the first byte: `took` is the whole read */
 #endif
     if (hw_uart_read(buf, 1, first_byte_timeout_ms) <= 0)
         return ESP_OK;
@@ -711,7 +711,7 @@ esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, in
     _lora_rx_reads++;
     _lora_rx_bytes += (uint32_t)total;
     const uint32_t forensic_prev_rx_ms = _lora_rx_last_ms; /* the gap BEFORE this read */
-    _lora_rx_last_ms = (uint32_t)__ticks_ms();
+    _lora_rx_last_ms = hw_time_ms();
     if (total >= max)
         _lora_rx_forensic("READ FILLED THE BUFFER -- the rest of this frame is still in the uart", forensic_started_ms, forensic_prev_rx_ms);
 #endif
@@ -771,9 +771,9 @@ esp_err_t lora_write(const uint8_t *const data, const size_t len) {
     // Block until the UART has physically clocked every byte out to the module
     ESP_RETURN_ON_ERROR(hw_uart_wait_tx_done(_LORA_CMD_TIMEOUT_MS), __tag_device_e22900t22, "write: tx drain");
     if (_LORA_IS_USB())
-        _lora_tx_guard_until_ms = (uint32_t)__ticks_ms() + _LORA_TX_GUARD_USB_MS;
+        _lora_tx_guard_until_ms = hw_time_ms() + _LORA_TX_GUARD_USB_MS;
 #if LORA_RX_FORENSICS
-    _lora_tx_last_ms = (uint32_t)__ticks_ms();
+    _lora_tx_last_ms = hw_time_ms();
 #endif
 
     ESP_LOGD(__tag_device_e22900t22, "write: sent %d bytes", (int)len);
@@ -815,7 +815,7 @@ esp_err_t lora_test(device_test_result_t *const result, const uint32_t duration_
 
     result->passed = false;
     const uint32_t sleeping_ms = 1 * 1000;
-    const __ticks_t start_ms = __ticks_ms();
+    const uint32_t start_ms = hw_time_ms();
     const uint32_t s = esp_random();
 
     esp_err_t rc;
@@ -836,7 +836,7 @@ esp_err_t lora_test(device_test_result_t *const result, const uint32_t duration_
 
     int failures = 5, iterations = 0;
     uint16_t sequence = (uint16_t)(s & 0xFFFF);
-    while (rc == ESP_OK && (__ticks_ms() - start_ms) < duration_ms) {
+    while (rc == ESP_OK && (hw_time_ms() - start_ms) < duration_ms) {
         if (iterations++ & 1) {
             // rssi
             int rssi_dbm;
@@ -844,7 +844,7 @@ esp_err_t lora_test(device_test_result_t *const result, const uint32_t duration_
                 rc = ESP_OK;
         } else {
             // data
-            if (rc == ESP_OK && (__ticks_ms() - start_ms) < duration_ms) {
+            if (rc == ESP_OK && (hw_time_ms() - start_ms) < duration_ms) {
                 const uint8_t packet[5] = {
                     (uint8_t)(((_TEST_IOTDATA_VARIANT << 4) & 0xF0) | ((_TEST_IOTDATA_STATION_ID >> 8) & 0x0F)),
                     (uint8_t)((_TEST_IOTDATA_STATION_ID >> 0) & 0xFF),
@@ -859,7 +859,7 @@ esp_err_t lora_test(device_test_result_t *const result, const uint32_t duration_
                 sequence++;
             }
         }
-        if (rc == ESP_OK && (__ticks_ms() - start_ms) < duration_ms)
+        if (rc == ESP_OK && (hw_time_ms() - start_ms) < duration_ms)
             hw_delay_ms_yieldable((uint32_t)sleeping_ms);
     }
 

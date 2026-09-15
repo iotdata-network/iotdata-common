@@ -195,8 +195,8 @@ void ltr390_diagnose(void) {
                 if (hw_i2c_dev_reg_read(dev, _LTR390_REG_PART_ID, &id, 1) != ESP_OK)
                     ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " answers, but register 0x%02X would not read", addr[i], _LTR390_REG_PART_ID);
                 else if ((id >> 4) == (_LTR390_PART_ID_VAL >> 4) && addr[i] != _LTR390_I2C_ADDR)
-                    ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " part-id=0x%02" PRIX8 " %s <-- THE SENSOR IS HERE, not at 0x%02X, rebuild with -DUSE__LTR390_I2C_ADDR=0x%02X", addr[i], id, _ltr390_part_name(id),
-                             _LTR390_I2C_ADDR, addr[i]);
+                    ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " part-id=0x%02" PRIX8 " %s <-- THE SENSOR IS HERE, not at 0x%02X, rebuild with -DUSE__LTR390_I2C_ADDR=0x%02X", addr[i], id, _ltr390_part_name(id), _LTR390_I2C_ADDR,
+                             addr[i]);
                 else
                     ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " part-id=0x%02" PRIX8 " %s", addr[i], id, _ltr390_part_name(id));
                 (void)hw_i2c_dev_del(dev);
@@ -341,7 +341,7 @@ esp_err_t ltr390_test(device_test_result_t *const result, const uint32_t duratio
 
     result->passed = false;
     const uint32_t sleeping_ms = 1 * 1000;
-    const __ticks_t start_ms = __ticks_ms();
+    const uint32_t start_ms = hw_time_ms();
 
     esp_err_t rc;
     ltr390_reading_t reading;
@@ -356,14 +356,14 @@ esp_err_t ltr390_test(device_test_result_t *const result, const uint32_t duratio
         return rc;
     }
 
-    while (rc == ESP_OK && (__ticks_ms() - start_ms) < duration_ms) {
+    while (rc == ESP_OK && (hw_time_ms() - start_ms) < duration_ms) {
         ESP_LOGD(__tag_device_ltr390, "%s: ltr390_read", __func__);
         if ((rc = ltr390_read(&reading, 0, NULL)) != ESP_OK)
             break;
         if (!reading.lux_quality.valid || !reading.uvi_quality.valid) {
             snprintf(result->detail, sizeof(result->detail), "quality fail lux:%d uvi:%d", reading.lux_quality.valid, reading.uvi_quality.valid);
             rc = DEV_ERR_BAD_READING;
-        } else if ((__ticks_ms() - start_ms) < duration_ms)
+        } else if ((hw_time_ms() - start_ms) < duration_ms)
             hw_delay_ms_yieldable((uint32_t)sleeping_ms);
     }
 

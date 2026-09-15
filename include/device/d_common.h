@@ -10,17 +10,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef PLATFORM_LINUX
+#ifdef PLATFORM_ESP32
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
+#pragma GCC diagnostic ignored "-Wnested-externs"
+#pragma GCC diagnostic ignored "-Wredundant-decls"
+
+#include "esp_check.h"
+#include "esp_log.h"
+#include "esp_mac.h"
+#include "esp_rom_sys.h"
+#include "esp_sleep.h"
+#include "esp_system.h"
 #include "rom/ets_sys.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_cpu.h"
 #include "esp_random.h"
-#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
 #pragma GCC diagnostic pop
 #endif
 
@@ -130,13 +139,13 @@ void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size)
 #define US_PER_MS  1000
 #define MS_PER_SEC 1000
 
-typedef int64_t __ticks_t;
-
-static inline __ticks_t __ticks_ms(void) {
+static inline int64_t hw_ticks_ms(void) {
     return esp_timer_get_time() / US_PER_MS;
 }
 
-#define __MILLIS()     ((uint32_t)(esp_timer_get_time() / 1000))
+static inline uint32_t hw_time_ms(void) {
+    return (uint32_t)esp_timer_get_time() / US_PER_MS;
+}
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------

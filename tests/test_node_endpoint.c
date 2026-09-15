@@ -29,6 +29,8 @@
 #include "iotdata_node_status.h"
 #include "iotdata_node_control.h"
 #include "iotdata_node_partial.h"
+#include "device/d_module_datastore_linux.h"
+#include "iotdata_node_state.h"
 #include "iotdata_node_endpoint.h"
 
 /* --- stubs standing in for an application ------------------------------------------------- */
@@ -68,7 +70,7 @@ int main(void) {
     /* a node that senses AND relays: both groups, scopable */
     const idep_config_t both = { .caps=&caps, .status=both_cb, .tx=tx_cb, .control=ctl_cb,
                                  .control_keys=keys, .control_keys_count=1, .receive_always=true };
-    idep_node_init(&n, 0x0537);
+    idep_node_init(&n, 0x0537, NULL, 0u);
     len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), 0, NULL);
     CHECK(len > 0 && count_group(buf,(uint8_t)len,0) > 0 && count_group(buf,(uint8_t)len,1) > 0, "no scope = both groups");
     len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
@@ -106,7 +108,7 @@ int main(void) {
     CHECK(typed && records == 2, "a recorder: the type, then every record it had");
 
     /* the hook receives an unknown key; a key it refuses is counted unknown */
-    idep_node_init(&n, 0x0537);
+    idep_node_init(&n, 0x0537, NULL, 0u);
     uint8_t kv[8]; iotdata_kvr_t b; iotdata_kvr_init(&b, kv, sizeof(kv));
     iotdata_kvr_add_flag(&b, IOTDATA_NODE_CONTROL_MESH_PEERS_CLEAR);
     /* genuinely unassigned: MESH_STATIONS_REQUEST is no longer a candidate, since it now resolves
@@ -122,14 +124,14 @@ int main(void) {
     /* always listening: nothing is ever scheduled or advertised (a DOWN frame is transmitted
        before it is held, so such a node hears the immediate copy), yet the receiver counts as
        open at every instant */
-    idep_node_init(&n, 0x0537);
+    idep_node_init(&n, 0x0537, NULL, 0u);
     CHECK(!idep_window_advance(&both, &n, 10u * 60u * 1000u), "an always-on node never becomes due");
     CHECK(!idep_window_pending(&n), "and so never advertises");
     CHECK(idep_window_active(&both, &n, 123456u), "but is always active");
 
     /* a sleeping node still schedules and advertises normally */
     const idep_config_t sleeper = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = false, .receive_every_ms = 60000u, .receive_window_ms = 30000u };
-    idep_node_init(&n, 0x0538);
+    idep_node_init(&n, 0x0538, NULL, 0u);
     CHECK(!idep_window_advance(&sleeper, &n, 1000u), "not due yet");
     CHECK(idep_window_advance(&sleeper, &n, 60000u), "due after the cadence");
     CHECK(idep_window_pending(&n), "and pending an advertisement");

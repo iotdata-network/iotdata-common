@@ -120,6 +120,7 @@
 #define IOTDATA_VERSION_SENSOR_TSA         0x004
 #define IOTDATA_VERSION_SENSOR_WIND        0x008
 #define IOTDATA_VERSION_SENSOR_SOLAR       0x010
+#define IOTDATA_VERSION_SENSOR_LTR390      0x020
 
 #define IOTDATA_VERSION_FEATURE_MESH       0x001
 #define IOTDATA_VERSION_FEATURE_BLACKBOX   0x002
@@ -184,6 +185,8 @@ static inline const char *iotdata_version_cap_bit_name(const uint8_t key, const 
         switch (bit) {
         case IOTDATA_VERSION_SENSOR_BME280:
             return "bme280";
+        case IOTDATA_VERSION_SENSOR_LTR390:
+            return "ltr390";
         case IOTDATA_VERSION_SENSOR_SDS:
             return "sds";
         case IOTDATA_VERSION_SENSOR_TSA:

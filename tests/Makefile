@@ -48,6 +48,8 @@ test:
 	@$(TEST_DIR)/test_module_buffers
 	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE -pthread test_module_buffers_locked.c -o $(TEST_DIR)/test_module_buffers_locked
 	@$(TEST_DIR)/test_module_buffers_locked
+	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_state.c -o $(TEST_DIR)/test_node_state -lm
+	@$(TEST_DIR)/test_node_state
 
 test-clean:
 	@rm -rf $(TEST_DIR)

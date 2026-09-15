@@ -111,8 +111,11 @@ static inline size_t idep_packet_budget(const idep_config_t *const cfg) {
 
 /* Per station. On a deep-sleeping sensor this must live in RTC memory to survive the sleep. */
 typedef struct {
-    uint16_t station_id;
-    uint16_t sequence;      /* our own, for frames we originate */
+    uint16_t station;
+    uint16_t sequence; /* our own, for frames we originate */
+    /* Where `sequence` persists. NULL is fine and simply means it does not. Station id is
+       MAC-derived for now; persisting THAT is for when it becomes settable. */
+    iotdata_node_state_t *state;
     uint32_t elapsed_ms;    /* since the last window closed */
     uint32_t window_end_ms; /* meaningful only while window_open */
     bool window_open;
@@ -120,9 +123,55 @@ typedef struct {
     uint32_t stat_rx, stat_requests, stat_reports, stat_commands, stat_unknown, stat_windows;
 } idep_node_t;
 
-static inline void idep_node_init(idep_node_t *const n, const uint16_t station_id) {
+/*
+ * ONE STATION, ONE SEQUENCE, and this is where it lives.
+ *
+ * (station, sequence) is the protocol's whole identity for a packet, so a station that both relays
+ * and reports still has a SINGLE stream: two counters under one id give a receiver two interleaved
+ * sequences, and then dedup can drop a good frame because the other stream already used that
+ * number, while counting gaps to measure loss becomes meaningless. Every module that emits a frame
+ * as us takes a pointer to this and none keeps a counter of its own.
+ *
+ * `state` may be NULL -- an unpersisted node still counts, it just starts from 0 after a reboot.
+ */
+/* Registration, split out from init because the two happen at DIFFERENT times on a sleeping node.
+   The struct lives in RTC memory and must survive a deep sleep, so init -- which memsets -- runs
+   only on a cold boot; but the store has to be told about the block on EVERY boot or it has
+   nothing to flush or load. An always-on node calls init alone and never notices the difference. */
+static inline bool idep_node_bind(idep_node_t *const n, iotdata_node_state_t *const state, const uint32_t tag) {
+    n->state = state;
+    return iotdata_state_insert(state, tag, 1u, &n->sequence, sizeof(n->sequence), NULL);
+}
+
+static inline void idep_node_init(idep_node_t *const n, const uint16_t station, iotdata_node_state_t *const state, const uint32_t tag) {
     memset(n, 0, sizeof(*n));
-    n->station_id = station_id;
+    n->station = station;
+    (void)idep_node_bind(n, state, tag);
+}
+
+static inline uint16_t idep_station(const idep_node_t *const n) {
+    return n->station;
+}
+static inline uint16_t idep_sequence(const idep_node_t *const n) {
+    return n->sequence;
+}
+
+/* It went out. Advances past the DOWN sentinel -- a plain ++ wraps 65535 -> 0 and 65535 is the
+   sentinel -- and marks the store dirty, so no call site has to remember either.
+   Separate from peek because the iotdata rule is that a sequence advances only if there WAS a
+   transmission: a frame that failed to build, or that the radio refused, must not consume one, or a
+   gap would mean "never sent" instead of "lost". */
+static inline void idep_sequence_used(idep_node_t *const n) {
+    n->sequence = iotdata_sequence_next(n->sequence);
+    iotdata_state_touch(n->state);
+}
+
+/* peek + used, for a caller whose transmission IS handing the frame to a queue that owns it from
+   then on -- the mesh packers, where there is no later success to wait for. */
+static inline uint16_t idep_sequence_take(idep_node_t *const n) {
+    const uint16_t seq = idep_sequence(n);
+    idep_sequence_used(n);
+    return seq;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -191,15 +240,15 @@ static inline bool idep_receive_announce(const idep_config_t *const cfg, idep_no
     if (cfg->tx == NULL)
         return false;
     static iotdata_encoder_t enc;
-    static uint8_t packet[IOTDATA_MAX_PACKET_SIZE]; // XXX 
+    static uint8_t packet[IOTDATA_MAX_PACKET_SIZE]; // XXX
     size_t len = 0;
-    if (iotdata_encode_begin(&enc, packet, idep_packet_budget(cfg), 0, n->station_id, n->sequence) != IOTDATA_OK)
+    if (iotdata_encode_begin(&enc, packet, idep_packet_budget(cfg), 0, n->station, n->sequence) != IOTDATA_OK)
         return false;
     if (!idep_receive_append(cfg, &enc))
         return false;
     if (iotdata_encode_end(&enc, &len) != IOTDATA_OK)
         return false;
-    n->sequence = iotdata_sequence_next(n->sequence);
+    idep_sequence_used(n);
     return cfg->tx(packet, len);
 }
 
@@ -315,7 +364,7 @@ static inline int idep_build_status(const idep_config_t *const cfg, const idep_n
     iotdata_node_status_t s;
     memset(&s, 0, sizeof(s));
     if (cfg->status != NULL)
-        cfg->status(n->station_id, &s); /* the app knows its own uptime, battery, heap */
+        cfg->status(n->station, &s); /* the app knows its own uptime, battery, heap */
     return iotdata_status_pack(&kv, &s, scope);
 }
 
@@ -371,7 +420,7 @@ static inline bool idep_report_paged(const idep_config_t *const cfg, idep_node_t
     /* Sized by what the PROTOCOL can express; filled only as far as the caller's radio will carry
        (idep_packet_budget). The kv buffer cannot need more than the packet it has to fit inside. */
     static uint8_t kvbuf[IOTDATA_MAX_PACKET_SIZE]; /* static: too large for a sensor's stack frame */ // XXX
-    static uint8_t packet[IOTDATA_MAX_PACKET_SIZE]; // XXX
+    static uint8_t packet[IOTDATA_MAX_PACKET_SIZE];                                                   // XXX
     static iotdata_encoder_t enc;
 
     iotdata_partial_begin(partial, n->sequence);
@@ -381,7 +430,7 @@ static inline bool idep_report_paged(const idep_config_t *const cfg, idep_node_t
         return false;
 
     size_t len = 0;
-    if (iotdata_encode_begin(&enc, packet, budget, 0, n->station_id, n->sequence) != IOTDATA_OK)
+    if (iotdata_encode_begin(&enc, packet, budget, 0, n->station, n->sequence) != IOTDATA_OK)
         return false;
     /* Immediately before its target: the binding is positional. */
     if (iotdata_partial_needed(partial) && !iotdata_partial_emit(&enc, partial))
@@ -390,10 +439,10 @@ static inline bool idep_report_paged(const idep_config_t *const cfg, idep_node_t
         return false;
     if (iotdata_encode_end(&enc, &len) != IOTDATA_OK)
         return false;
-    n->sequence = iotdata_sequence_next(n->sequence);
     n->stat_reports++;
     if (!cfg->tx(packet, len))
         return false;
+    idep_sequence_used(n);         /* only now: the rule is that a refused frame consumes nothing */
     iotdata_partial_sent(partial); /* only now: a refused frame must not skip its records */
     return true;
 }
@@ -430,7 +479,7 @@ static inline void idep_process_control(const idep_config_t *const cfg, idep_nod
         default:
             /* not ours: offer it to the app before giving up. A mesh command reaching a node with
                no mesh lands here and is correctly counted unknown. */
-            if (cfg->control != NULL && cfg->control(n->station_id, key, val, vlen))
+            if (cfg->control != NULL && cfg->control(n->station, key, val, vlen))
                 n->stat_commands++;
             else
                 n->stat_unknown++; /* skipped, not fatal: an older node meeting a newer manager */
@@ -453,7 +502,7 @@ static inline bool idep_on_frame(const idep_config_t *const cfg, idep_node_t *co
     /* mesh frames are not ours to read, and an ordinary sequence means someone else's telemetry */
     if (variant == IOTDATA_VARIANT_MESH || !iotdata_node_is_down(sequence))
         return false;
-    if (!iotdata_node_addressed_to(station, n->station_id))
+    if (!iotdata_node_addressed_to(station, n->station))
         return false;
 
     static iotdata_decoder_t dec; /* ~2KB: never on an end device's stack */
