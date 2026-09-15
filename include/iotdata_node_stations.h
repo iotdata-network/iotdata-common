@@ -22,7 +22,6 @@ typedef enum { FILTER_MANUAL = 0, FILTER_AUTO = 1 } filter_source_t;
 typedef enum { FILTER_SCOPE_ALL = 0, FILTER_SCOPE_MANUAL = 1, FILTER_SCOPE_AUTO = 2 } filter_scope_t;
 
 typedef struct {
-    bool valid;
     uint16_t station;
     filter_action_t action;
     filter_source_t source;
@@ -44,14 +43,9 @@ static inline int filter_count(const filter_t *const f) {
 // ------------------------------------------------------------------------------------------------------------------------
 
 static inline int filter_locate(const filter_t *const f, const uint16_t station) {
-    for (int i = 0, c = 0; i < (int)(sizeof(f->e) / sizeof(f->e[0])) && c < f->count; i++) { /* LOOKUP */
-        const filter_entry_t *const e = &f->e[i];
-        if (e->valid) {
-            c++;
-            if (e->station == station)
-                return i;
-        }
-    }
+    for (int i = 0; i < f->count; i++)
+        if (f->e[i].station == station)
+            return i;
     return -1;
 }
 
@@ -59,23 +53,17 @@ static inline int filter_locate(const filter_t *const f, const uint16_t station)
 
 static inline bool filter_insert(filter_t *const f, const uint16_t station, const filter_action_t action, const filter_source_t source) {
     int slot = -1;
-    for (int i = 0, c = 0; i < (int)(sizeof(f->e) / sizeof(f->e[0])) && !(c == f->count && slot >= 0); i++) { /* UPSERT (see the note in relay_transmit.h) */
-        const filter_entry_t *const e = &f->e[i];
-        if (e->valid) {
-            c++;
-            if (e->station == station) {
-                slot = i;
-                break;
-            }
-        } else if (slot < 0)
+    for (int i = 0; i < f->count; i++)
+        if (f->e[i].station == station) {
             slot = i;
+            break;
+        }
+    if (slot < 0) {
+        if (f->count == (int)(sizeof(f->e) / sizeof(f->e[0])))
+            return false;
+        slot = f->count++;
     }
-    if (slot < 0)
-        return false;
     filter_entry_t *const e = &f->e[slot];
-    if (!e->valid)
-        f->count++;
-    e->valid = true;
     e->station = station;
     e->action = action;
     e->source = source;
@@ -85,17 +73,13 @@ static inline bool filter_insert(filter_t *const f, const uint16_t station, cons
 // ------------------------------------------------------------------------------------------------------------------------
 
 static inline bool filter_remove(filter_t *const f, const uint16_t station) {
-    for (int i = 0, c = 0; i < (int)(sizeof(f->e) / sizeof(f->e[0])) && c < f->count; i++) { /* LOOKUP (single removal, then returns) */
-        filter_entry_t *const e = &f->e[i];
-        if (e->valid) {
-            c++;
-            if (e->station == station) {
-                e->valid = false;
-                f->count--;
-                return true;
-            }
+    for (int i = 0; i < f->count; i++)
+        if (f->e[i].station == station) {
+            f->e[i] = f->e[f->count - 1];
+            memset(&f->e[f->count - 1], 0, sizeof(f->e[0]));
+            f->count--;
+            return true;
         }
-    }
     return false;
 }
 
@@ -103,13 +87,15 @@ static inline bool filter_remove(filter_t *const f, const uint16_t station) {
 
 static inline int filter_clear(filter_t *const f, const filter_scope_t scope) {
     int n = 0;
-    for (int i = 0; i < (int)(sizeof(f->e) / sizeof(f->e[0])) && f->count > 0; i++) { /* REMOVAL */
-        filter_entry_t *const e = &f->e[i];
-        if (e->valid && (scope == FILTER_SCOPE_ALL || (scope == FILTER_SCOPE_MANUAL && e->source == FILTER_MANUAL) || (scope == FILTER_SCOPE_AUTO && e->source == FILTER_AUTO))) {
-            e->valid = false;
+    for (int i = 0; i < f->count;) {
+        const filter_entry_t *const e = &f->e[i];
+        if (scope == FILTER_SCOPE_ALL || (scope == FILTER_SCOPE_MANUAL && e->source == FILTER_MANUAL) || (scope == FILTER_SCOPE_AUTO && e->source == FILTER_AUTO)) {
+            f->e[i] = f->e[f->count - 1];
+            memset(&f->e[f->count - 1], 0, sizeof(f->e[0]));
             f->count--;
             n++;
-        }
+        } else
+            i++;
     }
     return n;
 }
@@ -118,17 +104,14 @@ static inline int filter_clear(filter_t *const f, const filter_scope_t scope) {
 
 static inline bool filter_allows(const filter_t *const f, const uint16_t station) {
     bool any_allow = false, is_allowed = false;
-    for (int i = 0, c = 0; i < (int)(sizeof(f->e) / sizeof(f->e[0])) && c < f->count; i++) { /* LOOKUP */
+    for (int i = 0; i < f->count; i++) {
         const filter_entry_t *const e = &f->e[i];
-        if (e->valid) {
-            c++;
-            if (e->action == FILTER_ALLOW) {
-                any_allow = true;
-                if (e->station == station)
-                    is_allowed = true;
-            } else if (e->station == station)
-                return false; /* BLOCK wins */
-        }
+        if (e->action == FILTER_ALLOW) {
+            any_allow = true;
+            if (e->station == station)
+                is_allowed = true;
+        } else if (e->station == station)
+            return false; /* BLOCK wins */
     }
     return !any_allow || is_allowed;
 }

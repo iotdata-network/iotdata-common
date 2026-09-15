@@ -2,6 +2,9 @@
 #ifndef IOTDATA_NODE_UTILS_H
 #define IOTDATA_NODE_UTILS_H
 
+// ---------------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------------
+
 static inline uint32_t iotdata_node_mac32(void) {
 #ifdef PLATFORM_ESP32
     uint8_t mac[6] = { 0 };
@@ -11,6 +14,8 @@ static inline uint32_t iotdata_node_mac32(void) {
     return 0;
 #endif
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------
 
 static inline uint16_t iotdata_node_station_from_mac(const char *const tag) {
 #ifdef PLATFORM_ESP32
@@ -24,6 +29,8 @@ static inline uint16_t iotdata_node_station_from_mac(const char *const tag) {
     return 0; // XXX
 #endif
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------
 
 static inline uint8_t iotdata_node_reason_reset(void) {
 #ifdef PLATFORM_ESP32
@@ -51,5 +58,27 @@ static inline uint8_t iotdata_node_reason_reset(void) {
     return IOTDATA_NODE_REASON_UNKNOWN;
 #endif
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------
+
+typedef struct {
+    uint16_t key;  /* what the list is ordered by -- a station id */
+    uint16_t slot; /* the table slot that entry lives in */
+} iotdata_order_t;
+
+static inline int iotdata_order_insert(iotdata_order_t *const ord, const int n, const int max, const uint16_t key, const uint16_t slot) {
+    if (ord == NULL || n >= max)
+        return n;
+    int pos = n;
+    while (pos > 0 && ord[pos - 1].key > key) {
+        ord[pos] = ord[pos - 1];
+        pos--;
+    }
+    ord[pos].key = key;
+    ord[pos].slot = slot;
+    return n + 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_UTILS_H */
