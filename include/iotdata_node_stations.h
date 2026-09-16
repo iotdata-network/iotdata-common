@@ -76,7 +76,6 @@ static inline bool filter_remove(filter_t *const f, const uint16_t station) {
     for (int i = 0; i < f->count; i++)
         if (f->e[i].station == station) {
             f->e[i] = f->e[f->count - 1];
-            memset(&f->e[f->count - 1], 0, sizeof(f->e[0]));
             f->count--;
             return true;
         }
@@ -91,7 +90,6 @@ static inline int filter_clear(filter_t *const f, const filter_scope_t scope) {
         const filter_entry_t *const e = &f->e[i];
         if (scope == FILTER_SCOPE_ALL || (scope == FILTER_SCOPE_MANUAL && e->source == FILTER_MANUAL) || (scope == FILTER_SCOPE_AUTO && e->source == FILTER_AUTO)) {
             f->e[i] = f->e[f->count - 1];
-            memset(&f->e[f->count - 1], 0, sizeof(f->e[0]));
             f->count--;
             n++;
         } else
@@ -120,7 +118,7 @@ static inline bool filter_allows(const filter_t *const f, const uint16_t station
 // ------------------------------------------------------------------------------------------------------------------------
 
 static inline void filter_init(filter_t *const f) {
-    memset(f, 0, sizeof(*f));
+    *f = (filter_t){ 0 };
 }
 
 // ------------------------------------------------------------------------------------------------------------------------

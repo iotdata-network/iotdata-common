@@ -163,7 +163,7 @@ static inline const char *iotdata_down_ev_name(const iotdata_down_ev_t ev) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_down_init(iotdata_down_t *const ds, buffer_pool_t *const pool) {
-    memset(ds, 0, sizeof(*ds));
+    *ds = (iotdata_down_t){ 0 };
     ds->pool = pool;
     ds->ttl_ms = IOTDATA_DOWN_TTL_MS_DEFAULT;
     ds->scan_ms = IOTDATA_DOWN_SCAN_MS_DEFAULT;

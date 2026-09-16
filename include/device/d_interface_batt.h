@@ -7,27 +7,30 @@
 // records the answer in the RTC-retained state; when it is absent the ADC is never brought up
 // again and the packet simply carries no battery field. Nothing else in the app changes.
 //
-//   BAT+ ─┬──────────────┬──────────── 3V3 regulator in
-//         │              │
-//     [R6 100k]      Q2 emitter                       Q2 = 2N3906  (PNP, high side)
-//         │           (2N3906)                        Q1 = 2N3904  (NPN, level shift)
-//         └──────── Q2 base                           R1 = R2 = 330k 1%
-//                      │                              C1 = 10nF
-//                 Q2 collector ── [R1 330k] ─┬── GPIO_ADC   (ADC1)
-//                                            ├── [R2 330k] ── GND
-//   Q1 collector ── [R5 100k] ── Q2 base      └── [C1 10nF] ── GND
-//   Q1 emitter  ── GND
-//   Q1 base     ──┬── [R3 10k]  ── GPIO_EN
-//                 └── [R4 100k] ── GND
+//              VBAT+  (raw cell 3.0-4.2V)
+//                │
+//                ├──────────────┬─────────────────┬──────────────► to 3V3 reg input
+//                               │                 │
+//                           [R6 100k]         ┌───┴───┐
+//                               │             │   E   │ Q2 2N3906 (PNP)
+//                               └───+─────────┤ B     │
+//                                   │         │   C   │
+//                                   │         └───┬───┘
+//                                   │             │
+//                                   │             │
+//                               [R5 100k]      [R1 330k]
+//                                   │             │
+//                             ┌─────┴─────┐       ├───────────+──► GPIO_ADC
+// GPIO_EN ──[R3 10k]────+─────┤ B   C     │       │           │
+//                       │     │           │    [R2 330k]   [C1 10n]
+//                  [R4 100k]  │     E     │       │           │
+//                       │     └─────┬─────┘      GND         GND
+//                      GND         GND
+//                            Q1 2N2222A (NPN)
 //
 // WHY A PNP AND NOT A P-FET. The pack sits above the GPIO rail, so the high-side switch cannot be
-// driven from a pin directly -- turning it OFF means pulling its control terminal up to BAT+,
-// which a 3V3 output cannot do. Hence Q1 as an inverting level shifter. Given Q1 is there anyway,
-// a bipolar beats a FET at this current: the load is 6uA, so the only FET parameter that would
-// matter is the threshold, and a TO-92 P-FET with V_GS(th) to -3.5V does not reliably enhance on
-// the 2.9V of drive available at a flat pack. Q2's V_CE(sat) at 6uA is 10-20mV, a fixed offset
-// well inside the ADC's own error. R5 is NOT optional: a saturated Q1 straight onto Q2's base is
-// a short across a forward-biased junction.
+// driven from a pin directly -- turning it OFF means pulling its control terminal up to VBAT+,
+// which a 3V3 output cannot do. Hence Q1 as an inverting level shifter.
 //
 // WHY R4 SITS ON THE BASE, not at the enable pin: the divider must be off when the pin is an input
 // during boot and when it floats in deep sleep, and a pull-down at the junction itself also holds
@@ -37,8 +40,8 @@
 // WHY C1 IS 10nF. 330k alone cannot source the ADC's sample-and-hold charge, so C1 sits across R2
 // and supplies it. Its value sets both settling paths, and the two are NOT the same:
 //
-//   turn-on   tau = (R1||R2) * C1 = 165k * C1   -- a stiff source charging the tap
-//   turn-off  tau =  R2       * C1 = 330k * C1  -- Q2 is high-Z, so R2 alone drains it
+//   turn-on   tau = (R1||R2) * C1 = 165k * C1  -- a stiff source charging the tap
+//   turn-off  tau =  R2      * C1 = 330k * C1  -- Q2 is high-Z, so R2 alone drains it
 //
 // The SLOWER one is the off path, and it is the one BATTERY_SETTLE_MS has to satisfy, because
 // battery_status() reads the pin after switching off and requires it back at ground. At 100nF that

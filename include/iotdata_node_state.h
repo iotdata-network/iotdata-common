@@ -90,7 +90,7 @@ typedef struct {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_state_init(iotdata_node_state_t *const s, datastore_t *const ds, const char *const key) {
-    memset(s, 0, sizeof(*s));
+    *s = (iotdata_node_state_t){ 0 };
     s->ds = ds;
     s->key = (key != NULL) ? key : IOTDATA_STATE_KEY;
     s->save_ms = IOTDATA_STATE_SAVE_MS;

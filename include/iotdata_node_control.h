@@ -405,7 +405,7 @@ static inline const char *iotdata_control_argv_help(const iotdata_control_comman
 static inline const iotdata_control_command_t *iotdata_control_from_argv(const int argc, char **const argv, iotdata_control_args_t *const args, int *const consumed) {
     if (argv == NULL || args == NULL || argc <= 0)
         return NULL;
-    memset(args, 0, sizeof(*args));
+    *args = (iotdata_control_args_t){ 0 };
     args->target = args->targets[0] = IOTDATA_STATION_BROADCAST;
     args->targets_count = 1;
     args->scope_filter = IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_ALL;

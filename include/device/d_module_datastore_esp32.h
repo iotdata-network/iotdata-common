@@ -58,7 +58,7 @@ static inline bool datastore_persistent(const datastore_t *const ds) {
 static inline bool datastore_open(datastore_t *const ds, const char *const location) {
     if (ds == NULL || location == NULL)
         return false;
-    memset(ds, 0, sizeof(*ds));
+    *ds = (datastore_t){ 0 };
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         (void)nvs_flash_erase();

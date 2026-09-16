@@ -223,7 +223,7 @@ static inline const char *iotdata_version_cap_bit_name(const uint8_t key, const 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_version_caps_init(iotdata_version_caps_t *const c) {
-    memset(c, 0, sizeof(*c));
+    *c = (iotdata_version_caps_t){ 0 };
     uint16_t f = 0;
 #if !defined(IOTDATA_NO_JSON)
     f |= IOTDATA_VERSION_FEATURE_JSON;
@@ -283,7 +283,7 @@ static inline int iotdata_version_caps_pack(const iotdata_version_caps_t *const 
 }
 
 static inline bool iotdata_version_caps_parse(const uint8_t *const buf, const size_t len, iotdata_version_caps_t *const c) {
-    memset(c, 0, sizeof(*c));
+    *c = (iotdata_version_caps_t){ 0 };
     if (buf == NULL || (len % 2u) != 0)
         return false;
     for (size_t i = 0; i + 1u < len; i += 2u) {
@@ -435,10 +435,7 @@ static inline const char *iotdata_version_firmware(char *const buf, const size_t
 
 static inline const char *iotdata_version_serial(char *const buf, const size_t size) {
     uint8_t mac[6] = { 0 };
-    /* the eFuse MAC: burned in at manufacture, so it survives a reflash and there is no removable
-       interface it can be confused with */
-    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK)
-        (void)memset(mac, 0, sizeof(mac));
+    (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
     (void)snprintf(buf, size, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     return buf;
 }
@@ -749,7 +746,7 @@ static inline cJSON *iotdata_version_caps_to_json(const iotdata_version_caps_t *
 }
 
 static inline bool iotdata_version_caps_from_json(const cJSON *const obj, iotdata_version_caps_t *const caps) {
-    memset(caps, 0, sizeof(*caps));
+    *caps = (iotdata_version_caps_t){ 0 };
     if (obj == NULL)
         return false;
     const cJSON *const arr = cJSON_GetObjectItemCaseSensitive(obj, "entries");

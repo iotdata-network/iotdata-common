@@ -77,7 +77,7 @@ static inline int iotdata_partial_pack(uint8_t *const buf, const size_t size, co
 static inline bool iotdata_partial_unpack(const uint8_t *const val, const size_t vlen, iotdata_partial_t *const out) {
     if (val == NULL || out == NULL || vlen < IOTDATA_NODE_PARTIAL_SIZE)
         return false;
-    memset(out, 0, sizeof(*out));
+    *out = (iotdata_partial_t){ 0 };
     out->id = (uint16_t)(((uint16_t)val[0] << 8) | (uint16_t)val[1]);
     out->total = val[2];
     out->index = val[3];

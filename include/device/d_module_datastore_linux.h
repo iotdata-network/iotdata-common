@@ -78,7 +78,7 @@ static inline bool datastore_persistent(const datastore_t *const ds) {
 static inline bool datastore_open(datastore_t *const ds, const char *const location) {
     if (ds == NULL || location == NULL)
         return false;
-    memset(ds, 0, sizeof(*ds));
+    *ds = (datastore_t){ 0 };
     if (snprintf(ds->dir, sizeof(ds->dir), "%s", location) >= (int)sizeof(ds->dir))
         return false;
     if (mkdir(ds->dir, 0700) != 0 && errno != EEXIST)

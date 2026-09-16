@@ -144,7 +144,7 @@ static inline bool idep_node_bind(idep_node_t *const n, iotdata_node_state_t *co
 }
 
 static inline void idep_node_init(idep_node_t *const n, const uint16_t station, iotdata_node_state_t *const state, const uint32_t tag) {
-    memset(n, 0, sizeof(*n));
+    *n = (idep_node_t){ 0 };
     n->station = station;
     (void)idep_node_bind(n, state, tag);
 }
@@ -361,8 +361,7 @@ static inline int idep_build_diagnostics(const idep_config_t *const cfg, uint8_t
 static inline int idep_build_status(const idep_config_t *const cfg, const idep_node_t *const n, uint8_t *const buf, const size_t size, const uint8_t scope) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    iotdata_node_status_t s;
-    memset(&s, 0, sizeof(s));
+    iotdata_node_status_t s = { 0 };
     if (cfg->status != NULL)
         cfg->status(n->station, &s); /* the app knows its own uptime, battery, heap */
     return iotdata_status_pack(&kv, &s, scope);
