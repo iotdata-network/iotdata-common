@@ -136,9 +136,9 @@ void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size)
  *
  * Keep the stamp FIRST in the struct, so the guard itself is always read from a fixed offset.
  */
-#define _RTC_DATA_STRUCT      RTC_NOINIT_ATTR
+#define _RTC_DATA_STRUCT RTC_NOINIT_ATTR
 #define _RTC_DATA_STAMP_ENTRY \
-    uint32_t magic;           \
+    uint32_t magic; \
     uint32_t size
 #define _RTC_DATA_VALID(s, m) ((s)->magic == (m) && (s)->size == (uint32_t)sizeof(*(s)))
 #define _RTC_DATA_INIT(s, m) \
@@ -188,12 +188,13 @@ static inline void hw_delay_ms_yieldable(const uint32_t ms) {
     } while (remain > 0);
 }
 
-/* Busy-waits. Only for sub-tick timing a driver genuinely needs; never for a wait of any length. */
 static inline void hw_delay_ms_precise(const uint32_t ms) {
     esp_rom_delay_us(ms * US_PER_MS);
 }
 
-#define __SLEEP_MS(ms) hw_delay_ms_yieldable((uint32_t)(ms))
+static inline void hw_delay_us_precise(const uint32_t us) {
+    esp_rom_delay_us(us);
+}
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
