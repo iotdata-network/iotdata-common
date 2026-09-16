@@ -132,6 +132,11 @@ dialout-client install                 # service + timer, every 12h (--interval 
 dialout-client install --watch         # stays running, dials whenever invited (--every to change)
 ```
 
+`install` copies the client, `dialout.cfg`, `dialout.<hostname>.cfg` and the unit templates to
+`install-dir` (default `/usr/local/lib/dialout`) and runs the service from there — never from the
+checkout, which on a dev box may be a network share that is not mounted at boot. To update a box,
+re-run `install` from the checkout; `status` says whether the installed copy differs.
+
 Then hand that public key to the server once:
 
 ```sh

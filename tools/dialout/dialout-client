@@ -36,10 +36,14 @@
 #   dialout-client check                                              resolve only; say what it found
 #   dialout-client keygen                                             make our key; print the pubkey
 #   dialout-client watch [--every 60]                                 stay running; dial whenever invited
-#   dialout-client install [--interval 12h]                           systemd service + timer
-#   dialout-client install --watch [--every 60]                       systemd service running `watch`
+#   dialout-client install [--interval 12h] [--prefix DIR]            systemd service + timer
+#   dialout-client install --watch [--every 60] [--prefix DIR]        systemd service running `watch`
 #   dialout-client uninstall
 #   dialout-client status
+#
+# `install` first copies the client, its config and its unit templates to local disk (install-dir,
+# default /usr/local/lib/dialout) and points the unit there, so a box never depends on a network
+# share being mounted at boot. Re-run install from the source copy to update it.
 #
 # The pubkey from `keygen` is what the far end feeds to `dialout-server enrol`.
 
@@ -456,6 +460,14 @@ check() {
 
 status() {
     check
+    _prefix=$(installed_prefix)
+    if [ -z "$_prefix" ]; then
+        printf 'installed at  (not installed)\n'
+    elif [ "$(md5sum <"$HERE/$SELF")" = "$(md5sum <"$_prefix/dialout-client" 2>/dev/null)" ]; then
+        printf 'installed at  %s (same as this copy)\n' "$_prefix"
+    else
+        printf 'installed at  %s (DIFFERS from this copy -- re-run install from here to update)\n' "$_prefix"
+    fi
     printf '\n'
     if [ -f /etc/systemd/system/dialout-client-watch.service ]; then
         systemctl status dialout-client-watch.service --no-pager 2>/dev/null | head -12 || true
@@ -542,8 +554,55 @@ interval_s() {
     return 0
 }
 
+# The local copy an installed unit runs, read back from its ExecStart. Empty if nothing is installed.
+installed_prefix() {
+    for _u in /etc/systemd/system/dialout-client-watch.service /etc/systemd/system/dialout-client.service; do
+        [ -f "$_u" ] || continue
+        sed -n 's#^ExecStart=\(.*\)/dialout-client .*#\1#p' "$_u" | head -1
+        return 0
+    done
+}
+
+# install_copy <dir> -- put the client, its config and its unit templates on local disk, so the
+# service never runs off a network share that may not be mounted at boot. Each file is written beside
+# its target and renamed into place: a watch already running keeps reading the file it opened, rather
+# than having it rewritten under it.
+install_copy() {
+    _dst=$1
+    # checked before anything is removed or written, so a partial checkout cannot leave a box with no unit
+    for _t in dialout-client.service dialout-client.timer dialout-client-watch.service; do
+        [ -f "$HERE/systemd/$_t" ] || die "install: unit template $HERE/systemd/$_t is missing -- install from a full checkout"
+    done
+    mkdir -p "$_dst/systemd"
+    if [ "$(realpath "$HERE")" = "$(realpath "$_dst")" ]; then
+        log "install: running from $_dst already -- nothing to copy"
+        return 0
+    fi
+    cp "$HERE/$SELF" "$_dst/dialout-client.tmp" && chmod 755 "$_dst/dialout-client.tmp"
+    mv "$_dst/dialout-client.tmp" "$_dst/dialout-client"
+    for _f in dialout.cfg "dialout.$(hostname).cfg" systemd/dialout-client.service systemd/dialout-client.timer systemd/dialout-client-watch.service; do
+        [ -f "$HERE/$_f" ] || continue
+        cp "$HERE/$_f" "$_dst/$_f.tmp"
+        # the host overlay can hold a server's Cloudflare token on a box that is both ends
+        case "$_f" in dialout.*.cfg) chmod 600 "$_dst/$_f.tmp" ;; *) chmod 644 "$_dst/$_f.tmp" ;; esac
+        mv "$_dst/$_f.tmp" "$_dst/$_f"
+    done
+    log "install: copied the client to $_dst"
+}
+
+# unit_write <template> <unit> <sed args...> -- fill in a unit template. Written beside the unit and
+# renamed into place: a redirect straight onto the unit truncates it before sed has even opened the
+# template, so a failure there leaves an empty unit waiting for the next daemon-reload.
+unit_write() {
+    _tpl=$1 _unit=$2
+    shift 2
+    [ -f "$_tpl" ] || die "install: unit template $_tpl is missing"
+    sed "$@" "$_tpl" >"$_unit.tmp"
+    mv "$_unit.tmp" "$_unit"
+}
+
 install_units() {
-    _interval='' _watch=0 _every=''
+    _interval='' _watch=0 _every='' _prefix=''
     while [ $# -gt 0 ]; do
         case "$1" in
         --interval)
@@ -555,6 +614,10 @@ install_units() {
             _every=$2
             shift
             ;;
+        --prefix)
+            _prefix=$2
+            shift
+            ;;
         *) die "install: unknown option $1" ;;
         esac
         shift
@@ -562,6 +625,11 @@ install_units() {
     [ "$(id -u)" = 0 ] || die "install: needs root"
     [ "$_watch" = 0 ] || [ -z "$_interval" ] || die "install: --watch and --interval are different modes -- pick one"
     [ "$_watch" = 1 ] || [ -z "$_every" ] || die "install: --every goes with --watch; the timer takes --interval"
+    [ -z "$CFG" ] || die "install: --config is for testing -- install uses dialout.cfg and dialout.$(hostname).cfg beside the script"
+    [ -n "$(cfg dns-domain)" ] || die "install: dns-domain not set -- create dialout.$(hostname).cfg first"
+    [ -f "$(key_file)" ] || log "install: no key at $(key_file) yet -- run keygen and enrol it, or invited rounds will fail"
+    _prefix=${_prefix:-$(cfg install-dir /usr/local/lib/dialout)}
+    _bin=$_prefix/dialout-client
 
     # One mode at a time: a timer and a watch on the same box would dial over each other and fight for
     # the same reverse port. Whichever is being installed removes the other.
@@ -569,12 +637,16 @@ install_units() {
         _every=${_every:-$(cfg watch-every 60)}
         every_ok "$_every" install
         [ -z "$(cfg link-script)" ] || die "install --watch: link-script is set -- a modem box should use the timer"
+        install_copy "$_prefix"
         systemctl disable --now dialout-client.timer 2>/dev/null || true
         rm -f /etc/systemd/system/dialout-client.service /etc/systemd/system/dialout-client.timer
-        sed -e "s#@BIN@#$HERE/$SELF#g" -e "s#@EVERY@#$_every#g" "$HERE/systemd/dialout-client-watch.service" >/etc/systemd/system/dialout-client-watch.service
+        unit_write "$_prefix/systemd/dialout-client-watch.service" /etc/systemd/system/dialout-client-watch.service \
+            -e "s#@BIN@#$_bin#g" -e "s#@EVERY@#$_every#g"
         systemctl daemon-reload
-        systemctl enable --now dialout-client-watch.service
-        log "installed: dialout-client-watch.service, asking every ${_every}s"
+        # restart, not enable --now: on a re-install the watch is still running the previous copy
+        systemctl enable dialout-client-watch.service
+        systemctl restart dialout-client-watch.service
+        log "installed: dialout-client-watch.service running $_bin, asking every ${_every}s"
         return 0
     fi
 
@@ -586,25 +658,28 @@ install_units() {
     if [ -n "$_secs" ] && [ "$_secs" -lt 3600 ]; then
         die "install: --interval $_interval is under an hour -- on an always-on link use '$SELF install --watch' instead"
     fi
+    install_copy "$_prefix"
     systemctl disable --now dialout-client-watch.service 2>/dev/null || true
     rm -f /etc/systemd/system/dialout-client-watch.service
     for _u in dialout-client.service dialout-client.timer; do
-        sed -e "s#@BIN@#$HERE/$SELF#g" -e "s#@INTERVAL@#$_interval#g" "$HERE/systemd/$_u" >"/etc/systemd/system/$_u"
+        unit_write "$_prefix/systemd/$_u" "/etc/systemd/system/$_u" -e "s#@BIN@#$_bin#g" -e "s#@INTERVAL@#$_interval#g"
     done
     systemctl daemon-reload
-    systemctl enable --now dialout-client.timer
-    log "installed: dialout-client.timer every $_interval (plus one shortly after boot)"
+    systemctl enable dialout-client.timer
+    systemctl restart dialout-client.timer
+    log "installed: dialout-client.timer every $_interval running $_bin (plus one shortly after boot)"
     systemctl list-timers dialout-client.timer --no-pager 2>/dev/null || true
 }
 
 uninstall_units() {
     [ "$(id -u)" = 0 ] || die "uninstall: needs root"
+    _prefix=$(installed_prefix)
     systemctl disable --now dialout-client.timer 2>/dev/null || true
     systemctl disable --now dialout-client-watch.service 2>/dev/null || true
     rm -f /etc/systemd/system/dialout-client.service /etc/systemd/system/dialout-client.timer \
         /etc/systemd/system/dialout-client-watch.service
     systemctl daemon-reload
-    log "uninstalled"
+    log "uninstalled${_prefix:+ -- left the local copy in $_prefix}, and the key in $(state_dir)"
 }
 
 # ------------------------------------------------------------------------------------------------
