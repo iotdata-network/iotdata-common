@@ -124,13 +124,33 @@ typedef struct {
 #define BATTERY_ADC_ATTEN          ADC_ATTEN_DB_12
 #define BATTERY_ADC_BITWIDTH       ADC_BITWIDTH_12
 
-/* Chemistry limits, and the two points where a Li-ion discharge curve bends. */
-#define BATTERY_LIION_MV_MIN       3000
-#define BATTERY_LIION_MV_KNEE      3500
-#define BATTERY_LIION_MV_MID       3700
-#define BATTERY_LIION_MV_MAX       4200
-#define BATTERY_LIFEPO4_MV_MIN     2500
-#define BATTERY_LIFEPO4_MV_MAX     3650
+/* Chemistry limits, and the two points where a Li-ion discharge curve bends. Overridable, because
+   the useful values are properties of the INSTALLATION rather than of the cell:
+     MAX  is what YOUR charger leaves the cell RESTING at, not the 4.20V it terminates charging at.
+          A full cell settles at 4.15-4.18V once surface charge relaxes, so a 4200 ceiling means a
+          full cell reads 96-98% forever. Measure it a few minutes after charge and use that.
+     MIN  is where the NODE stops being useful, not the cell's 2.5V datasheet cutoff -- regulator
+          dropout and the sag under a 22dBm transmit arrive long before that. 0% should mean "about
+          to go quiet", which is what a gauge is for.
+     KNEE and MID are the curve's shape and are chemistry, not installation. */
+#ifndef BATTERY_LIION_MV_MIN
+#define BATTERY_LIION_MV_MIN 3000
+#endif
+#ifndef BATTERY_LIION_MV_KNEE
+#define BATTERY_LIION_MV_KNEE 3500
+#endif
+#ifndef BATTERY_LIION_MV_MID
+#define BATTERY_LIION_MV_MID 3700
+#endif
+#ifndef BATTERY_LIION_MV_MAX
+#define BATTERY_LIION_MV_MAX 4200
+#endif
+#ifndef BATTERY_LIFEPO4_MV_MIN
+#define BATTERY_LIFEPO4_MV_MIN 2500
+#endif
+#ifndef BATTERY_LIFEPO4_MV_MAX
+#define BATTERY_LIFEPO4_MV_MAX 3650
+#endif
 
 /* Adverse temperature widens the window rather than reporting a fault: a cold cell sags under load
    and a hot one can sit above its nominal ceiling, and neither is the pack being out of spec. */
