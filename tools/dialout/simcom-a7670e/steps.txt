@@ -1,0 +1,207 @@
+SIMCom A7670E on a Pi Zero header UART -- bring-up, test and dialout notes
+=========================================================================
+
+What this is
+------------
+A SIMCom A7670E-LNXV Cat-1 module wired to the Pi's header UART, carrying data over PPP (ppp0).
+It is the side modem for the remote LoRa node: the ESP32 switches 5V to the Pi and the modem for an
+availability window, the Pi dials out, leaves a reverse tunnel behind (see ../README.md), and the
+window closes.
+
+First proven working on iotdata-rem-b827eb2878c0 (Pi Zero 1, no wifi) on 2026-09-25.
+
+Files here
+----------
+    steps.txt                    this file
+    dialout-test.sh              the bring-up / diagnostic script (survey + real data test)
+    dialout-link                 the dialout client's link hook (up|down) for this modem
+    install.sh                   installs the image mods below, idempotent
+    ppp/peers/a7670e-lebara      pppd peer: device, auth, routing
+    ppp/chat/a7670e-lebara       dial script: sets the APN, ATD*99#
+
+Image modifications this makes
+------------------------------
+    /etc/ppp/peers/a7670e-lebara     mode 600 (holds the APN password)
+    /etc/ppp/chat/a7670e-lebara
+    /usr/local/sbin/dialout-link     local path, NOT /opt: the dialout timer runs at boot when
+                                     /opt (the workshop mount) is not there yet
+    package: ppp                     apt install ppp
+Nothing else. Boot config was already right on this image and was not touched.
+
+Hardware and wiring
+-------------------
+    Pi pin 8  (GPIO14, TXD) -> module RXD
+    Pin 10    (GPIO15, RXD) <- module TXD
+    ground to ground, and the module on its own 5V/current-capable supply
+    /dev/serial0 -> ttyAMA0 at 115200
+
+The image already had what the UART needs, so there was nothing to enable:
+    enable_uart=1           in /boot/firmware/config.txt
+    dtoverlay=disable-bt    so bluetooth does not take the good UART
+    no console=serial0 in cmdline.txt, serial-getty@ttyAMA0 masked
+install.sh re-checks all four and warns, it does not edit boot config.
+
+The SIM and the APN -- read this before debugging anything
+---------------------------------------------------------
+    APN       uk.lebara.mobi
+    user      wap
+    password  wap        (PAP)
+
+The SIM is Lebara UK, which is an MVNO on Vodafone UK. AT+COPS? therefore says 23415 Vodafone UK
+and never mentions Lebara, and the IMSI starts 23415 as well. Do not let that send you to the
+Vodafone APNs -- they do not work.
+
+THE TRAP: with no APN configured the modem invents default.mnc015.mcc234.gprs. The network ACCEPTS
+that and gives you a context with an IP address, so everything looks fine -- AT+CGPADDR has an
+address, pppd brings ppp0 up. But it carries nothing: tx climbs, rx stays at zero, forever.
+
+The one command that tells you the truth is AT+CGCONTRDP=1. Compare:
+
+    wrong APN:  +CGCONTRDP: 1,5,"default.mnc015.mcc234.gprs","10.22.5.154","","","",...
+    right APN:  +CGCONTRDP: 1,5,"uk.lebara.mobi","10.51.230.157","","192.168.253.11","",...
+                                                                  ^^^^^^^^^^^^^^ a DNS server
+
+Empty gateway AND empty DNS = the context carries nothing, whatever AT+CGPADDR says.
+
+Trick for an unknown SIM: set an empty APN with AT+CGDCONT=1,"IP","" and reactivate, then read
+AT+CGCONTRDP=1. The network fills in its own default, which is how uk.lebara.mobi was found
+(it came back as uk.lebara.mobi.mnc015.mcc234.gprs).
+
+AT+CGDCONT persists in the modem's NVM across AT+CFUN=1,1, so the APN only needs setting once. The
+chat script re-asserts it anyway, for a swapped module.
+
+Install
+-------
+    apt install ppp
+    cd /opt/iotdata/src/iotdata-common/tools/dialout/simcom-a7670e
+    ./install.sh
+
+Test
+----
+    ./dialout-test.sh                 full check: modem, network, context, modem stack, ppp0, hang-up
+    ./dialout-test.sh --no-data       survey only, uses no data
+    ./dialout-test.sh --keep 60       hold the data link longer
+    ./dialout-test.sh --apn X --user U --password P
+    ./dialout-test.sh --operator 24007 --lte-only      pin Tele2 SE, LTE only
+    ./dialout-test.sh -h              all options
+
+It ends in a pass/fail summary and exits non-zero on any FAIL, so it is usable from another script.
+It is safe to run over ssh on ethernet or wifi: pppd gets nodefaultroute, every host-side test is
+bound to ppp0, and it checks the box's default route is unchanged before it exits.
+
+A good run looks like: registration HOME or ROAMING, a DNS server in the context detail, ppp0 with
+an address, DNS and ping and https all passing, ppp0 gone afterwards, modem still answering.
+
+Expected output of a known-good run (2026-09-25, at a window in the workshop):
+    signal -67 dBm, LTE band 1, +CEREG: 0,1
+    ping 0% loss, rtt 53/59/64 ms
+    https 200, 84600 bytes at ~8.8 kB/s
+    ppp session: Sent 7739 bytes, received 104025 bytes
+
+Bring the link up by hand
+-------------------------
+    pppd call a7670e-lebara updetach                 dial (add nodefaultroute on the bench)
+    ip -4 addr show ppp0
+    ping -I ppp0 8.8.8.8
+    curl --interface 'if!ppp0' https://www.google.com/    note the if! prefix, it forces the device
+    pkill -f 'pppd call a7670e-lebara'               hang up
+    journalctl -t pppd -n 30                         what pppd actually did
+
+    /usr/local/sbin/dialout-link up                  or via the hook, which does the above
+    /usr/local/sbin/dialout-link down
+
+Wiring it into dialout
+----------------------
+A modem box keeps the TIMER, not watch mode: watch would raise the modem every round, and the
+client refuses the combination anyway.
+
+In dialout.<hostname>.cfg:
+    link-script=/usr/local/sbin/dialout-link
+    link-timeout=60
+
+Then, as in ../script-iotdata-tst.txt:
+    dialout-client keygen
+    (enrol the key on the server)
+    dialout-client install --interval 12h
+    dialout-client status
+
+The client calls the hook "up" before its DNS lookups -- there is no DNS until the modem is up --
+and "down" on every way out, including the usual one where there was no invitation waiting, so an
+uninvited check costs a few seconds of radio instead of minutes.
+
+DNS: usepeerdns writes the carrier resolver to /etc/ppp/resolv.conf only, it does NOT touch
+/etc/resolv.conf, and no hook was added to make it. The image resolves via Quad9, and those queries
+go out over ppp0 once it holds the default route, so DNS works without touching resolv.conf. The
+carrier resolver (192.168.253.11) is only reachable over the link anyway.
+
+Gotchas
+-------
+- No CMUX. This kernel has no n_gsm, so AT commands and PPP cannot share the one UART: while pppd
+  owns /dev/serial0 nothing else can talk to the modem. Anything you build has to be phased, which
+  is why dialout-test.sh surveys, then dials, then re-queries.
+- pppd needs nodetach or updetach if a script is watching it. Plain `pppd call ...` daemonises
+  immediately, so a wrapper that checks the child pid decides it failed while the link is coming up
+  fine. (Lost half an hour to exactly this.)
+- pppd 2.5.2 takes `user` and `password` directly, so /etc/ppp/pap-secrets stays untouched.
+- `local` and `nocrtscts` are required: only TX, RX and ground are wired, there are no modem
+  control lines and no hardware flow control.
+- curl needs --interface 'if!ppp0'. A bare name can be read as a host or address instead.
+- dig cannot bind to an interface. To test the carrier resolver, add a host route for it via ppp0
+  first (dialout-test.sh does this, and removes it after).
+- +CPING returns nothing at all on this firmware (25156B03A7670M5A) even when the link is fine.
+  +CDNSGIP works. That is why the modem-stack check in dialout-test.sh is advisory and shows as
+  "note" rather than FAIL.
+- AT+CSOCKSETPN only works while the socket service is closed: NETCLOSE, set it, then NETOPEN.
+- Reading AT replies: set VTIME so a read returns on an idle line, but drive each command to a
+  DEADLINE. A one-second idle timeout silently loses slow answers (+CDNSGIP, +CPING, COPS scans),
+  which looks exactly like a dead modem.
+
+Roaming (the SIM is UK, the node is going to Sweden)
+---------------------------------------------------
+There is no data-roaming switch on the A76XX -- nothing to turn on. Roaming is just a registration
+state: +CEREG stat 5 instead of 1. Whether data then works is down to the SIM's plan and the
+visited network, not the modem.
+
+dialout-test.sh reports it both ways: the +CEREG state, and a home-versus-visited comparison of the
+SIM's IMSI prefix against the network it is actually on.
+
+AT+CPOL? lists the operators the SIM itself prefers. On this SIM entry 1 is 24008 Telenor SE,
+followed by 50 more networks, so it is provisioned for exactly this deployment.
+
+If automatic selection picks a poor network out there:
+    ./dialout-test.sh --operator 24001     Telia SE
+    ./dialout-test.sh --operator 24002     Tre SE
+    ./dialout-test.sh --operator 24007     Tele2 SE
+    ./dialout-test.sh --operator 24008     Telenor SE
+    ./dialout-test.sh --auto-operator      back to automatic
+    ./dialout-test.sh --lte-only           AT+CNMP=38, LTE only
+    ./dialout-test.sh --auto-rat           AT+CNMP=2, automatic
+Pinning an operator is AT+COPS=1,2,"<mccmnc>" and it sticks, so put it back to automatic when done.
+
+Useful AT commands by hand
+--------------------------
+    ATI                     model and IMEI          AT+CPIN?        SIM state
+    AT+CICCID               SIM serial              AT+CIMI         IMSI (home network)
+    AT+COPS?                current operator        AT+CPOL?        SIM's preferred operators
+    AT+CEREG?               registration (5=roam)   AT+CSQ          signal, dBm = 2*rssi-113
+    AT+CPSI?                band, cell, quality     AT+CGATT?       attached to packet service
+    AT+CGDCONT?             contexts and APNs       AT+CGPADDR      context addresses
+    AT+CGCONTRDP=1          gateway and DNS         AT+CGAUTH=...   APN credentials
+    AT+CFUN=1,1             reset the module        AT+CMEE=2       verbose errors
+
+Log
+---
+2026-09-25  Modem wired to the header UART of iotdata-rem-b827eb2878c0 (192.168.0.32) and found
+            already reachable at 115200 on /dev/serial0 -- the image needed no serial changes.
+            Registered on LTE band 1, -65 dBm, Vodafone UK (23415).
+2026-09-25  apt install ppp (2.5.2-1+1).
+2026-09-25  First PPP dial came up but passed no traffic: tx rising, rx zero, no DNS offered. Proved
+            it was not pppd's fault by failing the same way through the modem's own IP stack, then
+            found the empty gateway/DNS in AT+CGCONTRDP. Cause: no APN, so the modem had invented
+            default.mnc015.mcc234.gprs. Probing with an empty APN made the network reveal its own
+            default and name Lebara; Matt confirmed uk.lebara.mobi with wap/wap.
+2026-09-25  Working end to end with the right APN and PAP: ping 0% loss ~59 ms, carrier DNS
+            resolving, https 200. Wrote dialout-test.sh, and set the APN in the modem's NVM.
+2026-09-25  Added this directory: peers and chat files, dialout-link hook, install.sh, these notes.
+            dialout itself is NOT yet enrolled on this box -- keygen, enrol and install --interval
+            are still to do.

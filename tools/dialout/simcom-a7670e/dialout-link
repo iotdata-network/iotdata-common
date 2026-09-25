@@ -1,0 +1,84 @@
+#!/bin/sh
+#
+# dialout-link -- the client's link hook for a SIMCom A7670E on the Pi header UART, over PPP.
+#
+# Contract (see ../dialout-link.example): $1 is "up" or "down", exit 0 = success, it must be
+# idempotent, "down" runs even if "up" failed, and the client kills it after link-timeout seconds
+# (default 60) and counts that as failure. So WAIT below stays under that.
+#
+# "up" dials with pppd's `updetach`: pppd stays in the foreground until IPCP has finished and then
+# detaches, so its exit status means what it says and there is no polling loop to get wrong.
+#
+# The default route is the part to be careful with. In the field this modem IS the network, so ppp0
+# has to carry the default route -- the peers file says `defaultroute`. On the bench the box is on
+# ethernet and stealing the default route would cut the ssh session you are testing from, so if
+# anything else already has a default route we dial without one and say so.
+#
+# It deliberately does not power the modem down: on the remote node the ESP32 switches 5V to the
+# whole Pi and modem between windows, so there is nothing left drawing current to worry about.
+
+set -eu
+
+PEER=a7670e-lebara
+IFACE=ppp0
+WAIT=45
+
+log() { printf '%s dialout-link: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
+have_addr() { ip -4 -br addr show "$IFACE" 2>/dev/null | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; }
+running() { pgrep -f "pppd call $PEER" >/dev/null 2>&1; }
+other_default() { ip -4 route show default 2>/dev/null | grep -qv "dev $IFACE"; }
+
+case "${1:-}" in
+up)
+    if have_addr; then
+        log "$IFACE already up"
+        exit 0
+    fi
+    _opts=''
+    if other_default; then
+        log "something else holds the default route -- dialing without one (bench)"
+        _opts=nodefaultroute
+    fi
+    log "dialing $PEER"
+    _rc=0
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$WAIT" pppd call "$PEER" updetach $_opts || _rc=$?
+    else
+        pppd call "$PEER" updetach $_opts || _rc=$?
+    fi
+    if [ "$_rc" != 0 ]; then
+        log "dial failed (rc $_rc) -- journalctl -t pppd -n 20"
+        exit 1
+    fi
+    if ! have_addr; then
+        log "pppd exited 0 but $IFACE has no address"
+        exit 1
+    fi
+    log "up: $(ip -4 -br addr show "$IFACE" | awk '{print $3}')"
+    exit 0
+    ;;
+down)
+    if ! have_addr && ! running; then
+        log "already down"
+        exit 0
+    fi
+    log "hanging up"
+    pkill -TERM -f "pppd call $PEER" 2>/dev/null || true
+    _i=0
+    while [ "$_i" -lt 20 ]; do
+        have_addr || break
+        sleep 1
+        _i=$((_i + 1))
+    done
+    if have_addr; then
+        log "warning: $IFACE is still up"
+    else
+        log "down"
+    fi
+    exit 0
+    ;;
+*)
+    log "usage: $0 up|down"
+    exit 2
+    ;;
+esac

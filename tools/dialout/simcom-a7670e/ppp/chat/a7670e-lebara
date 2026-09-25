@@ -1,0 +1,14 @@
+# /etc/ppp/chat/a7670e-lebara -- dial script for the SIMCom A7670E, Lebara UK SIM.
+#
+# CGDCONT is re-asserted on every dial. It persists in the modem's NVM, so this is belt and braces
+# -- it matters when a module is swapped, or after somebody has been poking at AT commands.
+ABORT 'BUSY'
+ABORT 'NO CARRIER'
+ABORT 'NO DIALTONE'
+ABORT 'ERROR'
+TIMEOUT 20
+'' AT
+OK ATE0
+OK 'AT+CGDCONT=1,"IP","uk.lebara.mobi"'
+OK 'ATD*99#'
+CONNECT ''

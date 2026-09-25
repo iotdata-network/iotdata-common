@@ -1,0 +1,32 @@
+# /etc/ppp/peers/a7670e-lebara -- SIMCom A7670E on the Pi header UART, Lebara UK SIM.
+#
+#   pppd call a7670e-lebara updetach     dial, and exit 0 once the link is actually up
+#   pkill -f 'pppd call a7670e-lebara'   hang up
+#
+# Mode 600: it holds the APN password.
+
+/dev/serial0
+115200
+connect "/usr/sbin/chat -v -f /etc/ppp/chat/a7670e-lebara"
+
+# The APN wants PAP (Lebara UK: wap/wap). The peer does not authenticate to us.
+noauth
+user wap
+password wap
+
+# Two wires and a ground: no modem control lines, no hardware flow control.
+local
+nocrtscts
+
+# Let the carrier give us both addresses and its resolvers (-> /etc/ppp/resolv.conf).
+noipdefault
+usepeerdns
+
+# Notice a dead link instead of sitting on it.
+lcp-echo-interval 10
+lcp-echo-failure 3
+maxfail 1
+
+# In the field this modem IS the network, so it carries the default route. On the bench, where the
+# box is on ethernet, dialout-link passes nodefaultroute on the command line to override this.
+defaultroute
