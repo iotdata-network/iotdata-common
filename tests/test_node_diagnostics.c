@@ -99,20 +99,20 @@ int main(void) {
     /* whatever the list says, the handler must service exactly that and no more: a key advertised
        and not serviced sends a manager on a wild goose chase, and one serviced but not advertised
        is a command nobody knows to send */
-    const unsigned advertised = IOTDATA_DIAGNOSTICS_CONTROL_KEYS_COUNT; /* a variable: the count is 0 in one of the two builds */
+    const unsigned advertised = IOTDATA_DIAGNOSTICS_CONTROL_ACTIONS_COUNT; /* a variable: the count is 0 in one of the two builds */
     for (unsigned i = 0; i < advertised; i++) {
-        const uint8_t key = iotdata_diagnostics_control_keys[i];
-        if (!iotdata_diagnostics_control(key, NULL, 0))
-            printf("  FAIL: advertises 0x%02X but does not service it\n", key), fails++;
-        if (iotdata_node_tlv_key_name(IOTDATA_NODE_TLV_CONTROL, key) == NULL)
-            printf("  FAIL: advertises 0x%02X, which is not a CONTROL key\n", key), fails++;
+        const uint8_t subject = iotdata_diagnostics_control_actions[i * 2], action = iotdata_diagnostics_control_actions[i * 2 + 1];
+        if (!iotdata_diagnostics_control(subject, action, NULL, 0))
+            printf("  FAIL: advertises %02X/%02X but does not service it\n", subject, action), fails++;
+        if (subject != IOTDATA_NODE_TLV_DIAGNOSTICS)
+            printf("  FAIL: advertises %02X/%02X, which is not a DIAGNOSTICS action\n", subject, action), fails++;
     }
-    CHECK(!iotdata_diagnostics_control(IOTDATA_NODE_CONTROL_REBOOT, NULL, 0), "and refuses what is not its own");
+    CHECK(!iotdata_diagnostics_control(IOTDATA_NODE_SUBJECT_NODE, IOTDATA_NODE_ACTION_NODE_REBOOT, NULL, 0), "and refuses what is not its own");
 #if IOTDATA_DIAGNOSTICS
-    CHECK(IOTDATA_DIAGNOSTICS_CONTROL_KEYS_COUNT == 3, "enable, clear and dump");
+    CHECK(IOTDATA_DIAGNOSTICS_CONTROL_ACTIONS_COUNT == 3, "enable, clear and dump");
     CHECK(IOTDATA_DIAGNOSTICS_PULL != NULL && IOTDATA_DIAGNOSTICS_CONTROL != NULL, "hooks a node can install");
 #else
-    CHECK(IOTDATA_DIAGNOSTICS_CONTROL_KEYS_COUNT == 0, "it advertises nothing");
+    CHECK(IOTDATA_DIAGNOSTICS_CONTROL_ACTIONS_COUNT == 0, "it advertises nothing");
     /* NULL rather than an inert function: that is how the node layer tells "keeps no diagnostics"
        from "keeps a recorder that happens to be empty" */
     CHECK(IOTDATA_DIAGNOSTICS_PULL == NULL && IOTDATA_DIAGNOSTICS_CONTROL == NULL, "and installs no hooks");
@@ -171,7 +171,7 @@ int main(void) {
     iotdata_diagnostics_tick(1000);
     cursor = 0;
     CHECK(iotdata_diagnostics_pull(&cursor, rec, sizeof(rec)) == 0, "nothing is read, though there is something there");
-    CHECK(!iotdata_diagnostics_control(IOTDATA_NODE_CONTROL_DIAGNOSTICS_CLEAR, NULL, 0), "no command is claimed");
+    CHECK(!iotdata_diagnostics_control(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR, NULL, 0), "no command is claimed");
     iotdata_diagnostics_stat();
     CHECK(said_contains("unavailable"), "and an operator is told why");
 #endif

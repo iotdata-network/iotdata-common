@@ -50,6 +50,8 @@ test:
 	@$(TEST_DIR)/test_module_buffers_locked
 	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_state.c -o $(TEST_DIR)/test_node_state -lm
 	@$(TEST_DIR)/test_node_state
+	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_config.c -o $(TEST_DIR)/test_node_config -lm
+	@$(TEST_DIR)/test_node_config
 
 test-clean:
 	@rm -rf $(TEST_DIR)

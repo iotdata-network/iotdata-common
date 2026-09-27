@@ -59,18 +59,18 @@
    descriptor at every link, which is a better source than a define because it cannot be forgotten
    or left behind by an incremental build. Unset and underivable, it reads as _NONE, so the
    omission is visible rather than silently inherited from whenever the tree was last touched. */
-#define IOTDATA_VERSION_STAMP_NONE         "000000000000"
-#define IOTDATA_VERSION_STAMP_LEN          12
+#define IOTDATA_VERSION_STAMP_NONE             "000000000000"
+#define IOTDATA_VERSION_STAMP_LEN              12
 
 /* Field sizes in CHARACTERS -- a buffer for one is declared [SIZE + 1] for the terminator, so
    these read as the lengths they are rather than as one less than they look. Generous against the grammars (a `board/arch` runs ~15, a `software` ~24) and cheap:
    the whole TLV is ~80 bytes of kvr, one frame, sent at startup and on request. */
-#define IOTDATA_VERSION_HARDWARE_MAX       24
-#define IOTDATA_VERSION_FIRMWARE_MAX       24
-#define IOTDATA_VERSION_SOFTWARE_MAX       48
-#define IOTDATA_VERSION_SERIAL_MAX         32 /* a machine-id is 32 hex, and an identity must never be truncated */
-#define IOTDATA_VERSION_CAPS_STR_MAX       96
-#define IOTDATA_VERSION_STR_MAX            256
+#define IOTDATA_VERSION_HARDWARE_MAX           24
+#define IOTDATA_VERSION_FIRMWARE_MAX           24
+#define IOTDATA_VERSION_SOFTWARE_MAX           48
+#define IOTDATA_VERSION_SERIAL_MAX             32 /* a machine-id is 32 hex, and an identity must never be truncated */
+#define IOTDATA_VERSION_CAPS_STR_MAX           96
+#define IOTDATA_VERSION_STR_MAX                256
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // CAPABILITIES
@@ -93,41 +93,46 @@
 // choices that are not commands.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_VERSION_CAP_RADIO          0x0
-#define IOTDATA_VERSION_CAP_DISPLAY        0x1
-#define IOTDATA_VERSION_CAP_MODEM          0x2
-#define IOTDATA_VERSION_CAP_SENSOR         0x3
-#define IOTDATA_VERSION_CAP_STORAGE        0x4
-#define IOTDATA_VERSION_CAP_POWER          0x5
-#define IOTDATA_VERSION_CAP_FEATURES       0x6
+#define IOTDATA_VERSION_CAP_RADIO              0x0
+#define IOTDATA_VERSION_CAP_DISPLAY            0x1
+#define IOTDATA_VERSION_CAP_MODEM              0x2
+#define IOTDATA_VERSION_CAP_SENSOR             0x3
+#define IOTDATA_VERSION_CAP_STORAGE            0x4
+#define IOTDATA_VERSION_CAP_POWER              0x5
+#define IOTDATA_VERSION_CAP_FEATURES           0x6
 /* 0x7 unassigned; 0x8..0xF proprietary (bit 3) */
-#define IOTDATA_VERSION_CAP_PROPRIETARY    0x8
-#define IOTDATA_VERSION_CAP_COUNT          16
-#define IOTDATA_VERSION_CAP_MASK_MAX       0x0FFFu
+#define IOTDATA_VERSION_CAP_PROPRIETARY        0x8
+#define IOTDATA_VERSION_CAP_COUNT              16
+#define IOTDATA_VERSION_CAP_MASK_MAX           0x0FFFu
 
-#define IOTDATA_VERSION_RADIO_E22_DIP      0x001
-#define IOTDATA_VERSION_RADIO_E22_USB      0x002
-#define IOTDATA_VERSION_RADIO_SX1302       0x004
-#define IOTDATA_VERSION_RADIO_RAK3272      0x008
+#define IOTDATA_VERSION_RADIO_E22_DIP          0x001
+#define IOTDATA_VERSION_RADIO_E22_USB          0x002
+#define IOTDATA_VERSION_RADIO_SX1302           0x004
+#define IOTDATA_VERSION_RADIO_RAK3272          0x008
 
-#define IOTDATA_VERSION_DISPLAY_ILI9488    0x001
-#define IOTDATA_VERSION_DISPLAY_SSD1306    0x002
+#define IOTDATA_VERSION_DISPLAY_ILI9488        0x001
+#define IOTDATA_VERSION_DISPLAY_SSD1306        0x002
 
-#define IOTDATA_VERSION_MODEM_USB_CDC      0x001
+#define IOTDATA_VERSION_MODEM_USB_CDC          0x001
 
-#define IOTDATA_VERSION_SENSOR_BME280      0x001
-#define IOTDATA_VERSION_SENSOR_SDS         0x002
-#define IOTDATA_VERSION_SENSOR_TSA         0x004
-#define IOTDATA_VERSION_SENSOR_WIND        0x008
-#define IOTDATA_VERSION_SENSOR_SOLAR       0x010
-#define IOTDATA_VERSION_SENSOR_LTR390      0x020
+#define IOTDATA_VERSION_SENSOR_BME280          0x001
+#define IOTDATA_VERSION_SENSOR_SDS             0x002
+#define IOTDATA_VERSION_SENSOR_TSA             0x004
+#define IOTDATA_VERSION_SENSOR_WIND            0x008
+#define IOTDATA_VERSION_SENSOR_SOLAR           0x010
+#define IOTDATA_VERSION_SENSOR_LTR390          0x020
 
-#define IOTDATA_VERSION_FEATURE_MESH       0x001
-#define IOTDATA_VERSION_FEATURE_BLACKBOX   0x002
-#define IOTDATA_VERSION_FEATURE_OTA        0x004
-#define IOTDATA_VERSION_FEATURE_JSON       0x008
-#define IOTDATA_VERSION_FEATURE_FLOAT      0x010
-#define IOTDATA_VERSION_FEATURE_ENCRYPTION 0x020
+#define IOTDATA_VERSION_FEATURE_MESH           0x001
+#define IOTDATA_VERSION_FEATURE_BLACKBOX       0x002
+#define IOTDATA_VERSION_FEATURE_OTA            0x004
+#define IOTDATA_VERSION_FEATURE_JSON           0x008
+#define IOTDATA_VERSION_FEATURE_FLOAT          0x010
+#define IOTDATA_VERSION_FEATURE_ENCRYPTION     0x020
+/* This node's APPLICATION configuration survives a power cycle. PROTOCOL configuration -- the
+   station id, the per-type triggers -- always does and is not in question, so this bit is only
+   about the device's own settings. A manager that does not see it re-applies them after a restart,
+   which it spots from STATUS's `restarts` and `uptime`. */
+#define IOTDATA_VERSION_FEATURE_CONFIG_PERSIST 0x040
 
 typedef struct {
     uint16_t entry[IOTDATA_VERSION_CAP_COUNT]; /* at most one per category before OR-merging */
@@ -212,6 +217,8 @@ static inline const char *iotdata_version_cap_bit_name(const uint8_t key, const 
             return "float";
         case IOTDATA_VERSION_FEATURE_ENCRYPTION:
             return "crypt";
+        case IOTDATA_VERSION_FEATURE_CONFIG_PERSIST:
+            return "cfgkeep";
         default:
             return NULL;
         }

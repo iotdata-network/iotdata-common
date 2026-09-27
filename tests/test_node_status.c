@@ -69,7 +69,10 @@ static int count_keys(const uint8_t *const raw, const uint8_t len, const bool me
     const uint8_t *val;
     int n = 0;
     while (iotdata_kvr_next(raw, len, &cur, &key, &val, &vlen))
-        if ((key >= 0x20 && key < 0x40) == mesh_group)
+        /* the mesh half is 0x20..0x7F: its scalars AND its table. The node half is everything
+           below, which is now its scalars AND its tables, since stations and filters are not
+           mesh concepts. */
+        if ((key >= 0x20 && key < 0x80) == mesh_group)
             n++;
     return n;
 }
@@ -186,11 +189,15 @@ static void test_words(void) {
     CHECK(iotdata_status_scope_from_name("mesh") == IOTDATA_NODE_STATUS_SCOPE_MESH, "`mesh`");
     CHECK(iotdata_status_scope_from_name("node") == IOTDATA_NODE_STATUS_SCOPE_NODE, "`node`");
     CHECK(iotdata_status_scope_from_name("node,mesh") == (IOTDATA_NODE_STATUS_SCOPE_NODE | IOTDATA_NODE_STATUS_SCOPE_MESH), "both");
-    CHECK(iotdata_status_scope_from_name("all") == 0, "`all` is 0, which already means everything");
+    CHECK(iotdata_status_scope_from_name("stations") == IOTDATA_NODE_STATUS_SCOPE_STATIONS, "`stations`");
+    CHECK(iotdata_status_scope_from_name("filters") == IOTDATA_NODE_STATUS_SCOPE_FILTERS, "`filters`");
+    CHECK(iotdata_status_scope_from_name("peers") == IOTDATA_NODE_STATUS_SCOPE_MESH_PEERS, "`peers`");
+    /* `all` is a real value now, not 0: 0 means the scalars, so everything needs a word of its own */
+    CHECK((iotdata_status_scope_from_name("all") & IOTDATA_NODE_STATUS_SCOPE_STATIONS) != 0, "`all` includes the tables");
     CHECK(iotdata_status_scope_is_name("all") && !iotdata_status_scope_is_name("sideways"), "a word is ours, or it is not");
     /* round trip, so a console can echo back what it understood */
     CHECK(strcmp(iotdata_status_scope_name(IOTDATA_NODE_STATUS_SCOPE_MESH, b, sizeof(b)), "mesh") == 0, "renders back");
-    CHECK(strcmp(iotdata_status_scope_name(0, b, sizeof(b)), "all") == 0, "and 0 renders as all");
+    CHECK(strcmp(iotdata_status_scope_name(0, b, sizeof(b)), "node,mesh") == 0, "and 0 renders as the scalars");
 
     CHECK(strcmp(iotdata_node_tlv_status_reason_str(IOTDATA_NODE_REASON_WATCHDOG), "watchdog") == 0, "a reason has a name");
     CHECK(strcmp(iotdata_node_tlv_status_reason_str(0xEE), "unknown") == 0, "an unassigned one is unknown");

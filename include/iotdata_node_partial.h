@@ -91,7 +91,7 @@ static inline bool iotdata_partial_emit(iotdata_encoder_t *const enc, const iotd
     if (iotdata_partial_pack(buf, sizeof(buf), p) < 0)
         return false;
     /* An ordinary TLV: the encoder is not being taught anything. */
-    return iotdata_encode_tlv(enc, IOTDATA_NODE_TLV_PARTIAL, buf, (uint8_t)sizeof(buf)) == IOTDATA_OK;
+    return iotdata_encode_tlv(enc, IOTDATA_TLV_TYPE_PARTIAL, buf, (uint8_t)sizeof(buf)) == IOTDATA_OK;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -102,7 +102,7 @@ static inline bool iotdata_partial_emit(iotdata_encoder_t *const enc, const iotd
 /* Is this decoded entry a marker rather than a report? Anything iterating dec->tlv[] and acting on
    system types needs this, or it will publish a PARTIAL as though it were a report of its own. */
 static inline bool iotdata_partial_is(const iotdata_decoder_tlv_t *const t) {
-    return t != NULL && t->type == IOTDATA_NODE_TLV_PARTIAL && t->format == IOTDATA_TLV_FMT_RAW && t->length >= IOTDATA_NODE_PARTIAL_SIZE;
+    return t != NULL && t->type == IOTDATA_TLV_TYPE_PARTIAL && t->format == IOTDATA_TLV_FMT_RAW && t->length >= IOTDATA_NODE_PARTIAL_SIZE;
 }
 
 /* The marker describing entry `idx`, if one precedes it. False means the report is complete, which

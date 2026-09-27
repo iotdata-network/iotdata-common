@@ -24,7 +24,7 @@
 //     iotdata_diagnostics_begin(reason, cold); /* once, at startup */
 //     iotdata_diagnostics_tick(now_ms);        /* each loop pass; flushes on its own schedule */
 //
-// and the node's hooks are iotdata_diagnostics_pull / _control / _control_keys, passed straight to
+// and the node's hooks are iotdata_diagnostics_pull / _control / _control_actions, passed straight to
 // node_begin or into an idep_config_t.
 //
 // EVERY app-facing call COMPILES TO NOTHING when IOTDATA_DIAGNOSTICS is 0. They are functions
@@ -121,6 +121,140 @@ typedef struct {
 
 extern const blackbox_struct_config_t iotdata_blackbox_config_lifecycle;
 
+/* -------- power: what is supplying this node, and what that supply is doing -------------------
+ *
+ * A node has RAILS, not "a power supply": a panel feeds a charger feeds a pack feeds a regulator
+ * feeds the device, and each is a separate thing with separate facts. Every record below carries a
+ * rail index, and PWS carries from_rail, so the log describes the actual graph rather than one
+ * anonymous supply. Three records, by how often they have anything new to say:
+ *
+ *   PWS  what a rail IS, and how it is measured. Once per boot, and on change.
+ *   PWD  one source-specific fact as key=value. The escape hatch: BMS topology today, per-cell
+ *        voltages tomorrow, vendor detail forever -- no schema change, no length ceiling. A key
+ *        that turns out permanent and load-bearing graduates to a field in PWS or PW.
+ *   PWE  what a rail is DOING. The frequent one, and the event says why the line exists.
+ *
+ * Two kinds of rail, and the distinction decides which fields mean anything: a STORAGE source has
+ * a volume (capacity_mah, pct), a FLOW source has only a rate (limit_mw, and pct is meaningless).
+ * A REGULATED rail is neither -- it is an output, and what is interesting is what feeds it.
+ *
+ * Absent fields are EMPTY in the encoded line, not zero. A recorder that cannot say "not measured"
+ * invites a reader to believe a zero, and most of these fields are unmeasurable on most hardware.
+ * Initialise with IOTDATA_BB_POWER_EVENT_INIT / _SOURCE_INIT so a struct never claims 0V by omission. */
+
+#define IOTDATA_BB_PW_NO_I32  INT32_MIN
+#define IOTDATA_BB_PW_NO_U32  0u /* a capacity or a rating of zero is not a fact */
+#define IOTDATA_BB_PW_NO_PCT  0xFFu
+#define IOTDATA_BB_PW_NO_DEGC INT8_MIN
+#define IOTDATA_BB_PW_NO_RAIL 0xFFu /* and, in from_rail, "nothing feeds this: it is a root" */
+
+typedef enum {
+    IOTDATA_BB_PW_SAMPLE = 0,    /* a periodic reading (emitted on change, see the note below) */
+    IOTDATA_BB_PW_BOOT,          /* the first reading of this session                         */
+    IOTDATA_BB_PW_LOW,           /* crossed into low                                          */
+    IOTDATA_BB_PW_CRITICAL,      /* crossed into critical                                     */
+    IOTDATA_BB_PW_MINIMUM,       /* a new lowest reading ever seen on this rail               */
+    IOTDATA_BB_PW_BROWNOUT_PRE,  /* the last reading BEFORE a brownout: where the floor IS     */
+    IOTDATA_BB_PW_CHARGE_START,  /* began taking charge                                       */
+    IOTDATA_BB_PW_CHARGE_STOP,   /* stopped                                                   */
+    IOTDATA_BB_PW_SOURCE_CHANGE, /* a rail appeared, vanished, or was swapped                 */
+    IOTDATA_BB_PW_FAULT,         /* the source, or the measurement of it, is faulty           */
+} iotdata_bb_pw_event_t;
+
+typedef enum {
+    IOTDATA_BB_PW_TYPE_UNKNOWN = 0,
+    IOTDATA_BB_PW_TYPE_BATTERY,   /* storage */
+    IOTDATA_BB_PW_TYPE_SUPERCAP,  /* storage */
+    IOTDATA_BB_PW_TYPE_SOLAR,     /* flow    */
+    IOTDATA_BB_PW_TYPE_MAINS,     /* flow    */
+    IOTDATA_BB_PW_TYPE_USB,       /* flow    */
+    IOTDATA_BB_PW_TYPE_POE,       /* flow    */
+    IOTDATA_BB_PW_TYPE_GENERATOR, /* flow    */
+    IOTDATA_BB_PW_TYPE_REGULATED, /* neither: an output rail, fed by from_rail */
+} iotdata_bb_pw_type_t;
+
+#define IOTDATA_BB_PW_FORM_DC 0
+#define IOTDATA_BB_PW_FORM_AC 1
+
+/* Chemistry of a storage rail. Its own numbering, with 0 = "not a chemistry": a caller maps its
+   own battery type onto this rather than assuming the two agree. */
+typedef enum {
+    IOTDATA_BB_PW_CHEM_NONE = 0,
+    IOTDATA_BB_PW_CHEM_LIION,
+    IOTDATA_BB_PW_CHEM_LIPO,
+    IOTDATA_BB_PW_CHEM_LIFEPO4,
+    IOTDATA_BB_PW_CHEM_NIMH,
+    IOTDATA_BB_PW_CHEM_LEAD,
+    IOTDATA_BB_PW_CHEM_ALKALINE,
+} iotdata_bb_pw_chem_t;
+
+#define IOTDATA_BB_PW_FLAG_PRESENT     (1U << 0) /* a source is actually attached                */
+#define IOTDATA_BB_PW_FLAG_CHARGING    (1U << 1)
+#define IOTDATA_BB_PW_FLAG_DISCHARGING (1U << 2)
+#define IOTDATA_BB_PW_FLAG_EXTERNAL    (1U << 3) /* running on something other than the storage  */
+#define IOTDATA_BB_PW_FLAG_LOW         (1U << 4)
+#define IOTDATA_BB_PW_FLAG_CRITICAL    (1U << 5)
+#define IOTDATA_BB_PW_FLAG_LIMITED     (1U << 6) /* at the source's RATING, not at its capacity  */
+#define IOTDATA_BB_PW_FLAG_FAULT       (1U << 7)
+
+// @blackbox tag=PWE
+typedef struct {
+    uint8_t event; /* iotdata_bb_pw_event_t                                                     */
+    uint8_t rail;
+    int32_t mv; /* signed, and wide: negative rails exist and 230V mains is 230000              */
+    int32_t ua; /* signed: + flowing INTO the load, - INTO the source (charging). uA to 2147A   */
+    int32_t mw; /* signed, same convention. Kept although V*I: on AC it is NOT derivable        */
+    uint8_t pct;
+    int8_t degc;   /* the SOURCE's temperature: its capacity and impedance both move with it    */
+    uint8_t flags; /* IOTDATA_BB_PW_FLAG_*                                                      */
+} iotdata_bb_power_event_t;
+
+// @blackbox tag=PWS
+typedef struct {
+    uint8_t rail;
+    uint8_t from_rail; /* what feeds this one, or IOTDATA_BB_PW_NO_RAIL for a root */
+    uint8_t type;      /* iotdata_bb_pw_type_t */
+    uint8_t form;      /* IOTDATA_BB_PW_FORM_* */
+    uint8_t hz;        /* AC only */
+    uint8_t chem;      /* storage only */
+    uint8_t cells;     /* storage only: cells in series */
+    int32_t nominal_mv, min_mv, max_mv;
+    uint32_t capacity_mah; /* STORAGE: the volume  */
+    uint32_t limit_mw;     /* FLOW: the rating     */
+    uint16_t ratio_x100;   /* how it is measured.. */
+    int16_t offset_mv;     /* ..and its calibration, so the numbers are still trustworthy later */
+} iotdata_bb_power_source_t;
+
+// @blackbox tag=PWD
+typedef struct {
+    uint8_t rail;
+    char key[16];
+    char value[48]; /* last in the line, so it may contain commas */
+} iotdata_bb_power_detail_t;
+
+#define IOTDATA_BB_POWER_EVENT_INIT(rail_) \
+    { .event = IOTDATA_BB_PW_SAMPLE, .rail = (rail_), .mv = IOTDATA_BB_PW_NO_I32, .ua = IOTDATA_BB_PW_NO_I32, .mw = IOTDATA_BB_PW_NO_I32, .pct = IOTDATA_BB_PW_NO_PCT, .degc = IOTDATA_BB_PW_NO_DEGC, .flags = 0 }
+
+#define IOTDATA_BB_POWER_SOURCE_INIT(rail_, type_) \
+    { .rail = (rail_), \
+      .from_rail = IOTDATA_BB_PW_NO_RAIL, \
+      .type = (uint8_t)(type_), \
+      .form = IOTDATA_BB_PW_FORM_DC, \
+      .hz = 0, \
+      .chem = IOTDATA_BB_PW_CHEM_NONE, \
+      .cells = 0, \
+      .nominal_mv = IOTDATA_BB_PW_NO_I32, \
+      .min_mv = IOTDATA_BB_PW_NO_I32, \
+      .max_mv = IOTDATA_BB_PW_NO_I32, \
+      .capacity_mah = IOTDATA_BB_PW_NO_U32, \
+      .limit_mw = IOTDATA_BB_PW_NO_U32, \
+      .ratio_x100 = 0, \
+      .offset_mv = 0 }
+
+extern const blackbox_struct_config_t iotdata_blackbox_config_power;
+extern const blackbox_struct_config_t iotdata_blackbox_config_power_source;
+extern const blackbox_struct_config_t iotdata_blackbox_config_power_detail;
+
 /* iotdata_blackbox_clock (the BLACKBOX_CLOCK hook) is already forward-declared by blackbox.h. */
 
 /* Seed the clock. Call ONCE before blackbox_init(). On esp32 the clock's `seq` lives in RTC_NOINIT,
@@ -133,6 +267,24 @@ void iotdata_blackbox_begin(void);
 static inline int iotdata_blackbox_lifecycle(blackbox_handle_t *h, iotdata_bb_lc_event_t ev, uint8_t reason) {
     const iotdata_bb_lifecycle_t r = { (uint8_t)ev, reason };
     return blackbox_insert(h, &iotdata_blackbox_config_lifecycle, &r);
+}
+
+/* Convenience: record a power state, a rail description, or one detail, against any handle. */
+static inline int iotdata_blackbox_power(blackbox_handle_t *h, const iotdata_bb_power_event_t *const r) {
+    return blackbox_insert(h, &iotdata_blackbox_config_power, r);
+}
+
+static inline int iotdata_blackbox_power_source(blackbox_handle_t *h, const iotdata_bb_power_source_t *const r) {
+    return blackbox_insert(h, &iotdata_blackbox_config_power_source, r);
+}
+
+/* The strings are COPIED, bounded by the record: a key is a word and a value is a short phrase, and
+   that bound is per attribute rather than per record-set, which is the point of one fact per line. */
+static inline int iotdata_blackbox_power_detail(blackbox_handle_t *h, const uint8_t rail, const char *const key, const char *const value) {
+    iotdata_bb_power_detail_t r = { .rail = rail, .key = { 0 }, .value = { 0 } };
+    (void)snprintf(r.key, sizeof(r.key), "%s", key != NULL ? key : "");
+    (void)snprintf(r.value, sizeof(r.value), "%s", value != NULL ? value : "");
+    return blackbox_insert(h, &iotdata_blackbox_config_power_detail, &r);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -253,6 +405,21 @@ static inline void iotdata_diagnostics_event(const iotdata_bb_lc_event_t ev, con
         (void)iotdata_blackbox_lifecycle(&_iotdata_diagnostics_handle, ev, reason);
 }
 
+static inline void iotdata_diagnostics_power(const iotdata_bb_power_event_t *const r) {
+    if (_iotdata_diagnostics_ready)
+        (void)iotdata_blackbox_power(&_iotdata_diagnostics_handle, r);
+}
+
+static inline void iotdata_diagnostics_power_source(const iotdata_bb_power_source_t *const r) {
+    if (_iotdata_diagnostics_ready)
+        (void)iotdata_blackbox_power_source(&_iotdata_diagnostics_handle, r);
+}
+
+static inline void iotdata_diagnostics_power_detail(const uint8_t rail, const char *const key, const char *const value) {
+    if (_iotdata_diagnostics_ready)
+        (void)iotdata_blackbox_power_detail(&_iotdata_diagnostics_handle, rail, key, value);
+}
+
 static inline void iotdata_diagnostics_flush(void) {
     if (_iotdata_diagnostics_ready)
         (void)blackbox_flush(&_iotdata_diagnostics_handle);
@@ -350,14 +517,15 @@ static inline bool iotdata_diagnostics_pump(void) {
 // sends whoever asked on a wild goose chase.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static const uint8_t iotdata_diagnostics_control_keys[] = {
-    IOTDATA_NODE_CONTROL_DIAGNOSTICS_ENABLE,
-    IOTDATA_NODE_CONTROL_DIAGNOSTICS_CLEAR,
+/* (subject, action) PAIRS, which is the shape the inventory emits and the shape a command takes on
+   the wire -- so advertising one and sending one cannot drift apart. */
+static const uint8_t iotdata_diagnostics_control_actions[] = {
+    IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE, IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR,
 #if IOTDATA_DIAGNOSTICS_DUMP
-    IOTDATA_NODE_CONTROL_DIAGNOSTICS_DUMP,
+    IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_DUMP,
 #endif
 };
-#define IOTDATA_DIAGNOSTICS_CONTROL_KEYS_COUNT ((uint8_t)(sizeof(iotdata_diagnostics_control_keys) / sizeof(iotdata_diagnostics_control_keys[0])))
+#define IOTDATA_DIAGNOSTICS_CONTROL_ACTIONS_COUNT ((uint8_t)(sizeof(iotdata_diagnostics_control_actions) / (2 * sizeof(iotdata_diagnostics_control_actions[0]))))
 
 /*
  * What to put in a node's config. These are the FUNCTIONS when the recorder is compiled in and
@@ -366,27 +534,29 @@ static const uint8_t iotdata_diagnostics_control_keys[] = {
  * nothing means it keeps a blackbox that happens to be empty. Passing the function unconditionally
  * would make every node claim a recorder. Both are usable with no #if at the call site.
  */
-#define IOTDATA_DIAGNOSTICS_PULL               iotdata_diagnostics_pull
-#define IOTDATA_DIAGNOSTICS_CONTROL            iotdata_diagnostics_node_control
+#define IOTDATA_DIAGNOSTICS_PULL                  iotdata_diagnostics_pull
+#define IOTDATA_DIAGNOSTICS_CONTROL               iotdata_diagnostics_node_control
 
-/* Returns whether the key was one of ours. An app's own control hook offers every key it does not
-   know to this, then falls through to its own. */
-static inline bool iotdata_diagnostics_control(const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
+/* Returns whether the command was one of ours. An app's own control hook offers everything it does
+   not know to this, then falls through to its own. */
+static inline bool iotdata_diagnostics_control(const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
     if (!_iotdata_diagnostics_ready)
         return false; /* advertised, but not working today: counted unknown rather than pretended */
-    switch (key) {
-    case IOTDATA_NODE_CONTROL_DIAGNOSTICS_ENABLE: {
-        const bool on = (vlen >= 1) ? (val[0] != 0u) : true;
+    if (subject != IOTDATA_NODE_TLV_DIAGNOSTICS)
+        return false;
+    switch (action) {
+    case IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE: {
+        const bool on = (arglen >= 1) ? (args[0] != 0u) : true;
         iotdata_diagnostics_enable(on);
         _iotdata_diagnostics_say(on ? "diag: enabled" : "diag: disabled");
         return true;
     }
-    case IOTDATA_NODE_CONTROL_DIAGNOSTICS_CLEAR:
+    case IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR:
         iotdata_diagnostics_clear();
         _iotdata_diagnostics_say("diag: cleared");
         return true;
 #if IOTDATA_DIAGNOSTICS_DUMP
-    case IOTDATA_NODE_CONTROL_DIAGNOSTICS_DUMP:
+    case IOTDATA_NODE_ACTION_DIAGNOSTICS_DUMP:
         iotdata_diagnostics_dump_start();
         return true;
 #endif
@@ -399,9 +569,9 @@ static inline bool iotdata_diagnostics_control(const uint8_t key, const uint8_t 
    narration only: there is ONE recorder per board, so a request to any station a board stands up
    reads and manages the same log. A relay or gateway, whose hook carries a clock instead, calls
    iotdata_diagnostics_control directly from its own default branch. */
-static inline bool iotdata_diagnostics_node_control(const uint16_t station, const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
+static inline bool iotdata_diagnostics_node_control(const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
     (void)station;
-    return iotdata_diagnostics_control(key, val, vlen);
+    return iotdata_diagnostics_control(subject, action, args, arglen);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -461,12 +631,12 @@ static inline bool iotdata_diagnostics_console(const int argc, char **const argv
 
 #else /* !IOTDATA_DIAGNOSTICS -- compiled out, but every call site still type-checks */
 
-static const uint8_t *const iotdata_diagnostics_control_keys = NULL;
-#define IOTDATA_DIAGNOSTICS_CONTROL_KEYS_COUNT ((uint8_t)0)
+static const uint8_t *const iotdata_diagnostics_control_actions = NULL;
+#define IOTDATA_DIAGNOSTICS_CONTROL_ACTIONS_COUNT ((uint8_t)0)
 /* NULL, so a node with no recorder reports no diagnostics rather than an empty blackbox */
-#define IOTDATA_DIAGNOSTICS_PULL               NULL
-#define IOTDATA_DIAGNOSTICS_CONTROL            NULL
-#define IOTDATA_DIAGNOSTICS_CONSOLE_HELP       ""
+#define IOTDATA_DIAGNOSTICS_PULL                  NULL
+#define IOTDATA_DIAGNOSTICS_CONTROL               NULL
+#define IOTDATA_DIAGNOSTICS_CONSOLE_HELP          ""
 
 static inline iotdata_diagnostics_emit_fn iotdata_diagnostics_emit_set(const iotdata_diagnostics_emit_fn fn) {
     (void)fn;
@@ -486,6 +656,17 @@ static inline bool iotdata_diagnostics_begin(const uint8_t reason, const bool co
 static inline void iotdata_diagnostics_event(const iotdata_bb_lc_event_t ev, const uint8_t reason) {
     (void)ev;
     (void)reason;
+}
+static inline void iotdata_diagnostics_power(const iotdata_bb_power_event_t *const r) {
+    (void)r;
+}
+static inline void iotdata_diagnostics_power_source(const iotdata_bb_power_source_t *const r) {
+    (void)r;
+}
+static inline void iotdata_diagnostics_power_detail(const uint8_t rail, const char *const key, const char *const value) {
+    (void)rail;
+    (void)key;
+    (void)value;
 }
 static inline void iotdata_diagnostics_flush(void) {
 }
@@ -510,10 +691,11 @@ static inline void iotdata_diagnostics_dump_start(void) {
 static inline bool iotdata_diagnostics_pump(void) {
     return false;
 }
-static inline bool iotdata_diagnostics_control(const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
-    (void)key;
-    (void)val;
-    (void)vlen;
+static inline bool iotdata_diagnostics_control(const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
+    (void)subject;
+    (void)action;
+    (void)args;
+    (void)arglen;
     return false;
 }
 static inline bool iotdata_diagnostics_console(const int argc, char **const argv) {
@@ -521,11 +703,12 @@ static inline bool iotdata_diagnostics_console(const int argc, char **const argv
     (void)argv;
     return false;
 }
-static inline bool iotdata_diagnostics_node_control(const uint16_t station, const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
+static inline bool iotdata_diagnostics_node_control(const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
     (void)station;
-    (void)key;
-    (void)val;
-    (void)vlen;
+    (void)subject;
+    (void)action;
+    (void)args;
+    (void)arglen;
     return false;
 }
 
@@ -551,6 +734,116 @@ static int iotdata_bb__dec_lifecycle(__attribute__((unused)) const blackbox_stru
     return 0;
 }
 const blackbox_struct_config_t iotdata_blackbox_config_lifecycle = { "LC", iotdata_bb__enc_lifecycle, iotdata_bb__dec_lifecycle };
+
+/* Power. Fields are positional and MAY BE EMPTY, which sscanf cannot express, so the decoders walk
+   to a field and parse from there -- strtol stops at the comma of its own accord, and an empty
+   field yields the caller's "unknown". The value of a PWD is last so it may contain commas. */
+
+static const char *iotdata_bb__field(const char *in, const int idx) {
+    for (int i = 0; i < idx && in != NULL; i++)
+        in = (in = strchr(in, ',')) != NULL ? in + 1 : NULL;
+    return in;
+}
+static bool iotdata_bb__field_absent(const char *const f) {
+    return f == NULL || *f == '\0' || *f == ',' || *f == '\n';
+}
+static long iotdata_bb__field_num(const char *const in, const int idx, const long absent) {
+    const char *const f = iotdata_bb__field(in, idx);
+    return iotdata_bb__field_absent(f) ? absent : strtol(f, NULL, 10);
+}
+static void iotdata_bb__field_str(const char *const in, const int idx, char *const out, const size_t outlen, const bool to_end) {
+    const char *const f = iotdata_bb__field(in, idx);
+    out[0] = '\0';
+    if (iotdata_bb__field_absent(f))
+        return;
+    const char *end = to_end ? strchr(f, '\n') : strchr(f, ',');
+    const size_t len = (end != NULL) ? (size_t)(end - f) : strlen(f);
+    (void)snprintf(out, outlen, "%.*s", (int)(len < outlen - 1 ? len : outlen - 1), f);
+}
+
+/* An absent numeric field is printed as nothing at all: ",,". */
+#define _IOTDATA_BB_PW_NUM(buf, val, absent) \
+    do { \
+        (buf)[0] = '\0'; \
+        if ((val) != (absent)) \
+            (void)snprintf((buf), sizeof(buf), "%ld", (long)(val)); \
+    } while (0)
+
+static int iotdata_bb__enc_power(__attribute__((unused)) const blackbox_struct_config_t *sc, const void *data, char *out, size_t n) {
+    const iotdata_bb_power_event_t *r = (const iotdata_bb_power_event_t *)data;
+    char mv[12], ua[12], mw[12], pct[5], degc[6];
+    _IOTDATA_BB_PW_NUM(mv, r->mv, IOTDATA_BB_PW_NO_I32);
+    _IOTDATA_BB_PW_NUM(ua, r->ua, IOTDATA_BB_PW_NO_I32);
+    _IOTDATA_BB_PW_NUM(mw, r->mw, IOTDATA_BB_PW_NO_I32);
+    _IOTDATA_BB_PW_NUM(pct, r->pct, IOTDATA_BB_PW_NO_PCT);
+    _IOTDATA_BB_PW_NUM(degc, r->degc, IOTDATA_BB_PW_NO_DEGC);
+    return snprintf(out, n, "%u,%u,%s,%s,%s,%s,%s,%u", (unsigned)r->event, (unsigned)r->rail, mv, ua, mw, pct, degc, (unsigned)r->flags);
+}
+static int iotdata_bb__dec_power(__attribute__((unused)) const blackbox_struct_config_t *sc, const char *in, __attribute__((unused)) size_t n, void *data) {
+    iotdata_bb_power_event_t *r = (iotdata_bb_power_event_t *)data;
+    if (iotdata_bb__field_absent(iotdata_bb__field(in, 1)))
+        return -1; /* event and rail are the only two that are never absent */
+    r->event = (uint8_t)iotdata_bb__field_num(in, 0, 0);
+    r->rail = (uint8_t)iotdata_bb__field_num(in, 1, IOTDATA_BB_PW_NO_RAIL);
+    r->mv = (int32_t)iotdata_bb__field_num(in, 2, IOTDATA_BB_PW_NO_I32);
+    r->ua = (int32_t)iotdata_bb__field_num(in, 3, IOTDATA_BB_PW_NO_I32);
+    r->mw = (int32_t)iotdata_bb__field_num(in, 4, IOTDATA_BB_PW_NO_I32);
+    r->pct = (uint8_t)iotdata_bb__field_num(in, 5, IOTDATA_BB_PW_NO_PCT);
+    r->degc = (int8_t)iotdata_bb__field_num(in, 6, IOTDATA_BB_PW_NO_DEGC);
+    r->flags = (uint8_t)iotdata_bb__field_num(in, 7, 0);
+    return 0;
+}
+const blackbox_struct_config_t iotdata_blackbox_config_power = { "PWE", iotdata_bb__enc_power, iotdata_bb__dec_power };
+
+static int iotdata_bb__enc_power_source(__attribute__((unused)) const blackbox_struct_config_t *sc, const void *data, char *out, size_t n) {
+    const iotdata_bb_power_source_t *r = (const iotdata_bb_power_source_t *)data;
+    char nom[12], lo[12], hi[12], cap[12], lim[12], ratio[8], off[8];
+    _IOTDATA_BB_PW_NUM(nom, r->nominal_mv, IOTDATA_BB_PW_NO_I32);
+    _IOTDATA_BB_PW_NUM(lo, r->min_mv, IOTDATA_BB_PW_NO_I32);
+    _IOTDATA_BB_PW_NUM(hi, r->max_mv, IOTDATA_BB_PW_NO_I32);
+    _IOTDATA_BB_PW_NUM(cap, r->capacity_mah, IOTDATA_BB_PW_NO_U32);
+    _IOTDATA_BB_PW_NUM(lim, r->limit_mw, IOTDATA_BB_PW_NO_U32);
+    _IOTDATA_BB_PW_NUM(ratio, r->ratio_x100, 0);
+    _IOTDATA_BB_PW_NUM(off, r->offset_mv, 0);
+    return snprintf(out, n, "%u,%u,%u,%u,%u,%u,%u,%s,%s,%s,%s,%s,%s,%s", (unsigned)r->rail, (unsigned)r->from_rail, (unsigned)r->type, (unsigned)r->form, (unsigned)r->hz, (unsigned)r->chem, (unsigned)r->cells, nom, lo, hi, cap, lim, ratio,
+                    off);
+}
+static int iotdata_bb__dec_power_source(__attribute__((unused)) const blackbox_struct_config_t *sc, const char *in, __attribute__((unused)) size_t n, void *data) {
+    iotdata_bb_power_source_t *r = (iotdata_bb_power_source_t *)data;
+    if (iotdata_bb__field_absent(iotdata_bb__field(in, 2)))
+        return -1;
+    r->rail = (uint8_t)iotdata_bb__field_num(in, 0, IOTDATA_BB_PW_NO_RAIL);
+    r->from_rail = (uint8_t)iotdata_bb__field_num(in, 1, IOTDATA_BB_PW_NO_RAIL);
+    r->type = (uint8_t)iotdata_bb__field_num(in, 2, IOTDATA_BB_PW_TYPE_UNKNOWN);
+    r->form = (uint8_t)iotdata_bb__field_num(in, 3, IOTDATA_BB_PW_FORM_DC);
+    r->hz = (uint8_t)iotdata_bb__field_num(in, 4, 0);
+    r->chem = (uint8_t)iotdata_bb__field_num(in, 5, IOTDATA_BB_PW_CHEM_NONE);
+    r->cells = (uint8_t)iotdata_bb__field_num(in, 6, 0);
+    r->nominal_mv = (int32_t)iotdata_bb__field_num(in, 7, IOTDATA_BB_PW_NO_I32);
+    r->min_mv = (int32_t)iotdata_bb__field_num(in, 8, IOTDATA_BB_PW_NO_I32);
+    r->max_mv = (int32_t)iotdata_bb__field_num(in, 9, IOTDATA_BB_PW_NO_I32);
+    r->capacity_mah = (uint32_t)iotdata_bb__field_num(in, 10, IOTDATA_BB_PW_NO_U32);
+    r->limit_mw = (uint32_t)iotdata_bb__field_num(in, 11, IOTDATA_BB_PW_NO_U32);
+    r->ratio_x100 = (uint16_t)iotdata_bb__field_num(in, 12, 0);
+    r->offset_mv = (int16_t)iotdata_bb__field_num(in, 13, 0);
+    return 0;
+}
+const blackbox_struct_config_t iotdata_blackbox_config_power_source = { "PWS", iotdata_bb__enc_power_source, iotdata_bb__dec_power_source };
+
+static int iotdata_bb__enc_power_detail(__attribute__((unused)) const blackbox_struct_config_t *sc, const void *data, char *out, size_t n) {
+    const iotdata_bb_power_detail_t *r = (const iotdata_bb_power_detail_t *)data;
+    return snprintf(out, n, "%u,%s,%s", (unsigned)r->rail, r->key, r->value);
+}
+static int iotdata_bb__dec_power_detail(__attribute__((unused)) const blackbox_struct_config_t *sc, const char *in, __attribute__((unused)) size_t n, void *data) {
+    iotdata_bb_power_detail_t *r = (iotdata_bb_power_detail_t *)data;
+    if (iotdata_bb__field_absent(iotdata_bb__field(in, 1)))
+        return -1;
+    r->rail = (uint8_t)iotdata_bb__field_num(in, 0, IOTDATA_BB_PW_NO_RAIL);
+    iotdata_bb__field_str(in, 1, r->key, sizeof(r->key), false);
+    iotdata_bb__field_str(in, 2, r->value, sizeof(r->value), true);
+    return 0;
+}
+const blackbox_struct_config_t iotdata_blackbox_config_power_detail = { "PWD", iotdata_bb__enc_power_detail, iotdata_bb__dec_power_detail };
 
 #if defined(ESP_PLATFORM)
 #include "esp_attr.h"

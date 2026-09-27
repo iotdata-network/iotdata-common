@@ -65,10 +65,22 @@ typedef enum {
 
 typedef struct {
     const char *name;
-    uint8_t key;
+    uint8_t key;     /* IOTDATA_NODE_CONTROL_REQUEST or _CONTROL */
+    uint8_t subject; /* a TLV type, or NODE / MESH */
+    uint8_t action;  /* only meaningful when key == _CONTROL */
     iotdata_control_arg_t arg;
     uint8_t fixed; /* FIXED: the value. STATION: the action. SCOPE: an override, or FROM_REQUEST. */
 } iotdata_control_command_t;
+
+/* Every CONTROL value begins the same way: the subject, and for a command its action. Whatever the
+   argument kind adds, it adds after this. */
+static inline uint8_t _iotdata_control_prefix(const iotdata_control_command_t *const c, uint8_t *const out) {
+    out[0] = c->subject;
+    if (c->key == IOTDATA_NODE_CONTROL_REQUEST)
+        return 1;
+    out[1] = c->action;
+    return 2;
+}
 
 /* Everything a command might need, however the medium expressed it. One struct rather than a
    parameter list, because the next medium fills the same fields from argv. */
@@ -94,36 +106,51 @@ typedef struct {
 
 static const iotdata_control_command_t iotdata_control_commands[] = {
 
-    /* --- the system TLVs, one request each ------------------------------------------------- */
-    { "vers", IOTDATA_NODE_CONTROL_VERSION_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "vari", IOTDATA_NODE_CONTROL_VARIANT_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "ctrl", IOTDATA_NODE_CONTROL_CONTROL_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "stat", IOTDATA_NODE_CONTROL_STATUS_REQUEST, IOTDATA_CONTROL_ARG_SCOPE_STATUS, IOTDATA_CONTROL_SCOPE_FROM_REQUEST },
-    { "conf", IOTDATA_NODE_CONTROL_CONFIG_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "diag", IOTDATA_NODE_CONTROL_DIAGNOSTICS_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "cont", IOTDATA_NODE_CONTROL_CONTENT_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "reports", 0, IOTDATA_CONTROL_ARG_REPORTS, 0 }, /* every report a node can produce, in type order */
+/* Shorthands, so the table reads as a table rather than as a wall of prefixes. */
+#define _REQ(subject)         IOTDATA_NODE_CONTROL_REQUEST, (subject), 0
+#define _CMD(subject, action) IOTDATA_NODE_CONTROL_CONTROL, (subject), (action)
 
-    /* --- generic system control -------------------------------------------------------------- */
-    { "boot", IOTDATA_NODE_CONTROL_REBOOT, IOTDATA_CONTROL_ARG_NONE, 0 }, /* `boot` on the serial CLI too */
+    /* --- the system TLVs, one request each --------------------------------------------------
+       RECEIVE is here now. Under the old scheme its derived key was 0x00, which REBOOT already
+       had, so "when are you next reachable?" was a question the protocol could not ask. */
+    { "recv", _REQ(IOTDATA_NODE_TLV_RECEIVE), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "vers", _REQ(IOTDATA_NODE_TLV_VERSION), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "vari", _REQ(IOTDATA_NODE_TLV_VARIANT), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "ctrl", _REQ(IOTDATA_NODE_TLV_CONTROL), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "stat", _REQ(IOTDATA_NODE_TLV_STATUS), IOTDATA_CONTROL_ARG_SCOPE_STATUS, IOTDATA_CONTROL_SCOPE_FROM_REQUEST },
+    { "conf", _REQ(IOTDATA_NODE_TLV_CONFIG), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "diag", _REQ(IOTDATA_NODE_TLV_DIAGNOSTICS), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "cont", _REQ(IOTDATA_NODE_TLV_CONTENT), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "reports", 0, 0, 0, IOTDATA_CONTROL_ARG_REPORTS, 0 }, /* every report, in type order */
+
+    /* --- the node itself --------------------------------------------------------------------- */
+    { "boot", _CMD(IOTDATA_NODE_SUBJECT_NODE, IOTDATA_NODE_ACTION_NODE_REBOOT), IOTDATA_CONTROL_ARG_NONE, 0 },
 
     /* --- the recorder ------------------------------------------------------------------------ */
-    { "diag-enable", IOTDATA_NODE_CONTROL_DIAGNOSTICS_ENABLE, IOTDATA_CONTROL_ARG_FIXED, 1 },
-    { "diag-disable", IOTDATA_NODE_CONTROL_DIAGNOSTICS_ENABLE, IOTDATA_CONTROL_ARG_FIXED, 0 },
-    { "diag-clear", IOTDATA_NODE_CONTROL_DIAGNOSTICS_CLEAR, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "diag-dump", IOTDATA_NODE_CONTROL_DIAGNOSTICS_DUMP, IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "diag-enable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE), IOTDATA_CONTROL_ARG_FIXED, 1 },
+    { "diag-disable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE), IOTDATA_CONTROL_ARG_FIXED, 0 },
+    { "diag-clear", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "diag-dump", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_DUMP), IOTDATA_CONTROL_ARG_NONE, 0 },
+
+    /* --- the tables ---------------------------------------------------------------------------
+       There is no word for "give me the stations table": it is `stat stations`, which the `stat`
+       command above already spells, since a table is a STATUS scope. Only the things a scope
+       CANNOT express -- dumping to a console, changing a table -- are commands of their own.
+
+       STATIONS and FILTERS are STATUS subjects, not MESH ones: neither is a mesh concept. Any node
+       that hears traffic has stations, and any node can refuse one. Only peers is mesh. */
+    { "stations-dump", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_STATUS_STATIONS_DUMP), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "filters-update", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_STATUS_FILTERS_UPDATE), IOTDATA_CONTROL_ARG_STATION_ACTION, 0 },
+    { "filters-clear", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_STATUS_FILTERS_CLEAR), IOTDATA_CONTROL_ARG_SCOPE_FILTER, IOTDATA_CONTROL_SCOPE_FROM_REQUEST },
+    { "filters-dump", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_STATUS_FILTERS_DUMP), IOTDATA_CONTROL_ARG_NONE, 0 },
 
     /* --- mesh management --------------------------------------------------------------------- */
-    { "mesh-stations", IOTDATA_NODE_CONTROL_MESH_STATIONS_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "mesh-stations-dump", IOTDATA_NODE_CONTROL_MESH_STATIONS_DUMP, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "mesh-peers", IOTDATA_NODE_CONTROL_MESH_PEERS_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "mesh-peers-update", IOTDATA_NODE_CONTROL_MESH_PEERS_UPDATE, IOTDATA_CONTROL_ARG_STATION_ACTION, 0 },
-    { "mesh-peers-clear", IOTDATA_NODE_CONTROL_MESH_PEERS_CLEAR, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "mesh-peers-dump", IOTDATA_NODE_CONTROL_MESH_PEERS_DUMP, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "mesh-filters", IOTDATA_NODE_CONTROL_MESH_FILTERS_REQUEST, IOTDATA_CONTROL_ARG_NONE, 0 },
-    { "mesh-filters-update", IOTDATA_NODE_CONTROL_MESH_FILTERS_UPDATE, IOTDATA_CONTROL_ARG_STATION_ACTION, 0 },
-    { "mesh-filters-clear", IOTDATA_NODE_CONTROL_MESH_FILTERS_CLEAR, IOTDATA_CONTROL_ARG_SCOPE_FILTER, IOTDATA_CONTROL_SCOPE_FROM_REQUEST },
-    { "mesh-filters-dump", IOTDATA_NODE_CONTROL_MESH_FILTERS_DUMP, IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "mesh-peers-update", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_UPDATE), IOTDATA_CONTROL_ARG_STATION_ACTION, 0 },
+    { "mesh-peers-clear", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR), IOTDATA_CONTROL_ARG_NONE, 0 },
+    { "mesh-peers-dump", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_DUMP), IOTDATA_CONTROL_ARG_NONE, 0 },
+
+#undef _REQ
+#undef _CMD
 };
 
 #define IOTDATA_CONTROL_COMMANDS_COUNT ((uint8_t)(sizeof(iotdata_control_commands) / sizeof(iotdata_control_commands[0])))
@@ -164,51 +191,59 @@ static inline const iotdata_control_command_t *iotdata_control_at(const uint8_t 
 // PACKAGING
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline bool _iotdata_control_mesh_update(iotdata_kvr_t *const kv, const uint8_t key, const uint16_t station, const uint8_t action) {
-    const uint8_t e[IOTDATA_NODE_CONTROL_MESH_UPDATE_ENTRY_SIZE] = { (uint8_t)(station >> 8), (uint8_t)station, action };
-    return iotdata_kvr_add(kv, key, e, (uint8_t)sizeof(e));
-}
+/* A value is the prefix, then whatever the argument kind adds. One scratch buffer serves them all,
+   sized by what a frame leaves for a TLV value -- the bound the WIRE imposes, rather than a number
+   picked to look big enough for the longest argument anyone has written so far. */
+#define _IOTDATA_CONTROL_VALUE_MAX IOTDATA_TLV_VALUE_MAX
 
 /* Build the CONTROL payload for one command. Returns false when nothing was added. */
 static inline bool iotdata_control_build(iotdata_kvr_t *const kv, const iotdata_control_command_t *const c, const iotdata_control_args_t *const a) {
     if (kv == NULL || c == NULL || a == NULL)
         return false;
+    uint8_t v[_IOTDATA_CONTROL_VALUE_MAX];
+    uint8_t n = _iotdata_control_prefix(c, v);
+
     switch (c->arg) {
     case IOTDATA_CONTROL_ARG_NONE:
-        return iotdata_kvr_add_flag(kv, c->key);
+        break;
     case IOTDATA_CONTROL_ARG_FIXED:
-        return iotdata_kvr_add_u8(kv, c->key, c->fixed);
+        v[n++] = c->fixed;
+        break;
     case IOTDATA_CONTROL_ARG_SCOPE_STATUS:
     case IOTDATA_CONTROL_ARG_SCOPE_FILTER: {
-        const uint8_t from_request = (c->arg == IOTDATA_CONTROL_ARG_SCOPE_STATUS) ? a->scope_status : a->scope_filter;
+        const bool status = (c->arg == IOTDATA_CONTROL_ARG_SCOPE_STATUS);
+        const uint8_t from_request = status ? a->scope_status : a->scope_filter;
         const uint8_t want = (c->fixed == IOTDATA_CONTROL_SCOPE_FROM_REQUEST) ? from_request : c->fixed;
         /*
-         * A zero scope may or may not be omittable, and the key table already says which.
+         * A zero scope is omittable for STATUS and not for FILTERS, and the difference is in what
+         * zero MEANS rather than in any declared width.
          *
-         * STATUS_REQUEST is declared WIDTH_VARIABLE -- its value is optional, and absent already
-         * means "every group", so sending an explicit zero would express that a second way and
-         * cost a byte. MESH_FILTERS_CLEAR declares a width of 1: it must carry its byte even when
-         * the byte is zero, or the frame contradicts the table and a strict reader is entitled to
-         * reject it. So the declared width decides, rather than an assumption about zero.
+         * An absent STATUS scope already means "the default groups", so sending an explicit zero
+         * would say the same thing a second time and cost a byte. But FILTERS_SCOPE_ALL is 0x00
+         * and is a real instruction -- "clear everything" -- so dropping it would turn a request
+         * into a silence, and a reader would have to guess which was meant.
          */
-        if (want == 0 && iotdata_node_tlv_key_width(IOTDATA_NODE_TLV_CONTROL, c->key) == IOTDATA_NODE_WIDTH_VARIABLE)
-            return iotdata_kvr_add_flag(kv, c->key);
-        return iotdata_kvr_add_u8(kv, c->key, want);
+        if (want != 0 || !status)
+            v[n++] = want;
+        break;
     }
     case IOTDATA_CONTROL_ARG_STATION:
-        return _iotdata_control_mesh_update(kv, c->key, a->station, c->fixed);
     case IOTDATA_CONTROL_ARG_STATION_ACTION:
-        return _iotdata_control_mesh_update(kv, c->key, a->station, a->action);
+        v[n++] = (uint8_t)(a->station >> 8);
+        v[n++] = (uint8_t)a->station;
+        v[n++] = (c->arg == IOTDATA_CONTROL_ARG_STATION) ? c->fixed : a->action;
+        break;
     case IOTDATA_CONTROL_ARG_REPORTS:
-        /* everything that can be asked for -- so not CONTENT (nothing implements it) and not
-           RECEIVE (a node advertises that, it is not requestable) */
-        for (uint8_t type = 0; type <= IOTDATA_TLV_TYPE_SYSTEM_MAX; type++)
-            if (iotdata_node_tlv_control_key(type) != IOTDATA_NODE_TLV_NONE && type != IOTDATA_NODE_TLV_CONTENT)
-                iotdata_kvr_add_flag(kv, iotdata_node_tlv_control_key(type));
+        /* every report that can be asked for, which is now every system type: a node with nothing
+           to say for one answers it empty, and empty is an answer */
+        for (uint8_t type = 0; type < IOTDATA_NODE_TLV_SYSTEM_COUNT; type++)
+            if (iotdata_node_tlv_is_reportable(type))
+                iotdata_kvr_add(kv, IOTDATA_NODE_CONTROL_REQUEST, &type, 1);
         return !kv->overflow && kv->len > 0;
     default:
         return false;
     }
+    return iotdata_kvr_add(kv, c->key, v, n);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -233,28 +268,28 @@ static inline bool iotdata_control_build(iotdata_kvr_t *const kv, const iotdata_
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 typedef struct {
-    bool tables;         /* keeps the mesh tables, so their requests are answerable too */
-    const uint8_t *keys; /* whatever else this device implements, advertised as given */
-    uint8_t keys_count;
+    const uint8_t *actions; /* (subject, action) PAIRS: whatever else this device implements */
+    uint8_t actions_count;  /* the number of PAIRS, not of bytes */
 } iotdata_control_report_t;
 
 static inline int iotdata_control_pack(iotdata_kvr_t *const kv, const iotdata_control_report_t *const r) {
     if (kv == NULL || r == NULL)
         return -1;
-    iotdata_kvr_add_flag(kv, IOTDATA_NODE_CONTROL_VERSION_REQUEST);
-    iotdata_kvr_add_flag(kv, IOTDATA_NODE_CONTROL_VARIANT_REQUEST);
-    iotdata_kvr_add_flag(kv, IOTDATA_NODE_CONTROL_CONTROL_REQUEST);
-    iotdata_kvr_add_flag(kv, IOTDATA_NODE_CONTROL_STATUS_REQUEST);
-    iotdata_kvr_add_flag(kv, IOTDATA_NODE_CONTROL_CONFIG_REQUEST);
-    iotdata_kvr_add_flag(kv, IOTDATA_NODE_CONTROL_DIAGNOSTICS_REQUEST);
-    iotdata_kvr_add_flag(kv, IOTDATA_NODE_CONTROL_REBOOT);
-    /* the capability, not the contents: a table is advertised whether or not it happens to be
-       empty right now, because "I keep peers" and "I have no peers today" are different answers */
-    if (r->tables)
-        for (uint8_t type = IOTDATA_NODE_TLV_MESH_STATIONS; type <= IOTDATA_NODE_TLV_MESH_FILTERS; type++)
-            iotdata_kvr_add_flag(kv, iotdata_node_tlv_control_key(type));
-    for (uint8_t i = 0; i < r->keys_count; i++)
-        iotdata_kvr_add_flag(kv, r->keys[i]);
+    /* The inventory is literally a list of the messages you could send: each entry is the VALUE of
+       a REQUEST or a CONTROL, in the encoding it would take on the wire. That is more informative
+       than the old list of key flags, which could say a node took diagnostics commands but never
+       which -- and it needs no second format to describe the first. */
+    for (uint8_t type = 0; type < IOTDATA_NODE_TLV_SYSTEM_COUNT; type++)
+        if (iotdata_node_tlv_is_reportable(type))
+            iotdata_kvr_add(kv, IOTDATA_NODE_CONTROL_REQUEST, &type, 1);
+    static const uint8_t node_actions[] = { IOTDATA_NODE_ACTION_NODE_REBOOT, IOTDATA_NODE_ACTION_NODE_RESET };
+    for (size_t i = 0; i < sizeof(node_actions) / sizeof(node_actions[0]); i++) {
+        const uint8_t v[2] = { IOTDATA_NODE_SUBJECT_NODE, node_actions[i] };
+        iotdata_kvr_add(kv, IOTDATA_NODE_CONTROL_CONTROL, v, (uint8_t)sizeof(v));
+    }
+    /* whatever the device adds of its own, in the same (subject, action) shape */
+    for (uint8_t i = 0; i < r->actions_count; i++)
+        iotdata_kvr_add(kv, IOTDATA_NODE_CONTROL_CONTROL, r->actions + (size_t)i * 2u, 2);
     return kv->overflow ? -1 : (int)kv->len;
 }
 

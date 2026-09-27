@@ -64,17 +64,18 @@ static void test_vocabulary(void) {
 static void test_app_commands(void) {
     printf("a device adds its own, and cannot take a word that is taken\n");
     static const iotdata_control_command_t app[] = {
-        { "calibrate", 0x80, IOTDATA_CONTROL_ARG_NONE, 0 }, /* a TSA's, in the proprietary range */
-        { "boot", 0x81, IOTDATA_CONTROL_ARG_NONE, 0 },      /* and an attempt to redefine a built-in */
+        /* a TSA's own, on a proprietary SUBJECT -- which the old derived scheme could not reach */
+        { "calibrate", IOTDATA_NODE_CONTROL_CONTROL, 0x80, 0x10, IOTDATA_CONTROL_ARG_NONE, 0 },
+        { "boot", IOTDATA_NODE_CONTROL_CONTROL, 0x80, 0x11, IOTDATA_CONTROL_ARG_NONE, 0 }, /* redefining a built-in */
     };
     iotdata_control_init(app, (uint8_t)(sizeof(app) / sizeof(app[0])));
 
     const iotdata_control_command_t *const c = iotdata_control_find("calibrate");
-    CHECK(c != NULL && c->key == 0x80, "the device's own command is found");
+    CHECK(c != NULL && c->subject == 0x80 && c->action == 0x10, "the device's own command is found");
     /* built-ins are searched FIRST: an application must not leave an operator holding a word that
        means something else on this node than on every other one */
     const iotdata_control_command_t *const b = iotdata_control_find("boot");
-    CHECK(b != NULL && b->key == IOTDATA_NODE_CONTROL_REBOOT, "and cannot shadow `boot`");
+    CHECK(b != NULL && b->subject == IOTDATA_NODE_SUBJECT_NODE && b->action == IOTDATA_NODE_ACTION_NODE_REBOOT, "and cannot shadow `boot`");
 
     /* the walk covers both, so help and completion see the device's commands too */
     bool saw_app = false, saw_builtin = false;
@@ -113,11 +114,11 @@ static void test_console(void) {
     CHECK(a.station == 0x537, "the station was read");
     CHECK(a.action == IOTDATA_NODE_CONTROL_MESH_PEER_NONE, "and `remove` is the action");
 
-    c = argv_find(&a, &used, 5, "mesh", "filters", "update", "0xABC", "block");
+    c = argv_find(&a, &used, 4, "filters", "update", "0xABC", "block");
     CHECK(c != NULL && a.action == IOTDATA_NODE_CONTROL_MESH_FILTERS_BLOCK, "`block` is an action");
-    c = argv_find(&a, &used, 3, "mesh", "filters", "clear");
+    c = argv_find(&a, &used, 2, "filters", "clear");
     CHECK(c != NULL && a.scope_filter == IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_ALL, "no scope word = every entry");
-    c = argv_find(&a, &used, 4, "mesh", "filters", "clear", "manual");
+    c = argv_find(&a, &used, 3, "filters", "clear", "manual");
     CHECK(c != NULL && a.scope_filter == IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_MANUAL, "and a scope word is read");
     c = argv_find(&a, &used, 2, "stat", "mesh");
     CHECK(c != NULL && a.scope_status == IOTDATA_NODE_STATUS_SCOPE_MESH, "`stat mesh` scopes the status");
@@ -148,8 +149,8 @@ static void test_media_agree(void) {
         const char *argv[5];
     } cases[] = {
         { "{\"cmd\":\"mesh-peers-update\",\"station\":\"0x537\",\"action\":\"remove\"}", 5, { "mesh", "peers", "update", "0x537", "remove" } },
-        { "{\"cmd\":\"mesh-filters-update\",\"station\":\"0xABC\",\"action\":\"block\"}", 5, { "mesh", "filters", "update", "0xABC", "block" } },
-        { "{\"cmd\":\"mesh-filters-clear\",\"scope\":\"manual\"}", 4, { "mesh", "filters", "clear", "manual" } },
+        { "{\"cmd\":\"filters-update\",\"station\":\"0xABC\",\"action\":\"block\"}", 4, { "filters", "update", "0xABC", "block" } },
+        { "{\"cmd\":\"filters-clear\",\"scope\":\"manual\"}", 3, { "filters", "clear", "manual" } },
         { "{\"cmd\":\"diag-enable\"}", 2, { "diag", "enable" } },
         { "{\"cmd\":\"stat\",\"scope\":\"mesh\"}", 2, { "stat", "mesh" } },
         { "{\"cmd\":\"vers\"}", 1, { "vers" } },
@@ -187,12 +188,12 @@ static void test_media_agree(void) {
 
 static void test_report(void) {
     printf("the report: what a node says it accepts\n");
-    static const uint8_t own[] = { 0x80, 0x81 };
+    static const uint8_t own[] = { IOTDATA_NODE_SUBJECT_MESH, 0x7F }; /* one (subject, action) pair */
     uint8_t buf[128];
     iotdata_kvr_t kv;
 
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    const iotdata_control_report_t plain = { .tables = false, .keys = NULL, .keys_count = 0 };
+    const iotdata_control_report_t plain = { .actions = NULL, .actions_count = 0 };
     CHECK(iotdata_control_pack(&kv, &plain) > 0, "packed");
     /* the seven every node answers */
     uint8_t seen = 0;
@@ -201,22 +202,28 @@ static void test_report(void) {
     const uint8_t *val;
     while (iotdata_kvr_next(buf, kv.len, &cur, &key, &val, &vlen))
         seen++;
-    CHECK(seen == 7, "seven unconditional: five reports, plus diagnostics and reboot");
+    /* nine requestable types -- every one that carries something of its own, DISCRIMINATOR
+       excluded because a modifier has no state to state -- plus reboot and reset */
+    CHECK(seen == 11, "nine requests, plus the node's two actions");
 
-    /* a mesh node also answers for its tables -- the capability, whether or not they are empty */
+    /* The tables have no request keys of their own any more: asking for one is STATUS_REQUEST
+       with a scope bit, so the inventory must carry STATUS_REQUEST and nothing table-shaped. */
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    const iotdata_control_report_t meshy = { .tables = true, .keys = own, .keys_count = (uint8_t)sizeof(own) };
+    const iotdata_control_report_t meshy = { .actions = own, .actions_count = (uint8_t)(sizeof(own) / 2u) };
     CHECK(iotdata_control_pack(&kv, &meshy) > 0, "packed");
-    bool tables = false, mine = false;
+    bool status = false, mine = false, reboot = false;
     cur = 0;
     while (iotdata_kvr_next(buf, kv.len, &cur, &key, &val, &vlen)) {
-        if (key == iotdata_node_tlv_control_key(IOTDATA_NODE_TLV_MESH_PEERS))
-            tables = true;
-        if (key == 0x81)
+        if (key == IOTDATA_NODE_CONTROL_REQUEST && vlen == 1 && val[0] == IOTDATA_NODE_TLV_STATUS)
+            status = true;
+        if (key == IOTDATA_NODE_CONTROL_CONTROL && vlen == 2 && val[0] == IOTDATA_NODE_SUBJECT_NODE && val[1] == IOTDATA_NODE_ACTION_NODE_REBOOT)
+            reboot = true;
+        if (key == IOTDATA_NODE_CONTROL_CONTROL && vlen == 2 && val[0] == IOTDATA_NODE_SUBJECT_MESH)
             mine = true;
     }
-    CHECK(tables, "the table requests are advertised");
-    CHECK(mine, "and the device's own keys");
+    CHECK(status, "a request for STATUS is advertised, and covers the tables");
+    CHECK(reboot, "and the node's own actions");
+    CHECK(mine, "and the device's own");
 
     /* a buffer too small must fail rather than advertise half a list -- a truncated report is a
        node claiming less than it can do, which is a worse lie than claiming more */

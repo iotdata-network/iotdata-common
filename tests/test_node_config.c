@@ -1,0 +1,154 @@
+// Config: the table is compiled in, the accessors are type-checked, a write is all-or-nothing.
+
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "iotdata.h"
+#include "iotdata_node.h"
+
+#include "device/d_module_datastore_linux.h"
+#include "iotdata_node_config.h" /* the types, so the handler below can be written */
+
+static int fails = 0;
+#define CHECK(c, m) \
+    do { \
+        if (!(c)) { \
+            printf("  FAIL: %s (line %d)\n", m, __LINE__); \
+            fails++; \
+        } \
+    } while (0)
+
+/* A handler that acts, and one that rejects across two entries at once. */
+static int g_notified = 0;
+static bool on_channel(const iotdata_config_row_t *row, const iotdata_config_value_t *old, const iotdata_config_info_t *info) {
+    (void)row;
+    (void)old;
+    (void)info;
+    g_notified++;
+    return false;
+}
+
+/* Cross-entry: the floor must not exceed the ceiling, which can only be judged once both proposed
+   values are in hand. This is the whole reason a write is staged before it is applied. */
+static bool tx_min_le_max(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+static bool tx_max_ge_min(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+
+#define IOTDATA_CONFIG_ENTRIES(X) \
+    /*  NAME            id     TYPE   min    max     default  flags                       validate     notify */ \
+    X(TX_PERIOD_S, 0x001, U16, 10, 3600, 60, 0, NULL, NULL) \
+    X(LORA_CHANNEL, 0x002, U8, 0, 83, 23, IOTDATA_CONFIG_FLAG_REBOOT, NULL, on_channel) \
+    X(TRIM_MV, 0x003, I16, -500, 500, 0, 0, NULL, NULL) \
+    X(SERIAL_NO, 0x004, U32, 0, 0xFFFFFFFF, 7, IOTDATA_CONFIG_FLAG_READONLY, NULL, NULL) X(TX_MIN_S, 0x005, U16, 1, 3600, 20, 0, tx_min_le_max, NULL) X(TX_MAX_S, 0x006, U16, 1, 3600, 40, 0, tx_max_ge_min, NULL)
+
+#include "iotdata_node_config.h"
+
+static bool tx_min_le_max(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u) {
+    iotdata_config_value_t mx;
+    if (v->u < row->min.u || v->u > row->max.u)
+        return false;
+    return iotdata_config_update_peek(u, IOTDATA_CFG_TX_MAX_S, &mx) && v->u <= mx.u;
+}
+static bool tx_max_ge_min(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u) {
+    iotdata_config_value_t mn;
+    if (v->u < row->min.u || v->u > row->max.u)
+        return false;
+    return iotdata_config_update_peek(u, IOTDATA_CFG_TX_MIN_S, &mn) && v->u >= mn.u;
+}
+
+int main(void) {
+    printf("iotdata_node_config: a compiled-in table, checked at build time\n\n");
+
+    printf("defaults, and reading them back\n");
+    iotdata_config_defaults();
+    CHECK(iotdata_config_u16(TX_PERIOD_S) == 60, "a default is the table's");
+    CHECK(iotdata_config_u8(LORA_CHANNEL) == 23, "for every row");
+    CHECK(iotdata_config_i16(TRIM_MV) == 0, "signed included");
+    /* iotdata_config_u16(LORA_CHANNEL) would not COMPILE: the id carries its type as a sibling */
+    CHECK(IOTDATA_CFG_LORA_CHANNEL__TYPE == IOTDATA_CONFIG_TYPE_U8, "the type sibling is what an accessor asserts on");
+
+    printf("a write is all-or-nothing\n");
+    iotdata_config_update_t u;
+    iotdata_config_update_begin(&u);
+    CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TX_PERIOD_S, &(iotdata_config_value_t){ .u = 120 }), "in bounds");
+    CHECK(!iotdata_config_update_stage(&u, IOTDATA_CFG_LORA_CHANNEL, &(iotdata_config_value_t){ .u = 200 }), "out of bounds is refused");
+    bool reboot = false;
+    CHECK(!iotdata_config_update_commit(&u, NULL, &reboot), "and the whole update with it");
+    CHECK(iotdata_config_u16(TX_PERIOD_S) == 60, "so the GOOD value did not take either: half-applied is worse than none");
+
+    printf("a good one commits, and only what changed is announced\n");
+    g_notified = 0;
+    iotdata_config_update_begin(&u);
+    CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TX_PERIOD_S, &(iotdata_config_value_t){ .u = 120 }), "staged");
+    CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_LORA_CHANNEL, &(iotdata_config_value_t){ .u = 23 }), "staged, but unchanged");
+    CHECK(iotdata_config_update_commit(&u, NULL, &reboot), "committed");
+    CHECK(iotdata_config_u16(TX_PERIOD_S) == 120, "the new value is live");
+    CHECK(g_notified == 0, "and a value written to what it already was announces nothing");
+    CHECK(!reboot, "nor asks for a reboot it does not need");
+
+    printf("a changed value announces, and the reboot flag is the table's to insist on\n");
+    iotdata_config_update_begin(&u);
+    CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_LORA_CHANNEL, &(iotdata_config_value_t){ .u = 42 }), "staged");
+    CHECK(iotdata_config_update_commit(&u, NULL, &reboot), "committed");
+    CHECK(g_notified == 1, "the handler was told, once");
+    CHECK(reboot, "and the row's flag asked for a restart even though the handler did not");
+
+    printf("read-only is reportable, not writable\n");
+    iotdata_config_update_begin(&u);
+    CHECK(!iotdata_config_update_stage(&u, IOTDATA_CFG_SERIAL_NO, &(iotdata_config_value_t){ .u = 9 }), "refused");
+    CHECK(iotdata_config_u32(SERIAL_NO) == 7, "and unchanged");
+
+    printf("a pair that must agree is judged together, which is why staging exists\n");
+    iotdata_config_update_begin(&u);
+    /* each alone is in bounds; together they are nonsense, and only the SET can see that */
+    CHECK(!iotdata_config_update_stage(&u, IOTDATA_CFG_TX_MIN_S, &(iotdata_config_value_t){ .u = 100 }), "a floor of 100 against a ceiling of 40 is refused");
+    CHECK(u.rejected, "and the whole update is poisoned, not just that entry");
+    iotdata_config_update_begin(&u);
+    CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TX_MAX_S, &(iotdata_config_value_t){ .u = 200 }), "raise the ceiling first");
+    CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TX_MIN_S, &(iotdata_config_value_t){ .u = 100 }), "and the floor now fits, because the peek sees the STAGED ceiling");
+    CHECK(iotdata_config_update_commit(&u, NULL, &reboot), "committed together");
+    CHECK(iotdata_config_u16(TX_MIN_S) == 100 && iotdata_config_u16(TX_MAX_S) == 200, "both live");
+
+    printf("the image is self-describing, and survives the table changing under it\n");
+    datastore_t ds;
+    CHECK(datastore_open(&ds, "/tmp/iotdata-cfg-test"), "store opened");
+    CHECK(iotdata_config_save(&ds), "saved");
+    iotdata_config_defaults();
+    CHECK(iotdata_config_u16(TX_PERIOD_S) == 60, "back to defaults");
+    CHECK(iotdata_config_load(&ds), "loaded");
+    CHECK(iotdata_config_u16(TX_PERIOD_S) == 120, "and the written values came back");
+    CHECK(iotdata_config_u8(LORA_CHANNEL) == 42, "all of them");
+
+    /* a record for an id this build does not have is SKIPPED, and everything after it still reads:
+       that is what lets a firmware change drop a config without wiping the rest */
+    uint8_t img[32];
+    size_t at = 0;
+    const uint16_t gone = iotdata_config_rec(0x7FF, IOTDATA_CONFIG_TYPE_U16);
+    img[at++] = (uint8_t)(gone >> 8);
+    img[at++] = (uint8_t)gone;
+    img[at++] = 0x00;
+    img[at++] = 0x05;
+    at += iotdata_config_encode(IOTDATA_CFG_IX_TRIM_MV, img + at, sizeof(img) - at);
+    iotdata_config_defaults();
+    for (size_t i = 0; i < at;) {
+        const size_t n = iotdata_config_decode(img + i, at - i);
+        if (n == 0)
+            break;
+        i += n;
+    }
+    CHECK(iotdata_config_i16(TRIM_MV) == 0, "a retired id is skipped");
+
+    /* sign extension: a negative i16 must come back negative, not as 65036 */
+    iotdata_config_update_begin(&u);
+    CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TRIM_MV, &(iotdata_config_value_t){ .i = -500 }), "staged");
+    CHECK(iotdata_config_update_commit(&u, &ds, NULL), "committed");
+    iotdata_config_defaults();
+    CHECK(iotdata_config_load(&ds), "loaded");
+    CHECK(iotdata_config_i16(TRIM_MV) == -500, "a negative value survives the round trip");
+
+    datastore_close(&ds);
+    printf("\n%s\n", fails == 0 ? "all ok" : "FAILED");
+    return fails == 0 ? 0 : 1;
+}
