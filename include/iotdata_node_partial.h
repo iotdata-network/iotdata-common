@@ -55,6 +55,9 @@ typedef struct {
     bool more;       /* the builder found records it could not fit */
 } iotdata_partial_t;
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Whether this chunk needs a marker at all. NOT `total > 1`: a report of five records that all fit
    in one frame is complete and says so by carrying no marker. Only a chunk that is missing
    something -- before it, after it, or both -- is partial. */
@@ -62,7 +65,11 @@ static inline bool iotdata_partial_needed(const iotdata_partial_t *const p) {
     return p != NULL && (p->more || p->index > 0);
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #define IOTDATA_NODE_PARTIAL_SIZE 4 /* id(16) | total(8) | index(8) */
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline int iotdata_partial_pack(uint8_t *const buf, const size_t size, const iotdata_partial_t *const p) {
     if (buf == NULL || p == NULL || size < IOTDATA_NODE_PARTIAL_SIZE)
@@ -74,6 +81,8 @@ static inline int iotdata_partial_pack(uint8_t *const buf, const size_t size, co
     return IOTDATA_NODE_PARTIAL_SIZE;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline bool iotdata_partial_unpack(const uint8_t *const val, const size_t vlen, iotdata_partial_t *const out) {
     if (val == NULL || out == NULL || vlen < IOTDATA_NODE_PARTIAL_SIZE)
         return false;
@@ -84,13 +93,14 @@ static inline bool iotdata_partial_unpack(const uint8_t *const val, const size_t
     return true;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Add the marker to a frame under construction. MUST be called immediately before the TLV it
    describes -- the binding is positional, so anything emitted between them would steal it. */
 static inline bool iotdata_partial_emit(iotdata_encoder_t *const enc, const iotdata_partial_t *const p) {
     uint8_t buf[IOTDATA_NODE_PARTIAL_SIZE];
     if (iotdata_partial_pack(buf, sizeof(buf), p) < 0)
         return false;
-    /* An ordinary TLV: the encoder is not being taught anything. */
     return iotdata_encode_tlv(enc, IOTDATA_TLV_TYPE_PARTIAL, buf, (uint8_t)sizeof(buf)) == IOTDATA_OK;
 }
 
@@ -105,6 +115,8 @@ static inline bool iotdata_partial_is(const iotdata_decoder_tlv_t *const t) {
     return t != NULL && t->type == IOTDATA_TLV_TYPE_PARTIAL && t->format == IOTDATA_TLV_FMT_RAW && t->length >= IOTDATA_NODE_PARTIAL_SIZE;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* The marker describing entry `idx`, if one precedes it. False means the report is complete, which
    is the answer for everything that does not page -- and is only safe to read that way because
    understanding PARTIAL is mandatory across the system type range. */
@@ -117,6 +129,8 @@ static inline bool iotdata_partial_of(const iotdata_decoder_t *const dec, const 
     return iotdata_partial_unpack(prev->raw, prev->length, out);
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Begin, or continue, a report. Called by the report path before the builder runs: a fresh report
    (nothing walked yet) gets an identifier, a continuing one keeps the one it started with, so
    every chunk of one report carries the same tag. A builder with a real generation -- config --
@@ -128,6 +142,8 @@ static inline void iotdata_partial_begin(iotdata_partial_t *const p, const uint1
         p->id = fallback_id;
     p->more = false;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Account for a chunk that has GONE OUT. Only on a successful send: advancing on a build would
    skip records whenever the radio refused the frame, and there is no acknowledgement here to

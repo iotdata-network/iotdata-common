@@ -18,6 +18,7 @@
 #include "iotdata_variant.h"
 #include "iotdata.c"
 #include "iotdata_node.h"
+#include "device/d_format.h" /* snprintf_inline, used by the host branch of the version header */
 #include "iotdata_node_version.h"
 
 static int fails = 0;
@@ -34,33 +35,33 @@ static void test_caps_entries(void) {
     iotdata_version_caps_t c;
     memset(&c, 0, sizeof(c));
 
-    CHECK(iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_RADIO, IOTDATA_VERSION_RADIO_E22_DIP), "added");
+    CHECK(iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_RADIO, IOTDATA_VERSION_RADIO_E22_DIP), "added");
     CHECK(c.count == 1, "one entry");
-    CHECK(iotdata_version_caps_get(&c, IOTDATA_VERSION_CAP_RADIO) == IOTDATA_VERSION_RADIO_E22_DIP, "reads back");
+    CHECK(iotdata_version_caps_get(&c, IOTDATA_VERSION_CAPS_RADIO) == IOTDATA_VERSION_RADIO_E22_DIP, "reads back");
 
     /* two radios is a real configuration, not an error -- which is why the value is a mask */
-    CHECK(iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_RADIO, IOTDATA_VERSION_RADIO_SX1302), "second radio");
+    CHECK(iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_RADIO, IOTDATA_VERSION_RADIO_SX1302), "second radio");
     CHECK(c.count == 1, "same category, still ONE entry: OR-merged rather than duplicated");
-    CHECK(iotdata_version_caps_get(&c, IOTDATA_VERSION_CAP_RADIO) == (IOTDATA_VERSION_RADIO_E22_DIP | IOTDATA_VERSION_RADIO_SX1302), "both bits set");
+    CHECK(iotdata_version_caps_get(&c, IOTDATA_VERSION_CAPS_RADIO) == (IOTDATA_VERSION_RADIO_E22_DIP | IOTDATA_VERSION_RADIO_SX1302), "both bits set");
 
     /* a zero mask is not "category present, empty" -- there is nothing to say, so say nothing */
-    CHECK(!iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_DISPLAY, 0), "zero mask refused");
+    CHECK(!iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_DISPLAY, 0), "zero mask refused");
     CHECK(c.count == 1, "and nothing was added");
     /* twelve bits is the field; anything above it would be silently eaten by the key nibble */
-    CHECK(!iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_DISPLAY, 0x1000), "a mask past 12 bits is refused");
+    CHECK(!iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_DISPLAY, 0x1000), "a mask past 12 bits is refused");
     CHECK(!iotdata_version_caps_add(&c, 0x10, 0x001), "a key past 4 bits is refused");
 
-    CHECK(strcmp(iotdata_version_cap_name(IOTDATA_VERSION_CAP_PROPRIETARY), "proprietary") == 0, "the high bit means proprietary, as in every other key space");
-    CHECK(strcmp(iotdata_version_cap_name(0x7), "reserved") == 0, "the one unassigned public key says so");
+    CHECK(strcmp(iotdata_version_caps_name(IOTDATA_VERSION_CAPS_PROPRIETARY), "proprietary") == 0, "the high bit means proprietary, as in every other key space");
+    CHECK(strcmp(iotdata_version_caps_name(0x7), "reserved") == 0, "the one unassigned public key says so");
 }
 
 static void test_caps_wire(void) {
     printf("capabilities: the wire layout, big-endian, whole words only\n");
     iotdata_version_caps_t c;
     memset(&c, 0, sizeof(c));
-    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_DISPLAY, 0xA2B);
+    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_DISPLAY, 0xA2B);
 
-    uint8_t buf[IOTDATA_VERSION_CAP_COUNT * 2];
+    uint8_t buf[IOTDATA_VERSION_CAPS_COUNT * 2];
     const int n = iotdata_version_caps_pack(&c, buf, sizeof(buf));
     CHECK(n == 2, "one entry is two bytes");
     /* [key:4][mask:12] big-endian, so this reads out of a hex dump as key 1, mask A2B */
@@ -68,7 +69,7 @@ static void test_caps_wire(void) {
 
     iotdata_version_caps_t r;
     CHECK(iotdata_version_caps_parse(buf, (size_t)n, &r), "parsed");
-    CHECK(r.count == 1 && iotdata_version_caps_get(&r, IOTDATA_VERSION_CAP_DISPLAY) == 0xA2B, "round trip");
+    CHECK(r.count == 1 && iotdata_version_caps_get(&r, IOTDATA_VERSION_CAPS_DISPLAY) == 0xA2B, "round trip");
 
     /* an odd length is a malformed value, not a short read to tolerate */
     const uint8_t odd[3] = { 0x1A, 0x2B, 0x30 };
@@ -80,14 +81,14 @@ static void test_caps_wire(void) {
        twelve bits -- the format does not have to change for it */
     const uint8_t twice[4] = { 0x10, 0x01, 0x10, 0x02 };
     CHECK(iotdata_version_caps_parse(twice, sizeof(twice), &r), "parsed");
-    CHECK(r.count == 1 && iotdata_version_caps_get(&r, IOTDATA_VERSION_CAP_DISPLAY) == 0x003, "a repeated key merged");
+    CHECK(r.count == 1 && iotdata_version_caps_get(&r, IOTDATA_VERSION_CAPS_DISPLAY) == 0x003, "a repeated key merged");
 
     /* a full table must fit the pack buffer the header sizes for it */
     memset(&c, 0, sizeof(c));
-    for (uint8_t k = 0; k < IOTDATA_VERSION_CAP_COUNT; k++)
+    for (uint8_t k = 0; k < IOTDATA_VERSION_CAPS_COUNT; k++)
         CHECK(iotdata_version_caps_add(&c, k, 0xFFF), "filled a category");
-    CHECK(c.count == IOTDATA_VERSION_CAP_COUNT, "all sixteen");
-    CHECK(iotdata_version_caps_pack(&c, buf, sizeof(buf)) == IOTDATA_VERSION_CAP_COUNT * 2, "and packs whole");
+    CHECK(c.count == IOTDATA_VERSION_CAPS_COUNT, "all sixteen");
+    CHECK(iotdata_version_caps_pack(&c, buf, sizeof(buf)) == IOTDATA_VERSION_CAPS_COUNT * 2, "and packs whole");
     CHECK(iotdata_version_caps_pack(&c, buf, 4) == -1, "a short buffer is refused, not half-filled");
 }
 
@@ -96,9 +97,9 @@ static void test_caps_render(void) {
     iotdata_version_caps_t c;
     char s[IOTDATA_VERSION_CAPS_STR_MAX + 1];
     memset(&c, 0, sizeof(c));
-    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_FEATURES, IOTDATA_VERSION_FEATURE_MESH | IOTDATA_VERSION_FEATURE_OTA);
-    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_RADIO, IOTDATA_VERSION_RADIO_E22_USB);
-    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_DISPLAY, IOTDATA_VERSION_DISPLAY_ILI9488);
+    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_FEATURES, IOTDATA_VERSION_FEATURE_MESH | IOTDATA_VERSION_FEATURE_OTA);
+    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_RADIO, IOTDATA_VERSION_RADIO_E22_USB);
+    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_DISPLAY, IOTDATA_VERSION_DISPLAY_ILI9488);
     /* FEATURES renders bare -- "mesh" reads better than "features=mesh", and it is the only
        category where the category name adds nothing */
     CHECK(strcmp(iotdata_version_caps_str(&c, s, sizeof(s)), "mesh,ota,radio/e22-usb,display/ili9488") == 0, "named bits, features bare, '/' for category/member");
@@ -106,12 +107,12 @@ static void test_caps_render(void) {
     /* an unnamed bit says WHICH bit rather than guessing: a proprietary category's meaning is not
        ours to know, and neither is a bit added by a newer build */
     memset(&c, 0, sizeof(c));
-    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_PROPRIETARY, 0x004);
+    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_PROPRIETARY, 0x004);
     CHECK(strcmp(iotdata_version_caps_str(&c, s, sizeof(s)), "proprietary/0x004") == 0, "unnamed renders as its bit");
 
     /* a buffer that runs out leaves a valid string, not a half-written entry */
     memset(&c, 0, sizeof(c));
-    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_RADIO, 0xFFF);
+    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_RADIO, 0xFFF);
     char tiny[12];
     memset(tiny, 0x7F, sizeof(tiny));
     (void)iotdata_version_caps_str(&c, tiny, sizeof(tiny));
@@ -234,7 +235,7 @@ static void test_pack(void) {
     CHECK(seen[IOTDATA_NODE_VERSION_HARDWARE] && seen[IOTDATA_NODE_VERSION_FIRMWARE] && seen[IOTDATA_NODE_VERSION_SOFTWARE] && seen[IOTDATA_NODE_VERSION_SERIAL], "hardware, firmware, software, serial");
     CHECK(!seen[IOTDATA_NODE_VERSION_CAPABILITIES], "and no capabilities key when there is nothing to declare");
 
-    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAP_RADIO, IOTDATA_VERSION_RADIO_E22_DIP);
+    (void)iotdata_version_caps_add(&c, IOTDATA_VERSION_CAPS_RADIO, IOTDATA_VERSION_RADIO_E22_DIP);
     iotdata_kvr_init(&kv, buf, sizeof(buf));
     CHECK(iotdata_version_pack(&kv, &c) > 0, "packed with capabilities");
     bool caps_present = false;
@@ -307,8 +308,8 @@ static void test_json(void) {
     printf("json: the capability registry travels with the report\n");
     iotdata_version_caps_t caps, back;
     memset(&caps, 0, sizeof(caps));
-    (void)iotdata_version_caps_add(&caps, IOTDATA_VERSION_CAP_RADIO, IOTDATA_VERSION_RADIO_E22_DIP | IOTDATA_VERSION_RADIO_SX1302);
-    (void)iotdata_version_caps_add(&caps, IOTDATA_VERSION_CAP_FEATURES, IOTDATA_VERSION_FEATURE_MESH);
+    (void)iotdata_version_caps_add(&caps, IOTDATA_VERSION_CAPS_RADIO, IOTDATA_VERSION_RADIO_E22_DIP | IOTDATA_VERSION_RADIO_SX1302);
+    (void)iotdata_version_caps_add(&caps, IOTDATA_VERSION_CAPS_FEATURES, IOTDATA_VERSION_FEATURE_MESH);
 
     cJSON *const o = iotdata_version_caps_to_json(&caps);
     CHECK(o != NULL, "encoded");
@@ -321,8 +322,8 @@ static void test_json(void) {
        depend on how it prints */
     CHECK(iotdata_version_caps_from_json(o, &back), "decoded");
     CHECK(back.count == caps.count, "same number of categories");
-    CHECK(iotdata_version_caps_get(&back, IOTDATA_VERSION_CAP_RADIO) == iotdata_version_caps_get(&caps, IOTDATA_VERSION_CAP_RADIO), "radio mask round-trips, both bits");
-    CHECK(iotdata_version_caps_get(&back, IOTDATA_VERSION_CAP_FEATURES) == IOTDATA_VERSION_FEATURE_MESH, "and features");
+    CHECK(iotdata_version_caps_get(&back, IOTDATA_VERSION_CAPS_RADIO) == iotdata_version_caps_get(&caps, IOTDATA_VERSION_CAPS_RADIO), "radio mask round-trips, both bits");
+    CHECK(iotdata_version_caps_get(&back, IOTDATA_VERSION_CAPS_FEATURES) == IOTDATA_VERSION_FEATURE_MESH, "and features");
     cJSON_Delete(o);
 
     /* a category this build has never heard of is SKIPPED, not fatal: a newer node is allowed to
@@ -330,11 +331,11 @@ static void test_json(void) {
     cJSON *const future = cJSON_Parse("{\"entries\":[{\"category\":\"quantum\",\"mask\":7},{\"category\":\"radio\",\"mask\":1}]}");
     CHECK(future != NULL, "parsed");
     CHECK(iotdata_version_caps_from_json(future, &back), "and accepted");
-    CHECK(back.count == 1 && iotdata_version_caps_get(&back, IOTDATA_VERSION_CAP_RADIO) == 1, "keeping what it understands");
+    CHECK(back.count == 1 && iotdata_version_caps_get(&back, IOTDATA_VERSION_CAPS_RADIO) == 1, "keeping what it understands");
     cJSON_Delete(future);
 
-    CHECK(iotdata_version_cap_key("radio") == IOTDATA_VERSION_CAP_RADIO, "names map back to keys");
-    CHECK(iotdata_version_cap_key("nonesuch") == -1, "and an unknown name does not");
+    CHECK(iotdata_version_caps_key("radio") == IOTDATA_VERSION_CAPS_RADIO, "names map back to keys");
+    CHECK(iotdata_version_caps_key("nonesuch") == -1, "and an unknown name does not");
 
     /* the key hook: it claims capabilities and declines everything else */
     cJSON *const obj = cJSON_CreateObject();

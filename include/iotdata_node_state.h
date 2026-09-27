@@ -64,8 +64,14 @@
 #define IOTDATA_STATE_KEY "state"
 #endif
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #define IOTDATA_STATE_MAGIC   0x53544131UL /* "STA1" */
 #define IOTDATA_STATE_VERSION 1u
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 typedef struct {
     uint32_t tag;
@@ -85,8 +91,10 @@ typedef struct {
     bool loaded;
     uint32_t save_ms, save_last_ms;
     uint32_t stat_saved, stat_failed, stat_restored, stat_defaulted;
+    uint8_t _buffer[IOTDATA_STATE_BYTES_MAX];
 } iotdata_node_state_t;
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_state_init(iotdata_node_state_t *const s, datastore_t *const ds, const char *const key) {
@@ -95,6 +103,9 @@ static inline void iotdata_state_init(iotdata_node_state_t *const s, datastore_t
     s->key = (key != NULL) ? key : IOTDATA_STATE_KEY;
     s->save_ms = IOTDATA_STATE_SAVE_MS;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Register a block. Every insert must happen BEFORE iotdata_state_load(), because load is what
    matches the persisted records against what is registered -- a block inserted afterwards has
@@ -109,6 +120,9 @@ static inline bool iotdata_state_insert(iotdata_node_state_t *const s, const uin
     return true;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline void _iotdata_state_default(iotdata_node_state_block_t *const b) {
     if (b->defaults != NULL)
         memcpy(b->data, b->defaults, b->size);
@@ -117,25 +131,27 @@ static inline void _iotdata_state_default(iotdata_node_state_block_t *const b) {
     b->restored = false;
 }
 
-/* Restore every registered block it can, default the rest. Returns whether anything was restored,
-   which is how a caller tells a first boot from a resumed one. */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline bool iotdata_state_load(iotdata_node_state_t *const s) {
     s->loaded = true;
     for (uint8_t i = 0; i < s->count; i++)
         _iotdata_state_default(&s->block[i]);
     if (s->ds == NULL)
         return false;
-    static uint8_t img[IOTDATA_STATE_BYTES_MAX];
+    uint8_t *const buf = s->_buffer;
+    const size_t buflen = sizeof(s->_buffer);
     size_t len = 0;
-    if (!datastore_read(s->ds, s->key, img, sizeof(img), &len) || len < 8u)
+    if (!datastore_read(s->ds, s->key, buf, buflen, &len) || len < 8u)
         return false;
-    if (((uint32_t)img[0] << 24 | (uint32_t)img[1] << 16 | (uint32_t)img[2] << 8 | img[3]) != IOTDATA_STATE_MAGIC || img[4] != IOTDATA_STATE_VERSION)
+    if (((uint32_t)buf[0] << 24 | (uint32_t)buf[1] << 16 | (uint32_t)buf[2] << 8 | buf[3]) != IOTDATA_STATE_MAGIC || buf[4] != IOTDATA_STATE_VERSION)
         return false;
     size_t at = 8;
     while (at + 8u <= len) {
-        const uint32_t tag = (uint32_t)img[at] << 24 | (uint32_t)img[at + 1] << 16 | (uint32_t)img[at + 2] << 8 | img[at + 3];
-        const uint16_t version = (uint16_t)((uint16_t)img[at + 4] << 8 | img[at + 5]);
-        const uint16_t size = (uint16_t)((uint16_t)img[at + 6] << 8 | img[at + 7]);
+        const uint32_t tag = (uint32_t)buf[at] << 24 | (uint32_t)buf[at + 1] << 16 | (uint32_t)buf[at + 2] << 8 | buf[at + 3];
+        const uint16_t version = (uint16_t)((uint16_t)buf[at + 4] << 8 | buf[at + 5]);
+        const uint16_t size = (uint16_t)((uint16_t)buf[at + 6] << 8 | buf[at + 7]);
         at += 8u;
         if (at + size > len)
             break; /* truncated image: what has been read stands, the rest defaults */
@@ -145,7 +161,7 @@ static inline bool iotdata_state_load(iotdata_node_state_t *const s) {
                nastier one it cannot see -- same bytes, different meaning, which would otherwise be
                restored confidently and be wrong. */
             if (b->tag == tag && b->version == version && b->size == size) {
-                memcpy(b->data, &img[at], size);
+                memcpy(b->data, &buf[at], size);
                 b->restored = true;
                 s->stat_restored++;
                 break;
@@ -159,39 +175,41 @@ static inline bool iotdata_state_load(iotdata_node_state_t *const s) {
     return s->stat_restored > 0;
 }
 
-/* Write everything now. The write-through half: a caller that cannot afford to come back behind
-   calls this rather than waiting for the tick. */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline bool iotdata_state_flush(iotdata_node_state_t *const s) {
     if (s == NULL || s->ds == NULL)
         return false;
-    static uint8_t img[IOTDATA_STATE_BYTES_MAX];
-    img[0] = (uint8_t)(IOTDATA_STATE_MAGIC >> 24);
-    img[1] = (uint8_t)(IOTDATA_STATE_MAGIC >> 16);
-    img[2] = (uint8_t)(IOTDATA_STATE_MAGIC >> 8);
-    img[3] = (uint8_t)(IOTDATA_STATE_MAGIC & 0xFFu);
-    img[4] = (uint8_t)IOTDATA_STATE_VERSION;
-    img[5] = s->count;
-    img[6] = img[7] = 0;
+    uint8_t *const buf = s->_buffer;
+    const size_t buflen = sizeof(s->_buffer);
+    buf[0] = (uint8_t)(IOTDATA_STATE_MAGIC >> 24);
+    buf[1] = (uint8_t)(IOTDATA_STATE_MAGIC >> 16);
+    buf[2] = (uint8_t)(IOTDATA_STATE_MAGIC >> 8);
+    buf[3] = (uint8_t)(IOTDATA_STATE_MAGIC & 0xFFu);
+    buf[4] = (uint8_t)IOTDATA_STATE_VERSION;
+    buf[5] = s->count;
+    buf[6] = buf[7] = 0;
     size_t at = 8;
     for (uint8_t i = 0; i < s->count; i++) {
         const iotdata_node_state_block_t *const b = &s->block[i];
-        if (at + 8u + b->size > sizeof(img)) {
+        if (at + 8u + b->size > buflen) {
             s->stat_failed++;
             return false; /* the image does not fit: refuse rather than write a partial one */
         }
-        img[at] = (uint8_t)(b->tag >> 24);
-        img[at + 1] = (uint8_t)(b->tag >> 16);
-        img[at + 2] = (uint8_t)(b->tag >> 8);
-        img[at + 3] = (uint8_t)(b->tag & 0xFFu);
-        img[at + 4] = (uint8_t)(b->version >> 8);
-        img[at + 5] = (uint8_t)(b->version & 0xFFu);
-        img[at + 6] = (uint8_t)(b->size >> 8);
-        img[at + 7] = (uint8_t)(b->size & 0xFFu);
+        buf[at] = (uint8_t)(b->tag >> 24);
+        buf[at + 1] = (uint8_t)(b->tag >> 16);
+        buf[at + 2] = (uint8_t)(b->tag >> 8);
+        buf[at + 3] = (uint8_t)(b->tag & 0xFFu);
+        buf[at + 4] = (uint8_t)(b->version >> 8);
+        buf[at + 5] = (uint8_t)(b->version & 0xFFu);
+        buf[at + 6] = (uint8_t)(b->size >> 8);
+        buf[at + 7] = (uint8_t)(b->size & 0xFFu);
         at += 8u;
-        memcpy(&img[at], b->data, b->size);
+        memcpy(&buf[at], b->data, b->size);
         at += b->size;
     }
-    if (!datastore_write(s->ds, s->key, img, at)) {
+    if (!datastore_write(s->ds, s->key, buf, at)) {
         s->stat_failed++;
         return false;
     }
@@ -200,11 +218,16 @@ static inline bool iotdata_state_flush(iotdata_node_state_t *const s) {
     return true;
 }
 
-/* Something changed and can wait: the tick will write it. */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline void iotdata_state_touch(iotdata_node_state_t *const s) {
     if (s != NULL)
         s->dirty = true;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_state_tick(iotdata_node_state_t *const s, const uint32_t now_ms) {
     if (s == NULL || !s->dirty)

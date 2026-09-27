@@ -25,6 +25,7 @@
 #include "iotdata_variant.h"
 #include "iotdata.h"
 #include "iotdata_node.h"
+#include "device/d_format.h" /* snprintf_inline, used by the host branch of the version header */
 #include "iotdata_node_version.h"
 #include "iotdata_node_status.h"
 #include "iotdata_node_control.h"

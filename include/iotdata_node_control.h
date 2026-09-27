@@ -72,6 +72,9 @@ typedef struct {
     uint8_t fixed; /* FIXED: the value. STATION: the action. SCOPE: an override, or FROM_REQUEST. */
 } iotdata_control_command_t;
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Every CONTROL value begins the same way: the subject, and for a command its action. Whatever the
    argument kind adds, it adds after this. */
 static inline uint8_t _iotdata_control_prefix(const iotdata_control_command_t *const c, uint8_t *const out) {
@@ -155,14 +158,22 @@ static const iotdata_control_command_t iotdata_control_commands[] = {
 
 #define IOTDATA_CONTROL_COMMANDS_COUNT ((uint8_t)(sizeof(iotdata_control_commands) / sizeof(iotdata_control_commands[0])))
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Commands one device adds to the common set -- see iotdata_control_init. */
 static const iotdata_control_command_t *_iotdata_control_app = NULL;
 static uint8_t _iotdata_control_app_count = 0;
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_control_init(const iotdata_control_command_t *const app, const uint8_t count) {
     _iotdata_control_app = app;
     _iotdata_control_app_count = (app != NULL) ? count : 0;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Built-ins first, deliberately: an application must not be able to redefine `boot` and leave an
    operator's word meaning something else on one node than on every other. */
@@ -178,6 +189,8 @@ static inline const iotdata_control_command_t *iotdata_control_find(const char *
     return NULL;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Walk every name, built-in then application, so a medium can offer help or completion without
    knowing where a command came from. Returns NULL past the end. */
 static inline const iotdata_control_command_t *iotdata_control_at(const uint8_t index) {
@@ -191,16 +204,13 @@ static inline const iotdata_control_command_t *iotdata_control_at(const uint8_t 
 // PACKAGING
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* A value is the prefix, then whatever the argument kind adds. One scratch buffer serves them all,
-   sized by what a frame leaves for a TLV value -- the bound the WIRE imposes, rather than a number
-   picked to look big enough for the longest argument anyone has written so far. */
 #define _IOTDATA_CONTROL_VALUE_MAX IOTDATA_TLV_VALUE_MAX
 
 /* Build the CONTROL payload for one command. Returns false when nothing was added. */
 static inline bool iotdata_control_build(iotdata_kvr_t *const kv, const iotdata_control_command_t *const c, const iotdata_control_args_t *const a) {
     if (kv == NULL || c == NULL || a == NULL)
         return false;
-    uint8_t v[_IOTDATA_CONTROL_VALUE_MAX];
+    static uint8_t v[_IOTDATA_CONTROL_VALUE_MAX]; // XXX
     uint8_t n = _iotdata_control_prefix(c, v);
 
     switch (c->arg) {
@@ -283,10 +293,8 @@ static inline int iotdata_control_pack(iotdata_kvr_t *const kv, const iotdata_co
         if (iotdata_node_tlv_is_reportable(type))
             iotdata_kvr_add(kv, IOTDATA_NODE_CONTROL_REQUEST, &type, 1);
     static const uint8_t node_actions[] = { IOTDATA_NODE_ACTION_NODE_REBOOT, IOTDATA_NODE_ACTION_NODE_RESET };
-    for (size_t i = 0; i < sizeof(node_actions) / sizeof(node_actions[0]); i++) {
-        const uint8_t v[2] = { IOTDATA_NODE_SUBJECT_NODE, node_actions[i] };
-        iotdata_kvr_add(kv, IOTDATA_NODE_CONTROL_CONTROL, v, (uint8_t)sizeof(v));
-    }
+    for (size_t i = 0; i < sizeof(node_actions) / sizeof(node_actions[0]); i++)
+        iotdata_kvr_add(kv, IOTDATA_NODE_CONTROL_CONTROL, (uint8_t[2]){ IOTDATA_NODE_SUBJECT_NODE, node_actions[i] }, (uint8_t)2);
     /* whatever the device adds of its own, in the same (subject, action) shape */
     for (uint8_t i = 0; i < r->actions_count; i++)
         iotdata_kvr_add(kv, IOTDATA_NODE_CONTROL_CONTROL, r->actions + (size_t)i * 2u, 2);
@@ -461,17 +469,16 @@ static inline const iotdata_control_command_t *iotdata_control_from_argv(const i
                 name[n++] = *p2;
             }
         }
-        if (!fits)
-            continue;
-        name[n] = '\0';
-        const iotdata_control_command_t *const c = iotdata_control_find(name);
-        if (c == NULL)
-            continue;
-        if (!_iotdata_control_argv_args(c, argv, words, argc, args))
-            continue; /* the name matched but the rest cannot belong to it: keep shortening */
-        if (consumed != NULL)
-            *consumed = words;
-        return c;
+        if (fits) {
+            name[n] = '\0';
+            const iotdata_control_command_t *const c = iotdata_control_find(name);
+            if (c != NULL)
+                if (_iotdata_control_argv_args(c, argv, words, argc, args)) { /* the name matched but the rest cannot belong to it: keep shortening */
+                    if (consumed != NULL)
+                        *consumed = words;
+                    return c;
+                }
+        }
     }
     return NULL;
 }
@@ -527,12 +534,12 @@ static inline uint8_t _iotdata_control_json_targets(const cJSON *const j, uint16
             bool seen = false;
             for (uint8_t i = 0; i < n; i++)
                 seen = seen || (out[i] == st);
-            if (seen)
-                continue;
-            if (n < max)
-                out[n++] = st;
-            else
-                *overflow = true; /* silently dropping a station the caller named is not an option */
+            if (!seen) {
+                if (n < max)
+                    out[n++] = st;
+                else
+                    *overflow = true; /* silently dropping a station the caller named is not an option */
+            }
         }
     }
     if (n == 0) { /* not a list, or an empty one: the single-target reading, broadcast when absent */

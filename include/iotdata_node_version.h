@@ -59,18 +59,18 @@
    descriptor at every link, which is a better source than a define because it cannot be forgotten
    or left behind by an incremental build. Unset and underivable, it reads as _NONE, so the
    omission is visible rather than silently inherited from whenever the tree was last touched. */
-#define IOTDATA_VERSION_STAMP_NONE             "000000000000"
-#define IOTDATA_VERSION_STAMP_LEN              12
+#define IOTDATA_VERSION_STAMP_NONE          "000000000000"
+#define IOTDATA_VERSION_STAMP_LEN           12
 
 /* Field sizes in CHARACTERS -- a buffer for one is declared [SIZE + 1] for the terminator, so
    these read as the lengths they are rather than as one less than they look. Generous against the grammars (a `board/arch` runs ~15, a `software` ~24) and cheap:
    the whole TLV is ~80 bytes of kvr, one frame, sent at startup and on request. */
-#define IOTDATA_VERSION_HARDWARE_MAX           24
-#define IOTDATA_VERSION_FIRMWARE_MAX           24
-#define IOTDATA_VERSION_SOFTWARE_MAX           48
-#define IOTDATA_VERSION_SERIAL_MAX             32 /* a machine-id is 32 hex, and an identity must never be truncated */
-#define IOTDATA_VERSION_CAPS_STR_MAX           96
-#define IOTDATA_VERSION_STR_MAX                256
+#define IOTDATA_VERSION_HARDWARE_MAX        24
+#define IOTDATA_VERSION_FIRMWARE_MAX        24
+#define IOTDATA_VERSION_SOFTWARE_MAX        48
+#define IOTDATA_VERSION_SERIAL_MAX          32 /* a machine-id is 32 hex, and an identity must never be truncated */
+#define IOTDATA_VERSION_CAPS_STR_MAX        96
+#define IOTDATA_VERSION_STR_MAX             256
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // CAPABILITIES
@@ -93,76 +93,72 @@
 // choices that are not commands.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_VERSION_CAP_RADIO              0x0
-#define IOTDATA_VERSION_CAP_DISPLAY            0x1
-#define IOTDATA_VERSION_CAP_MODEM              0x2
-#define IOTDATA_VERSION_CAP_SENSOR             0x3
-#define IOTDATA_VERSION_CAP_STORAGE            0x4
-#define IOTDATA_VERSION_CAP_POWER              0x5
-#define IOTDATA_VERSION_CAP_FEATURES           0x6
+#define IOTDATA_VERSION_CAPS_RADIO          0x0
+#define IOTDATA_VERSION_CAPS_DISPLAY        0x1
+#define IOTDATA_VERSION_CAPS_MODEM          0x2
+#define IOTDATA_VERSION_CAPS_SENSOR         0x3
+#define IOTDATA_VERSION_CAPS_STORAGE        0x4
+#define IOTDATA_VERSION_CAPS_POWER          0x5
+#define IOTDATA_VERSION_CAPS_FEATURES       0x6
 /* 0x7 unassigned; 0x8..0xF proprietary (bit 3) */
-#define IOTDATA_VERSION_CAP_PROPRIETARY        0x8
-#define IOTDATA_VERSION_CAP_COUNT              16
-#define IOTDATA_VERSION_CAP_MASK_MAX           0x0FFFu
+#define IOTDATA_VERSION_CAPS_PROPRIETARY    0x8
+#define IOTDATA_VERSION_CAPS_COUNT          16
+#define IOTDATA_VERSION_CAPS_MASK_MAX       0x0FFFu
 
-#define IOTDATA_VERSION_RADIO_E22_DIP          0x001
-#define IOTDATA_VERSION_RADIO_E22_USB          0x002
-#define IOTDATA_VERSION_RADIO_SX1302           0x004
-#define IOTDATA_VERSION_RADIO_RAK3272          0x008
+#define IOTDATA_VERSION_RADIO_E22_DIP       0x001
+#define IOTDATA_VERSION_RADIO_E22_USB       0x002
+#define IOTDATA_VERSION_RADIO_SX1302        0x004
+#define IOTDATA_VERSION_RADIO_RAK3272       0x008
 
-#define IOTDATA_VERSION_DISPLAY_ILI9488        0x001
-#define IOTDATA_VERSION_DISPLAY_SSD1306        0x002
+#define IOTDATA_VERSION_DISPLAY_ILI9488     0x001
+#define IOTDATA_VERSION_DISPLAY_SSD1306     0x002
 
-#define IOTDATA_VERSION_MODEM_USB_CDC          0x001
+#define IOTDATA_VERSION_MODEM_USB_CDC       0x001
 
-#define IOTDATA_VERSION_SENSOR_BME280          0x001
-#define IOTDATA_VERSION_SENSOR_SDS             0x002
-#define IOTDATA_VERSION_SENSOR_TSA             0x004
-#define IOTDATA_VERSION_SENSOR_WIND            0x008
-#define IOTDATA_VERSION_SENSOR_SOLAR           0x010
-#define IOTDATA_VERSION_SENSOR_LTR390          0x020
+#define IOTDATA_VERSION_SENSOR_BME280       0x001
+#define IOTDATA_VERSION_SENSOR_SDS          0x002
+#define IOTDATA_VERSION_SENSOR_TSA          0x004
+#define IOTDATA_VERSION_SENSOR_WIND         0x008
+#define IOTDATA_VERSION_SENSOR_SOLAR        0x010
+#define IOTDATA_VERSION_SENSOR_LTR390       0x020
 
-#define IOTDATA_VERSION_FEATURE_MESH           0x001
-#define IOTDATA_VERSION_FEATURE_BLACKBOX       0x002
-#define IOTDATA_VERSION_FEATURE_OTA            0x004
-#define IOTDATA_VERSION_FEATURE_JSON           0x008
-#define IOTDATA_VERSION_FEATURE_FLOAT          0x010
-#define IOTDATA_VERSION_FEATURE_ENCRYPTION     0x020
-/* This node's APPLICATION configuration survives a power cycle. PROTOCOL configuration -- the
-   station id, the per-type triggers -- always does and is not in question, so this bit is only
-   about the device's own settings. A manager that does not see it re-applies them after a restart,
-   which it spots from STATUS's `restarts` and `uptime`. */
-#define IOTDATA_VERSION_FEATURE_CONFIG_PERSIST 0x040
+#define IOTDATA_VERSION_FEATURE_MESH        0x001
+#define IOTDATA_VERSION_FEATURE_BLACKBOX    0x002
+#define IOTDATA_VERSION_FEATURE_OTA         0x004
+#define IOTDATA_VERSION_FEATURE_JSON        0x008
+#define IOTDATA_VERSION_FEATURE_FLOAT       0x010
+#define IOTDATA_VERSION_FEATURE_ENCRYPTION  0x020
+#define IOTDATA_VERSION_FEATURE_PERSISTENCE 0x040
 
 typedef struct {
-    uint16_t entry[IOTDATA_VERSION_CAP_COUNT]; /* at most one per category before OR-merging */
+    uint16_t entry[IOTDATA_VERSION_CAPS_COUNT]; /* at most one per category before OR-merging */
     uint8_t count;
 } iotdata_version_caps_t;
 
-static inline const char *iotdata_version_cap_name(const uint8_t key) {
+static inline const char *iotdata_version_caps_name(const uint8_t key) {
     switch (key) {
-    case IOTDATA_VERSION_CAP_RADIO:
+    case IOTDATA_VERSION_CAPS_RADIO:
         return "radio";
-    case IOTDATA_VERSION_CAP_DISPLAY:
+    case IOTDATA_VERSION_CAPS_DISPLAY:
         return "display";
-    case IOTDATA_VERSION_CAP_MODEM:
+    case IOTDATA_VERSION_CAPS_MODEM:
         return "modem";
-    case IOTDATA_VERSION_CAP_SENSOR:
+    case IOTDATA_VERSION_CAPS_SENSOR:
         return "sensor";
-    case IOTDATA_VERSION_CAP_STORAGE:
+    case IOTDATA_VERSION_CAPS_STORAGE:
         return "storage";
-    case IOTDATA_VERSION_CAP_POWER:
+    case IOTDATA_VERSION_CAPS_POWER:
         return "power";
-    case IOTDATA_VERSION_CAP_FEATURES:
+    case IOTDATA_VERSION_CAPS_FEATURES:
         return "features";
     default:
-        return (key & IOTDATA_VERSION_CAP_PROPRIETARY) != 0 ? "proprietary" : "reserved";
+        return (key & IOTDATA_VERSION_CAPS_PROPRIETARY) != 0 ? "proprietary" : "reserved";
     }
 }
 
-static inline const char *iotdata_version_cap_bit_name(const uint8_t key, const uint16_t bit) {
+static inline const char *iotdata_version_caps_bit_name(const uint8_t key, const uint16_t bit) {
     switch (key) {
-    case IOTDATA_VERSION_CAP_RADIO:
+    case IOTDATA_VERSION_CAPS_RADIO:
         switch (bit) {
         case IOTDATA_VERSION_RADIO_E22_DIP:
             return "e22-dip";
@@ -175,7 +171,7 @@ static inline const char *iotdata_version_cap_bit_name(const uint8_t key, const 
         default:
             return NULL;
         }
-    case IOTDATA_VERSION_CAP_DISPLAY:
+    case IOTDATA_VERSION_CAPS_DISPLAY:
         switch (bit) {
         case IOTDATA_VERSION_DISPLAY_ILI9488:
             return "ili9488";
@@ -184,9 +180,9 @@ static inline const char *iotdata_version_cap_bit_name(const uint8_t key, const 
         default:
             return NULL;
         }
-    case IOTDATA_VERSION_CAP_MODEM:
+    case IOTDATA_VERSION_CAPS_MODEM:
         return bit == IOTDATA_VERSION_MODEM_USB_CDC ? "usb-cdc" : NULL;
-    case IOTDATA_VERSION_CAP_SENSOR:
+    case IOTDATA_VERSION_CAPS_SENSOR:
         switch (bit) {
         case IOTDATA_VERSION_SENSOR_BME280:
             return "bme280";
@@ -203,7 +199,7 @@ static inline const char *iotdata_version_cap_bit_name(const uint8_t key, const 
         default:
             return NULL;
         }
-    case IOTDATA_VERSION_CAP_FEATURES:
+    case IOTDATA_VERSION_CAPS_FEATURES:
         switch (bit) {
         case IOTDATA_VERSION_FEATURE_MESH:
             return "mesh";
@@ -217,8 +213,8 @@ static inline const char *iotdata_version_cap_bit_name(const uint8_t key, const 
             return "float";
         case IOTDATA_VERSION_FEATURE_ENCRYPTION:
             return "crypt";
-        case IOTDATA_VERSION_FEATURE_CONFIG_PERSIST:
-            return "cfgkeep";
+        case IOTDATA_VERSION_FEATURE_PERSISTENCE:
+            return "persist";
         default:
             return NULL;
         }
@@ -241,9 +237,6 @@ static inline void iotdata_version_caps_init(iotdata_version_caps_t *const c) {
 #if defined(IOTDATA_VERSION_HAS_MESH)
     f |= IOTDATA_VERSION_FEATURE_MESH;
 #endif
-/* Declared by the app, or implied by having turned the recorder on -- see iotdata_node_diagnostics.h.
-   Two of three apps used to declare it by hand and the third forgot, so its VERSION did not mention
-   a recorder it was carrying. */
 #if defined(IOTDATA_VERSION_HAS_BLACKBOX) || (defined(IOTDATA_DIAGNOSTICS) && IOTDATA_DIAGNOSTICS)
     f |= IOTDATA_VERSION_FEATURE_BLACKBOX;
 #endif
@@ -251,7 +244,7 @@ static inline void iotdata_version_caps_init(iotdata_version_caps_t *const c) {
     f |= IOTDATA_VERSION_FEATURE_OTA;
 #endif
     if (f != 0) {
-        c->entry[0] = (uint16_t)((IOTDATA_VERSION_CAP_FEATURES << 12) | f);
+        c->entry[0] = (uint16_t)((IOTDATA_VERSION_CAPS_FEATURES << 12) | f);
         c->count = 1;
     }
 }
@@ -259,23 +252,23 @@ static inline void iotdata_version_caps_init(iotdata_version_caps_t *const c) {
 /* OR-merges into an existing category rather than adding a second entry, so a caller can declare
    capabilities from several places without having to collect them first. */
 static inline bool iotdata_version_caps_add(iotdata_version_caps_t *const c, const uint8_t key, const uint16_t mask) {
-    if (key >= IOTDATA_VERSION_CAP_COUNT || (mask & ~IOTDATA_VERSION_CAP_MASK_MAX) != 0 || mask == 0)
+    if (key >= IOTDATA_VERSION_CAPS_COUNT || (mask & ~IOTDATA_VERSION_CAPS_MASK_MAX) != 0 || mask == 0)
         return false;
     for (uint8_t i = 0; i < c->count; i++)
         if ((uint8_t)(c->entry[i] >> 12) == key) {
-            c->entry[i] |= (uint16_t)(mask & IOTDATA_VERSION_CAP_MASK_MAX);
+            c->entry[i] |= (uint16_t)(mask & IOTDATA_VERSION_CAPS_MASK_MAX);
             return true;
         }
-    if (c->count >= IOTDATA_VERSION_CAP_COUNT)
+    if (c->count >= IOTDATA_VERSION_CAPS_COUNT)
         return false;
-    c->entry[c->count++] = (uint16_t)(((uint16_t)key << 12) | (mask & IOTDATA_VERSION_CAP_MASK_MAX));
+    c->entry[c->count++] = (uint16_t)(((uint16_t)key << 12) | (mask & IOTDATA_VERSION_CAPS_MASK_MAX));
     return true;
 }
 
 static inline uint16_t iotdata_version_caps_get(const iotdata_version_caps_t *const c, const uint8_t key) {
     for (uint8_t i = 0; i < c->count; i++)
         if ((uint8_t)(c->entry[i] >> 12) == key)
-            return (uint16_t)(c->entry[i] & IOTDATA_VERSION_CAP_MASK_MAX);
+            return (uint16_t)(c->entry[i] & IOTDATA_VERSION_CAPS_MASK_MAX);
     return 0;
 }
 
@@ -295,7 +288,7 @@ static inline bool iotdata_version_caps_parse(const uint8_t *const buf, const si
         return false;
     for (size_t i = 0; i + 1u < len; i += 2u) {
         const uint16_t e = (uint16_t)(((uint16_t)buf[i] << 8) | buf[i + 1u]);
-        if (!iotdata_version_caps_add(c, (uint8_t)(e >> 12), (uint16_t)(e & IOTDATA_VERSION_CAP_MASK_MAX)))
+        if (!iotdata_version_caps_add(c, (uint8_t)(e >> 12), (uint16_t)(e & IOTDATA_VERSION_CAPS_MASK_MAX)))
             return false;
     }
     return true;
@@ -308,21 +301,20 @@ static inline const char *iotdata_version_caps_str(const iotdata_version_caps_t 
     buf[0] = '\0';
     for (uint8_t i = 0; i < c->count; i++) {
         const uint8_t key = (uint8_t)(c->entry[i] >> 12);
-        const uint16_t mask = (uint16_t)(c->entry[i] & IOTDATA_VERSION_CAP_MASK_MAX);
-        const bool bare = (key == IOTDATA_VERSION_CAP_FEATURES);
-        for (uint16_t bit = 1; bit <= IOTDATA_VERSION_CAP_MASK_MAX; bit = (uint16_t)(bit << 1)) {
+        const uint16_t mask = (uint16_t)(c->entry[i] & IOTDATA_VERSION_CAPS_MASK_MAX);
+        const bool bare = (key == IOTDATA_VERSION_CAPS_FEATURES);
+        for (uint16_t bit = 1; bit <= IOTDATA_VERSION_CAPS_MASK_MAX; bit = (uint16_t)(bit << 1))
             if ((mask & bit) != 0) {
-                const char *const name = iotdata_version_cap_bit_name(key, bit);
+                const char *const name = iotdata_version_caps_bit_name(key, bit);
                 int w;
                 if (name != NULL)
-                    w = snprintf(buf + n, size - n, "%s%s%s%s", n > 0 ? "," : "", bare ? "" : iotdata_version_cap_name(key), bare ? "" : "/", name);
+                    w = snprintf(buf + n, size - n, "%s%s%s%s", n > 0 ? "," : "", bare ? "" : iotdata_version_caps_name(key), bare ? "" : "/", name);
                 else /* unnamed, including a proprietary category: say which bit, not a guess */
-                    w = snprintf(buf + n, size - n, "%s%s/0x%03x", n > 0 ? "," : "", iotdata_version_cap_name(key), (unsigned)bit);
+                    w = snprintf(buf + n, size - n, "%s%s/0x%03x", n > 0 ? "," : "", iotdata_version_caps_name(key), (unsigned)bit);
                 if (w <= 0 || (size_t)w >= size - n)
                     return buf; /* out of room: what is there stays a valid string */
                 n += (size_t)w;
             }
-        }
     }
     return buf;
 }
@@ -345,6 +337,11 @@ static inline void _iotdata_version_sep(char *const dst, const size_t size, size
     dst[*n] = '\0';
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#if defined(PLATFORM_ESP32)
+
 /*
  * ESP-IDF COMPONENTS THIS NEEDS. IDF only puts a component's headers on the include path when the
  * component is declared, so a project including this header must list these in its main
@@ -360,7 +357,6 @@ static inline void _iotdata_version_sep(char *const dst, const size_t size, size
  * the component still compiles and simply reports no bootloader version. That is how `idf/6.1`
  * appeared where `idf/6.1+bl1` was expected.
  */
-#if defined(PLATFORM_ESP32)
 
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
@@ -374,6 +370,8 @@ static inline void _iotdata_version_sep(char *const dst, const size_t size, size
 #include "esp_bootloader_desc.h"
 #endif
 #endif
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline const char *iotdata_version_hardware(char *const buf, const size_t size) {
     esp_chip_info_t info;
@@ -399,9 +397,10 @@ static inline const char *iotdata_version_hardware(char *const buf, const size_t
 #if defined(CONFIG_IDF_TARGET_ARCH_RISCV)
     arch = "riscv32";
 #endif
-    (void)snprintf(buf, size, "%s/%s", chip, arch);
-    return buf;
+    return snprintf_inline(buf, size, "%s/%s", chip, arch);
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* IDF version plus the bootloader, which is the ESP32's genuine "firmware beneath the app" -- the
    thing that is flashed separately and outlives an OTA. */
@@ -432,24 +431,29 @@ static inline const char *iotdata_version_firmware(char *const buf, const size_t
     const esp_bootloader_desc_t *const bl = esp_bootloader_get_description();
     if (bl != NULL) {
         char blv[12];
-        (void)snprintf(blv, sizeof(blv), "bl%u", (unsigned)bl->version);
         _iotdata_version_sep(buf, size, &n, '+');
-        _iotdata_version_append(buf, size, &n, blv);
+        _iotdata_version_append(buf, size, &n, snprintf_inline(blv, sizeof(blv), "bl%u", (unsigned)bl->version));
     }
 #endif
     return buf;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline const char *iotdata_version_serial(char *const buf, const size_t size) {
     uint8_t mac[6] = { 0 };
     (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    (void)snprintf(buf, size, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    return buf;
+    return snprintf_inline(buf, size, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #elif defined(PLATFORM_LINUX)
 
 #include <sys/utsname.h>
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool _iotdata_version_slurp(const char *const path, char *const dst, const size_t size) {
     FILE *const f = fopen(path, "r");
@@ -469,6 +473,8 @@ static inline bool _iotdata_version_slurp(const char *const path, char *const ds
     return true;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Board from the device tree where there is one (Pi, Rock) and from DMI on a PC, falling back to
    the architecture alone -- which is still true, just less specific. */
 static inline const char *iotdata_version_hardware(char *const buf, const size_t size) {
@@ -487,6 +493,8 @@ static inline const char *iotdata_version_hardware(char *const buf, const size_t
     _iotdata_version_append(buf, size, &n, arch);
     return buf;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* The kernel is what runs beneath the application here. The Pi's VideoCore blob is the closer
    analogue of a bootloader, but vcgencmd is a binary a slimmed image may not carry, so it is not
@@ -517,6 +525,8 @@ static inline const char *iotdata_version_firmware(char *const buf, const size_t
     _iotdata_version_append(buf, size, &n, r > 0 ? rel : "unknown");
     return buf;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* NEVER a NIC MAC: those are removable, and a box whose identity changes when a card is swapped
    cannot be tracked across the swap. The CPU serial is the board; machine-id is the install. */
@@ -553,22 +563,24 @@ static inline const char *iotdata_version_serial(char *const buf, const size_t s
     return buf;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #else
 
 static inline const char *iotdata_version_hardware(char *const buf, const size_t size) {
-    (void)snprintf(buf, size, "unknown/unknown");
-    return buf;
+    return snprintf_inline(buf, size, "unknown/unknown");
 }
 static inline const char *iotdata_version_firmware(char *const buf, const size_t size) {
-    (void)snprintf(buf, size, "unknown");
-    return buf;
+    return snprintf_inline(buf, size, "unknown");
 }
 static inline const char *iotdata_version_serial(char *const buf, const size_t size) {
-    (void)snprintf(buf, size, "unknown");
-    return buf;
+    return snprintf_inline(buf, size, "unknown");
 }
 
 #endif
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Three letters to a month number, for the one place a C build hands over a date as English. */
 static inline int _iotdata_version_month(const char *const mon) {
@@ -581,6 +593,8 @@ static inline int _iotdata_version_month(const char *const mon) {
             return m + 1;
     return 0;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* The stamp, from whoever can actually say. A build-supplied define wins; failing that a platform
    may know (ESP-IDF's app descriptor is stamped at link, so it is always THIS build); failing
@@ -598,30 +612,36 @@ static inline bool _iotdata_version_stamp_valid(const char *const st) {
     return true;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline const char *_iotdata_version_stamp(char *const buf, const size_t size) {
 #if defined(IOTDATA_VERSION_STAMP)
-    (void)snprintf(buf, size, "%s", IOTDATA_VERSION_STAMP);
-    if (!_iotdata_version_stamp_valid(buf))
-        (void)snprintf(buf, size, "%s", IOTDATA_VERSION_STAMP_NONE);
+    if (!_iotdata_version_stamp_valid(snprintf_inline(buf, size, "%s", IOTDATA_VERSION_STAMP)))
+        return snprintf_inline(buf, size, "%s", IOTDATA_VERSION_STAMP_NONE);
+    else
+        return buf;
 #elif defined(PLATFORM_ESP32)
     const esp_app_desc_t *const app = esp_app_get_description();
     int mday = 0, year = 0, hour = 0, minute = 0;
     /* app->date is __DATE__, "Sep 12 2026", with the day space-padded; app->time is "17:45:09" */
     const int m = (app != NULL) ? _iotdata_version_month(app->date) : 0;
     if (m > 0 && sscanf(app->date + 3, "%d %d", &mday, &year) == 2 && sscanf(app->time, "%d:%d", &hour, &minute) == 2)
-        (void)snprintf(buf, size, "%04d%02d%02d%02d%02d", year, m, mday, hour, minute);
+        return snprintf_inline(buf, size, "%04d%02d%02d%02d%02d", year, m, mday, hour, minute);
     else
-        (void)snprintf(buf, size, "%s", IOTDATA_VERSION_STAMP_NONE);
+        return snprintf_inline(buf, size, "%s", IOTDATA_VERSION_STAMP_NONE);
 #else
-    (void)snprintf(buf, size, "%s", IOTDATA_VERSION_STAMP_NONE);
+    return snprintf_inline(buf, size, "%s", IOTDATA_VERSION_STAMP_NONE);
 #endif
-    return buf;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_version_stamp_is_real(void) {
     char st[IOTDATA_VERSION_STAMP_LEN + 1];
     return strcmp(_iotdata_version_stamp(st, sizeof(st)), IOTDATA_VERSION_STAMP_NONE) != 0;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline const char *iotdata_version_software(char *const buf, const size_t size) {
     char st[IOTDATA_VERSION_STAMP_LEN + 1];
@@ -644,9 +664,8 @@ static inline const char *iotdata_version_str(char *const buf, const size_t size
     cp[0] = '\0';
     if (caps != NULL)
         (void)iotdata_version_caps_str(caps, cp, sizeof(cp));
-    (void)snprintf(buf, size, "%s on %s [%s] sn=%s%s%s", iotdata_version_software(sw, sizeof(sw)), iotdata_version_hardware(hw, sizeof(hw)), iotdata_version_firmware(fw, sizeof(fw)), iotdata_version_serial(sn, sizeof(sn)),
-                   cp[0] != '\0' ? " caps=" : "", cp);
-    return buf;
+    return snprintf_inline(buf, size, "%s on %s [%s] sn=%s%s%s", iotdata_version_software(sw, sizeof(sw)), iotdata_version_hardware(hw, sizeof(hw)), iotdata_version_firmware(fw, sizeof(fw)), iotdata_version_serial(sn, sizeof(sn)),
+                           cp[0] != '\0' ? " caps=" : "", cp);
 }
 
 /* The TLV packer needs the kvr writer, so it appears only where the node protocol has been
@@ -671,29 +690,32 @@ static inline int iotdata_version_part(const char *const s, const char sep, cons
         return -1;
     int at = 0;
     const char *start = s;
-    for (const char *p = s;; p++) {
-        if (*p != sep && *p != '\0')
-            continue;
-        if (at == idx) {
-            size_t n = (size_t)(p - start);
-            if (n > size - 1u)
-                n = size - 1u;
-            memcpy(out, start, n);
-            out[n] = '\0';
-            return (int)n;
+    for (const char *p = s;; p++)
+        if (*p == sep || *p == '\0') {
+            if (at == idx) {
+                size_t n = (size_t)(p - start);
+                if (n > size - 1u)
+                    n = size - 1u;
+                memcpy(out, start, n);
+                out[n] = '\0';
+                return (int)n;
+            }
+            if (*p == '\0')
+                return -1;
+            at++;
+            start = p + 1;
         }
-        if (*p == '\0')
-            return -1;
-        at++;
-        start = p + 1;
-    }
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* "app/semver/stamp". All three are required, so a value missing one is malformed rather than
    partially useful -- an app name with no stamp says nothing about which build it is. */
 static inline bool iotdata_version_software_split(const char *const sw, char *const app, const size_t app_sz, char *const semver, const size_t semver_sz, char *const stamp, const size_t stamp_sz) {
     return iotdata_version_part(sw, '/', 0, app, app_sz) > 0 && iotdata_version_part(sw, '/', 1, semver, semver_sz) > 0 && iotdata_version_part(sw, '/', 2, stamp, stamp_sz) > 0;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* "board/arch", where the board is optional: a host that reports only its architecture is giving
    a true answer, just a less specific one, so a single part IS the arch. */
@@ -704,6 +726,8 @@ static inline bool iotdata_version_hardware_split(const char *const hw, char *co
         board[0] = '\0';
     return iotdata_version_part(hw, '/', 0, arch, arch_sz) > 0;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* "stack/version[+low]" -- the low half is the bootloader or equivalent, and is absent more often
    than not (a project that did not declare esp_bootloader_format reports none). */
@@ -726,14 +750,16 @@ static inline bool iotdata_version_firmware_split(const char *const fw, char *co
 
 #include <cjson/cJSON.h>
 
-/* The reverse of iotdata_version_cap_name, for reading a report back. -1 if unknown. */
-static inline int iotdata_version_cap_key(const char *const name) {
+static inline int iotdata_version_caps_key(const char *const name) {
     if (name != NULL)
-        for (uint8_t k = 0; k < IOTDATA_VERSION_CAP_COUNT; k++)
-            if (strcmp(iotdata_version_cap_name(k), name) == 0)
+        for (uint8_t k = 0; k < IOTDATA_VERSION_CAPS_COUNT; k++)
+            if (strcmp(iotdata_version_caps_name(k), name) == 0)
                 return (int)k;
     return -1;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline cJSON *iotdata_version_caps_to_json(const iotdata_version_caps_t *const caps) {
     cJSON *const o = cJSON_CreateObject();
@@ -744,13 +770,16 @@ static inline cJSON *iotdata_version_caps_to_json(const iotdata_version_caps_t *
     cJSON *const arr = cJSON_CreateArray();
     for (uint8_t i = 0; i < caps->count; i++) {
         cJSON *const e = cJSON_CreateObject();
-        cJSON_AddStringToObject(e, "category", iotdata_version_cap_name((uint8_t)(caps->entry[i] >> 12)));
-        cJSON_AddNumberToObject(e, "mask", (double)(caps->entry[i] & IOTDATA_VERSION_CAP_MASK_MAX));
+        cJSON_AddStringToObject(e, "category", iotdata_version_caps_name((uint8_t)(caps->entry[i] >> 12)));
+        cJSON_AddNumberToObject(e, "mask", (double)(caps->entry[i] & IOTDATA_VERSION_CAPS_MASK_MAX));
         cJSON_AddItemToArray(arr, e);
     }
     cJSON_AddItemToObject(o, "entries", arr);
     return o;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_version_caps_from_json(const cJSON *const obj, iotdata_version_caps_t *const caps) {
     *caps = (iotdata_version_caps_t){ 0 };
@@ -763,14 +792,17 @@ static inline bool iotdata_version_caps_from_json(const cJSON *const obj, iotdat
     cJSON_ArrayForEach(e, arr) {
         const cJSON *const cat = cJSON_GetObjectItemCaseSensitive(e, "category");
         const cJSON *const mask = cJSON_GetObjectItemCaseSensitive(e, "mask");
-        if (!cJSON_IsString(cat) || !cJSON_IsNumber(mask))
-            continue;
-        const int key = iotdata_version_cap_key(cat->valuestring);
-        if (key >= 0)
-            (void)iotdata_version_caps_add(caps, (uint8_t)key, (uint16_t)mask->valuedouble);
+        if (cJSON_IsString(cat) && cJSON_IsNumber(mask)) {
+            const int key = iotdata_version_caps_key(cat->valuestring);
+            if (key >= 0)
+                (void)iotdata_version_caps_add(caps, (uint8_t)key, (uint16_t)mask->valuedouble);
+        }
     }
     return true;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_version_json_key(cJSON *const obj, const char *const name, const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
     if (key != IOTDATA_NODE_VERSION_CAPABILITIES)
@@ -795,7 +827,7 @@ static inline int iotdata_version_pack(iotdata_kvr_t *const kv, const iotdata_ve
     iotdata_kvr_add_str(kv, IOTDATA_NODE_VERSION_SOFTWARE, iotdata_version_software(sw, sizeof(sw)));
     iotdata_kvr_add_str(kv, IOTDATA_NODE_VERSION_SERIAL, iotdata_version_serial(sn, sizeof(sn)));
     if (caps != NULL && caps->count > 0) {
-        uint8_t packed[IOTDATA_VERSION_CAP_COUNT * 2];
+        uint8_t packed[IOTDATA_VERSION_CAPS_COUNT * 2];
         const int n = iotdata_version_caps_pack(caps, packed, sizeof(packed));
         if (n > 0)
             iotdata_kvr_add(kv, IOTDATA_NODE_VERSION_CAPABILITIES, packed, (uint8_t)n);

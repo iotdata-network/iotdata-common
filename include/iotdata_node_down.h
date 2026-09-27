@@ -157,6 +157,9 @@ typedef enum {
     IOTDATA_DOWN_TRACKED, /* new, dup remembered but not held: unreachable, or already delivered */
 } iotdata_down_ev_t;
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline bool iotdata_down_transmit(const iotdata_down_ev_t ev) {
     return ev != IOTDATA_DOWN_DUP;
 }
@@ -187,6 +190,9 @@ static inline uint32_t iotdata_down_hash(const uint8_t *const buf, const size_t 
     return h == 0u ? 1u : h;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline void iotdata_down_init(iotdata_down_t *const ds, buffer_pool_t *const pool) {
     memset(ds, 0, sizeof(*ds));
     ds->pool = pool;
@@ -196,12 +202,15 @@ static inline void iotdata_down_init(iotdata_down_t *const ds, buffer_pool_t *co
     ds->scan_ms = IOTDATA_DOWN_SCAN_MS_DEFAULT;
     for (int i = 0; i < IOTDATA_DOWN_STATIONS; i++)
         for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++)
-            ds->station[i].slot[j].frame = (buffer_handle_t)BUFFER_NONE;
+            ds->station[i].slot[j].frame = BUFFER_NONE;
     /* [0] is the broadcast pseudo-station, created here and never evicted: that is the whole of
        the "never evict broadcast" rule, and it makes its lookup a constant. */
     ds->station[0].station = IOTDATA_STATION_BROADCAST;
     ds->count = 1;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_down_set_ttl_ms(iotdata_down_t *const ds, const uint32_t ttl_ms) {
     ds->ttl_ms = (ttl_ms > IOTDATA_DOWN_TTL_MS_MAX) ? (uint32_t)IOTDATA_DOWN_TTL_MS_MAX : ttl_ms;
@@ -229,12 +238,15 @@ static inline uint32_t iotdata_down_scan_ms(const iotdata_down_t *const ds) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Wrap-safe: the ceiling above guarantees an interval under half the clock's range, so an unsigned
    difference orders correctly across a wrap. */
 static inline bool _iotdata_down_older(const uint32_t now_ms, const uint32_t then_ms, const uint32_t ttl_ms) {
     return ttl_ms != 0u && (uint32_t)(now_ms - then_ms) >= ttl_ms;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline iotdata_down_station_t *iotdata_down_station_find(iotdata_down_t *const ds, const uint16_t station) {
     if (station == IOTDATA_STATION_BROADCAST)
@@ -245,16 +257,22 @@ static inline iotdata_down_station_t *iotdata_down_station_find(iotdata_down_t *
     return NULL;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline uint32_t iotdata_down_ttl_of(const iotdata_down_t *const ds, const iotdata_down_station_t *const st) {
     return (st->station == IOTDATA_STATION_BROADCAST) ? ds->ttl_bcast_ms : ds->ttl_ms;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline void _iotdata_down_slot_release(iotdata_down_t *const ds, iotdata_down_slot_t *const sl) {
-    if (sl->frame != (buffer_handle_t)BUFFER_NONE) {
+    if (sl->frame != BUFFER_NONE) {
         buffer_unref(ds->pool, sl->frame);
-        sl->frame = (buffer_handle_t)BUFFER_NONE;
+        sl->frame = BUFFER_NONE;
     }
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void _iotdata_down_slot_clear(iotdata_down_t *const ds, iotdata_down_slot_t *const sl) {
     _iotdata_down_slot_release(ds, sl);
@@ -262,16 +280,20 @@ static inline void _iotdata_down_slot_clear(iotdata_down_t *const ds, iotdata_do
     sl->arrived_ms = 0u;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Does this station hold anything we could still put on the air for it? */
 static inline bool iotdata_down_holds(iotdata_down_t *const ds, const uint16_t station) {
     const iotdata_down_station_t *const st = iotdata_down_station_find(ds, station);
     if (st == NULL)
         return false;
     for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++)
-        if (st->slot[j].frame != (buffer_handle_t)BUFFER_NONE)
+        if (st->slot[j].frame != BUFFER_NONE)
             return true;
     return false;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Is a window open for this station right now, and how much of it is left? */
 static inline uint32_t iotdata_down_window_remaining_ms(const iotdata_down_station_t *const st, const uint32_t now_ms) {
@@ -293,7 +315,7 @@ static inline iotdata_down_station_t *_iotdata_down_station_evict(iotdata_down_t
         const iotdata_down_station_t *const st = &ds->station[i];
         bool idle = true;
         for (int j = 0; j < IOTDATA_DOWN_SLOTS && idle; j++)
-            if (st->slot[j].frame != (buffer_handle_t)BUFFER_NONE)
+            if (st->slot[j].frame != BUFFER_NONE)
                 idle = false;
         if (best < 0 || (idle && !best_idle) || (idle == best_idle && (int32_t)(st->down_last_ms - ds->station[best].down_last_ms) < 0)) {
             best = i;
@@ -301,14 +323,15 @@ static inline iotdata_down_station_t *_iotdata_down_station_evict(iotdata_down_t
         }
     }
     iotdata_down_station_t *const st = &ds->station[best];
-    for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++)
+    for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++) {
         _iotdata_down_slot_clear(ds, &st->slot[j]);
-    memset(st, 0, sizeof(*st));
-    for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++)
-        st->slot[j].frame = (buffer_handle_t)BUFFER_NONE;
+        st->slot[j].frame = BUFFER_NONE;
+    }
     ds->stat_evicted_station++;
     return st;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline iotdata_down_station_t *_iotdata_down_station_obtain(iotdata_down_t *const ds, const uint16_t station) {
     iotdata_down_station_t *st = iotdata_down_station_find(ds, station);
@@ -377,7 +400,7 @@ static inline iotdata_down_ev_t iotdata_down_offer(iotdata_down_t *const ds, con
     iotdata_down_slot_t *const sl = _iotdata_down_slot_obtain(ds, st);
     sl->hash = hash;
     sl->arrived_ms = now_ms;
-    sl->frame = keep ? buffer_ref(ds->pool, frame) : (buffer_handle_t)BUFFER_NONE;
+    sl->frame = keep ? buffer_ref(ds->pool, frame) : BUFFER_NONE;
     st->down_last_ms = now_ms;
 
     if (keep)
@@ -396,6 +419,8 @@ static inline bool _iotdata_down_sent_recently(const iotdata_down_t *const ds, c
     return false;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline void _iotdata_down_sent_record(iotdata_down_station_t *const st, const uint32_t hash, const uint32_t now_ms) {
     int best = 0;
     for (int k = 0; k < IOTDATA_DOWN_SENT_SLOTS; k++) {
@@ -410,6 +435,9 @@ static inline void _iotdata_down_sent_record(iotdata_down_station_t *const st, c
     st->sent[best].sent_ms = now_ms;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /*
  * A station announced a receive window. Record it, then hand back ONE frame to put on the air --
  * the oldest by arrival across that station's own slots and the broadcast slots, skipping any
@@ -423,7 +451,7 @@ static inline void _iotdata_down_sent_record(iotdata_down_station_t *const st, c
 static inline buffer_handle_t iotdata_down_window(iotdata_down_t *const ds, const uint16_t station, const iotdata_node_receive_t *const rx, const uint32_t bps, const uint32_t now_ms, size_t *const len_out) {
 
     if (station == IOTDATA_STATION_BROADCAST || station == 0u)
-        return (buffer_handle_t)BUFFER_NONE; /* nobody transmits as either, so neither can announce */
+        return BUFFER_NONE; /* nobody transmits as either, so neither can announce */
 
     iotdata_down_station_t *const st = _iotdata_down_station_obtain(ds, station);
     st->window_seen = true;
@@ -431,7 +459,7 @@ static inline buffer_handle_t iotdata_down_window(iotdata_down_t *const ds, cons
     st->window_ms_at = now_ms;
 
     if (!iotdata_node_receive_accepts(rx, IOTDATA_DOWN_ASSUMED_TYPE))
-        return (buffer_handle_t)BUFFER_NONE;
+        return BUFFER_NONE;
 
     /* Oldest first, across both sources, taking the first that fits: a frame too big for what is
        left of the window must not block a smaller one behind it. */
@@ -442,44 +470,44 @@ static inline buffer_handle_t iotdata_down_window(iotdata_down_t *const ds, cons
             iotdata_down_station_t *const src = (pass == 0) ? st : &ds->station[0];
             for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++) {
                 iotdata_down_slot_t *const sl = &src->slot[j];
-                if (sl->frame == (buffer_handle_t)BUFFER_NONE)
-                    continue;
-                if (pass == 1 && _iotdata_down_sent_recently(ds, st, sl->hash, now_ms))
-                    continue;
-                if (best == NULL || (int32_t)(sl->arrived_ms - best->arrived_ms) < 0) {
-                    best = sl;
-                    from = src;
+                if (sl->frame != BUFFER_NONE) {
+                    if (pass == 1 && _iotdata_down_sent_recently(ds, st, sl->hash, now_ms))
+                        continue;
+                    if (best == NULL || (int32_t)(sl->arrived_ms - best->arrived_ms) < 0) {
+                        best = sl;
+                        from = src;
+                    }
                 }
             }
         }
         if (best == NULL)
-            return (buffer_handle_t)BUFFER_NONE;
+            return BUFFER_NONE;
 
         const size_t len = buffer_len(ds->pool, best->frame);
-        if (!iotdata_node_receive_fits_ms(len, bps, iotdata_down_window_remaining_ms(st, now_ms))) {
+        if (iotdata_node_receive_fits_ms(len, bps, iotdata_down_window_remaining_ms(st, now_ms))) {
+            const buffer_handle_t out = buffer_ref(ds->pool, best->frame);
+            if (len_out != NULL)
+                *len_out = len;
+            if (from == &ds->station[0]) {
+                _iotdata_down_sent_record(st, best->hash, now_ms); /* kept: other stations still want it */
+                ds->stat_delivered_bcast++;
+            } else {
+                _iotdata_down_slot_release(ds, best); /* sent once; the hash stays behind */
+                ds->stat_delivered++;
+            }
+            return out;
+        } else {
             /* Not this one, and not this pass: mark it considered by pretending it was sent, so the
                loop can look past it without mutating anything that matters. */
             if (from == &ds->station[0])
                 _iotdata_down_sent_record(st, best->hash, now_ms);
             else
                 best->arrived_ms = now_ms; /* youngest: it stops being the oldest candidate */
-            continue;
         }
-
-        const buffer_handle_t out = buffer_ref(ds->pool, best->frame);
-        if (len_out != NULL)
-            *len_out = len;
-        if (from == &ds->station[0]) {
-            _iotdata_down_sent_record(st, best->hash, now_ms); /* kept: other stations still want it */
-            ds->stat_delivered_bcast++;
-        } else {
-            _iotdata_down_slot_release(ds, best); /* sent once; the hash stays behind */
-            ds->stat_delivered++;
-        }
-        return out;
     }
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /*
@@ -495,34 +523,36 @@ static inline int iotdata_down_tick(iotdata_down_t *const ds, const uint32_t now
     int expired = 0;
     for (int i = 0; i < IOTDATA_DOWN_STATIONS; i++) {
         iotdata_down_station_t *const st = &ds->station[i];
-        if (st->station == 0u)
-            continue;
-        const uint32_t ttl = iotdata_down_ttl_of(ds, st);
-        bool empty = true;
-        for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++) {
-            if (st->slot[j].hash == 0u)
-                continue;
-            if (_iotdata_down_older(now_ms, st->slot[j].arrived_ms, ttl)) {
-                _iotdata_down_slot_clear(ds, &st->slot[j]);
-                ds->stat_expired++;
-                expired++;
-            } else
-                empty = false;
-        }
-        /* the record of having given a broadcast to this station expires too, and THAT is what
-           makes the broadcast eligible again: the cyclic resend, explicit half */
-        for (int k = 0; k < IOTDATA_DOWN_SENT_SLOTS; k++)
-            if (st->sent[k].hash != 0u && _iotdata_down_older(now_ms, st->sent[k].sent_ms, ds->repeat_ms))
-                st->sent[k].hash = 0u;
-        /* an entry with nothing held and nothing known is not worth an entry; a window we have
-           snooped IS worth keeping, since it is what makes the station deliverable at all */
-        if (empty && !st->window_seen && i != 0) {
-            st->station = 0u;
-            ds->count--;
+        if (st->station != 0u) {
+            const uint32_t ttl = iotdata_down_ttl_of(ds, st);
+            bool empty = true;
+            for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++)
+                if (st->slot[j].hash != 0u) {
+                    if (_iotdata_down_older(now_ms, st->slot[j].arrived_ms, ttl)) {
+                        _iotdata_down_slot_clear(ds, &st->slot[j]);
+                        ds->stat_expired++;
+                        expired++;
+                    } else
+                        empty = false;
+                }
+            /* the record of having given a broadcast to this station expires too, and THAT is what
+            makes the broadcast eligible again: the cyclic resend, explicit half */
+            for (int k = 0; k < IOTDATA_DOWN_SENT_SLOTS; k++)
+                if (st->sent[k].hash != 0u && _iotdata_down_older(now_ms, st->sent[k].sent_ms, ds->repeat_ms))
+                    st->sent[k].hash = 0u;
+            /* an entry with nothing held and nothing known is not worth an entry; a window we have
+            snooped IS worth keeping, since it is what makes the station deliverable at all */
+            if (empty && !st->window_seen && i != 0) {
+                st->station = 0u;
+                ds->count--;
+            }
         }
     }
     return expired;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline int iotdata_down_clear(iotdata_down_t *const ds) {
     int n = 0;
@@ -541,26 +571,32 @@ static inline int iotdata_down_clear(iotdata_down_t *const ds) {
     return n;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* For a report that wants to show what is held for a station it is already printing. */
 static inline int iotdata_down_station_count(const iotdata_down_t *const ds, const uint16_t station, int *const out_tracked) {
     int held = 0, tracked = 0;
     /* its own scan rather than the finder: a const table cannot hand back a mutable entry */
     for (int i = 0; i < IOTDATA_DOWN_STATIONS; i++) {
         const iotdata_down_station_t *const st = &ds->station[i];
-        if (st->station != station)
-            continue;
-        for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++)
-            if (st->slot[j].hash != 0u) {
-                tracked++;
-                if (st->slot[j].frame != (buffer_handle_t)BUFFER_NONE)
-                    held++;
-            }
-        break;
+        if (st->station == station) {
+            for (int j = 0; j < IOTDATA_DOWN_SLOTS; j++)
+                if (st->slot[j].hash != 0u) {
+                    tracked++;
+                    if (st->slot[j].frame != BUFFER_NONE)
+                        held++;
+                }
+            break;
+        }
     }
     if (out_tracked != NULL)
         *out_tracked = tracked;
     return held;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* The window this station last advertised, or 0 if we have never snooped one -- which is the same
    question as "can we deliver to it at all". Const, so a report can ask. */

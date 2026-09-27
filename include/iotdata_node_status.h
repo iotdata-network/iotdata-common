@@ -114,6 +114,9 @@ static inline bool iotdata_node_status_scope_wants(const uint8_t scope, const ui
     return (want & group) != 0;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* "node", "mesh", "stations", "filters", "peers", or any combination; "all" is every group
    INCLUDING the tables, which is the one way to ask for everything now that absent does not.
    Order matters: "peers" is tested before "mesh" only in that both may appear, and "stations"
@@ -139,6 +142,9 @@ static inline uint8_t iotdata_status_scope_from_name(const char *const s) {
     return bits;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Is this word one of ours at all? The parser above is deliberately lenient -- an unrecognised
    scope means the default -- which is right where a member name already said what the word was
    for, and wrong on a console, where an unrecognised trailing word is far likelier a mistyped
@@ -146,6 +152,9 @@ static inline uint8_t iotdata_status_scope_from_name(const char *const s) {
 static inline bool iotdata_status_scope_is_name(const char *const s) {
     return s != NULL && iotdata_status_scope_from_name(s) != 0;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline const char *iotdata_status_scope_name(const uint8_t scope, char *const out, const size_t size) {
     if (out == NULL || size == 0)
@@ -203,6 +212,9 @@ static inline void _iotdata_status_pack_node(iotdata_kvr_t *const kv, const iotd
         iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_CONTENT_COUNT, s->content);
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline void _iotdata_status_pack_mesh(iotdata_kvr_t *const kv, const iotdata_node_status_mesh_t *const m) {
     if (!m->present)
         return;
@@ -225,6 +237,9 @@ static inline void _iotdata_status_pack_mesh(iotdata_kvr_t *const kv, const iotd
     /* a scalar like the others, for the same reason the node's table sizes are */
     iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_MESH_PEERS_COUNT, m->peers);
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /*
  * The STATUS payload for one node, for the groups asked for. Returns the length, or -1 if it did
