@@ -11,24 +11,91 @@
 // all the time, and every twelve hours or so the relay gives it power long enough to phone home.
 // Nothing in here knows that; a cart is any board on a switched 5V line that can wiggle a pin.
 //
-//     solar 5V ─┬──────────────────────────────────────► this node (always powered)
-//               │
-//               └─► [load switch, soft-start] ─► SW_5V ─┬─► cart 5V
-//                        EN ◄── CART_PWR (out)          └─► whatever the cart powers
-//                        EN ──[100k]── GND
-//
-//     CART_LIVE (in) ◄──[1k]── cart heartbeat pin
-//             │
-//          [100k]
-//             │
-//            GND
-//
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// WHY A HEARTBEAT AND NOT A LEVEL
+// THE SWITCH
 // -----------------------------------------------------------------------------------------------------------------------------------------
 //
-// The obvious design is a line the cart holds high while it is working. It does not work, and the
-// reason is the reason every watchdog wants a kick rather than a flag: A LEVEL SAYS THAT SOMETHING
+//     5V ─────┬─────────────────────────┬──────────────────────────────────────► this node (always on)
+//             │                         │
+//         [R1 100k]                 ┌───┴───┐
+//             │                     │   S   │ Q1  P-MOSFET, LOGIC LEVEL, >=2A. AO3401 / DMG3415 (SOT-23),
+//             ├─────────────────────┤ G     │
+//             │                     │   D   │  NDP6020P (TO-220) if you would rather solder something
+//         [C1 1u]                   └───┬───┘  you can hold. Oversized here and none the worse for it.
+//             │                         │
+//             ├──[R4 10k]──┐            ├──────────┬───────────────────► SW_5V ──► cart + whatever it powers
+//             │            │            │          │
+//             │        ┌───┴───┐    [C2 100u]  [C3 100n]
+//             │        │   C   │        │          │
+//             │        │       │ Q2     └────┬─────┘
+//             │        │   E   │ NPN 2N2222A │
+//             │        └─┬───┬─┘            GND
+//             │          │   │
+//            5V         GND  └──[R2 10k]──┬── CART_PWR  (out, this node)
+//                                         │
+//                                     [R3 100k]
+//                                         │
+//                                        GND
+//
+//     cart cartbeat pin ──[R5 1k]────┬──────────────────────────────────────────► CART_LIVE (in, this node)
+//                                   │
+//                               [R6 100k]
+//                                   │
+//                                  GND
+//
+//     cart GND ─────────────────────────────────────────────────────────────────── node GND   (common, required)
+//
+// WHY A P-FET ON THE HIGH SIDE and not a cheaper N-FET in the ground leg: the cart's ground has to
+// stay tied to ours, because the cartbeat is a signal referenced to it. Switch the low side and the
+// cart's ground floats up when it is off, its cartbeat pin sits at an undefined potential relative
+// to our input, and current finds its way home through the signal wire instead.
+//
+// WHY BOTH R1 AND R3, which look redundant and are not. R1 holds the gate AT the source, which is
+// what OFF means for a P-FET; R3 holds Q2's base down. Between this node powering up and cart_init()
+// running, CART_PWR is an input and drives nothing, so without R3 the base floats and Q2 is at the
+// mercy of leakage -- and R1 alone cannot help, because it is Q2 that decides whether the gate is
+// pulled down. Each one covers a different half of "off unless we say otherwise", and that state has
+// to hold through reset, flashing, brownout and the moments before any code runs.
+//
+// LOGIC LEVEL IS THE ONE SPECIFICATION THAT MATTERS on Q1. The gate swings to about -4.8V here
+// (source at 5V, gate pulled down to Q2's saturation voltage), so a part characterised only at
+// Vgs = -10V sits PARTLY enhanced -- warm, and worse, variably on. Look for an Rds(on) figure quoted
+// at Vgs = -4.5V; everything else on the datasheet is margin, since 5V and 2A are nowhere near what
+// any of these parts are rated for. No gate zener: Vgs(max) is ±20V against a 5V swing.
+//
+// WHY C1 AND R4 -- the soft start, and the reason this is not just a transistor. A board and a modem
+// coming up together pull an inrush that the shared supply feels; unchecked it can brown out the
+// node doing the switching, which drops CART_PWR, which cuts the cart mid-boot, which looks exactly
+// like a cart that failed to boot. R4 limits how fast Q2 can discharge the gate and C1 sets the
+// ramp: ~10ms here, which is slow next to an inrush and instant next to a boot. Turn-OFF runs
+// through R1 alone (~100ms) and that slowness is harmless -- nothing is waiting on it.
+//
+// A BIGGER FET MAKES THE SOFT START MORE IMPORTANT, not less, which is the opposite of the instinct:
+// a part rated at tens of amps will pass a far larger surge before anything in it limits the
+// current. The timings do not change when you substitute one, though -- C1 at 1uF swamps any of
+// these parts' gate capacitance (~1-2nF), so the ramp stays where it is drawn.
+//
+// WHY C2 AT THE LOAD: the modem's transmit peaks are much faster than anything upstream can answer,
+// and they are what resets a board over long thin wiring. Put the bulk where the current is drawn.
+//
+// WHY R5 AND R6 ON THE INPUT. R6 is load-bearing: the cart's pin is an unpowered high-impedance node
+// for almost all of this module's life, and a floating input beside a switching supply will read as
+// a cartbeat -- which is to say, as a cart that is alive. hw_gpio_cfg_enable_input() enables no
+// internal pull-down and an internal one would not survive deep sleep. R5 only limits what flows if
+// the two ends ever drive against each other.
+//
+// Values are a starting point, not a design: any logic-level P-FET rated well past the load will do,
+// and the resistors are ordinary. A packaged load switch with an enable pin and adjustable soft-start
+// replaces Q1/Q2/R1/R4/C1 entirely and is worth it if the board is being laid out rather than wired.
+//
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// WHY A CARTBEAT AND NOT A LEVEL
+// -----------------------------------------------------------------------------------------------------------------------------------------
+//
+// The cart beats a pin -- a CARTBEAT, which is a heartbeat from something you tow.
+//
+// The obvious design is the other one: a line the cart holds high while it is working. It does not
+// work, and the reason is the reason every watchdog wants a kick rather than a flag: A LEVEL SAYS THAT SOMETHING
 // SET THE PIN. AN EDGE RATE SAYS THAT SOFTWARE IS STILL RUNNING. A cart that wedges with its pin
 // high is indistinguishable from one that is busy, and it is precisely the wedged one you are
 // switching the power for.
@@ -84,7 +151,7 @@
 // all of those, because a GPIO is an input in every one of them.
 //
 // A PULL-DOWN ON CART_LIVE, ON THIS SIDE. The cart's pin floats while the cart is unpowered, and a
-// floating input next to a switching supply will read as a heartbeat. hw_gpio_cfg_enable_input()
+// floating input next to a switching supply will read as a cartbeat. hw_gpio_cfg_enable_input()
 // does not turn on an internal pull-down and an internal one would not survive deep sleep anyway,
 // so it has to be a resistor. The series resistor limits what flows if the cart ever drives the
 // line while this node holds it.
@@ -129,7 +196,7 @@ static const char *__tag_cart = "cart";
    that boots in two seconds or runs for a day wants its own numbers. */
 typedef struct {
     gpio_num_t pin_power; /* out -> load switch EN. High = the cart has power.                     */
-    gpio_num_t pin_live;  /* in  <- the cart's heartbeat. Needs an external pull-down (above).      */
+    gpio_num_t pin_live;  /* in  <- the CARTBEAT. Needs an external pull-down (above).              */
 
     uint32_t interval_ms; /* between windows, measured from the last CUT, not the last open        */
     uint32_t boot_ms;     /* the first beat must arrive within this of power-on                    */
@@ -226,7 +293,7 @@ typedef struct {
     cart_state_t state;
 
     bool live_level;       /* the last sample, for change detection                */
-    uint32_t live_edge_ms; /* when it last CHANGED -- the heartbeat, in one number  */
+    uint32_t live_edge_ms; /* when it last CHANGED -- the cartbeat, in one number   */
     uint8_t live_beats;    /* changes this window, saturating at CART_BEATS_MIN     */
     bool live_seen;        /* has it beaten ENOUGH to count as alive                */
 
@@ -341,7 +408,7 @@ static inline void cart_close(cart_t *const c, const uint32_t now_ms, const char
 /*
  * Sample, then decide. One event per call at most.
  *
- * The sample is a CHANGE, not a level, and the whole heartbeat reduces to one number: when the pin
+ * The sample is a CHANGE, not a level, and the whole cartbeat reduces to one number: when the pin
  * last differed from what it was. Everything else is a comparison against that -- which is why the
  * beat rate does not have to be configured, only an outside bound on how long silence may last.
  */

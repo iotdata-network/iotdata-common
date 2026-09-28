@@ -18,7 +18,7 @@ typedef int gpio_num_t;
 #define GPIO_NUM_NC (-1)
 
 static bool g_pin_out;  /* what the module drives: the load switch enable */
-static bool g_pin_in;   /* what the cart drives: the heartbeat            */
+static bool g_pin_in;   /* what the cart drives: the cartbeat             */
 static int g_out_edges; /* how many times the power actually changed      */
 
 static void hw_gpio_cfg_enable_output(const gpio_num_t pin) {
@@ -113,7 +113,7 @@ int main(void) {
     CHECK(run_ms(&c, 3000u, 0) == CART_EVENT_OPENED, "then it opens on its own");
     CHECK(g_pin_out, "and the rail is live");
 
-    printf("\nA LEVEL IS NOT A HEARTBEAT: a pin stuck high reads as dead, not as working\n");
+    printf("\nA LEVEL IS NOT A CARTBEAT: a pin stuck high reads as dead, not as working\n");
     g_pin_in = true; /* and never changes again -- the wedged-cart case */
     CHECK(run_ms(&c, cfg.boot_ms + 500u, 0) == CART_EVENT_NO_BOOT, "the boot deadline still fires");
     CHECK(!g_pin_out, "and the power went off");
@@ -126,7 +126,7 @@ int main(void) {
     CHECK(run_ms(&c, 1000u, 500u) == CART_EVENT_LIVE, "it spoke");
     CHECK(c.state == CART_RUNNING, "so it is running");
 
-    printf("\nAND IT STAYS UP WHILE IT KEEPS BEATING -- the heartbeat IS the hold-open\n");
+    printf("\nAND IT STAYS UP WHILE IT KEEPS BEATING -- the cartbeat IS the hold-open\n");
     /* well past the boot deadline and several times the silence bound: only the beat holds it */
     CHECK(run_ms(&c, 8000u, 500u) == CART_EVENT_NONE, "no event while it works");
     CHECK(g_pin_out && c.state == CART_RUNNING, "still powered, still running");
