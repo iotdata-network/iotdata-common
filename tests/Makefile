@@ -60,6 +60,10 @@ test:
 	@$(TEST_DIR)/test_node_config_string
 	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_settings_console.c -o $(TEST_DIR)/test_node_settings_console -lm
 	@$(TEST_DIR)/test_node_settings_console
+# a device header, which is unusual here: it is testable on the host because its whole seam is one
+# gpio pair and a clock, both of which a test can own outright.
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_interface_cart.c -o $(TEST_DIR)/test_interface_cart -lm
+	@$(TEST_DIR)/test_interface_cart
 
 test-clean:
 	@rm -rf $(TEST_DIR)
