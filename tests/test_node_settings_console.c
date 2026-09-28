@@ -120,6 +120,37 @@ int main(void) {
         CHECK(iotdata_settings_period_s(&back, IOTDATA_NODE_TLV_STATUS) == 0, "with the rest of it");
     }
 
+    printf("\nMANY BLOCKS ON ONE NODE: its own tag, and its own defaults to go back to\n");
+    {
+        /* what a simulator pretending to be a fleet needs, and what the plain attach() cannot do:
+           one tag would register both under the same name, and one frozen defaults image would
+           hand BOTH blocks the last one's values on a restore. */
+        static iotdata_node_state_t s3;
+        static iotdata_settings_t a, b, a_dflt, b_dflt;
+        iotdata_state_init(&s3, &ds, "fleet");
+        iotdata_settings_defaults(&a, 0x101);
+        iotdata_settings_defaults(&b, 0x202);
+        CHECK(iotdata_settings_attach_as(&a, &s3, 0x53530101u, &a_dflt), "one");
+        CHECK(iotdata_settings_attach_as(&b, &s3, 0x53530202u, &b_dflt), "and another");
+        CHECK(a_dflt.station == 0x101 && b_dflt.station == 0x202, "each froze ITS OWN defaults, not the last one's");
+
+        a.station = 0x111;
+        b.station = 0x222;
+        CHECK(iotdata_settings_commit(&a, &s3), "written");
+        {
+            static iotdata_node_state_t s4;
+            static iotdata_settings_t a2, b2, a2_dflt, b2_dflt;
+            iotdata_state_init(&s4, &ds, "fleet");
+            iotdata_settings_defaults(&a2, 0x101);
+            iotdata_settings_defaults(&b2, 0x202);
+            CHECK(iotdata_settings_attach_as(&a2, &s4, 0x53530101u, &a2_dflt), "re-attached");
+            CHECK(iotdata_settings_attach_as(&b2, &s4, 0x53530202u, &b2_dflt), "both");
+            (void)iotdata_state_load(&s4);
+            CHECK(iotdata_settings_station(&a2) == 0x111, "each came back as itself");
+            CHECK(iotdata_settings_station(&b2) == 0x222, "and not as the other");
+        }
+    }
+
     printf("\nand a node with nowhere to write says so rather than pretending\n");
     iotdata_settings_console_attach(&settings, NULL);
     node(NULL, NULL, NULL, NULL);

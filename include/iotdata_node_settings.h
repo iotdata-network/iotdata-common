@@ -172,6 +172,13 @@ static inline bool iotdata_settings_attach(iotdata_settings_t *const s, iotdata_
     return iotdata_state_insert(state, IOTDATA_SETTINGS_STATE_TAG, IOTDATA_SETTINGS_STATE_VERSION, s, sizeof(*s), &_iotdata_settings_default);
 }
 
+static inline bool iotdata_settings_attach_as(iotdata_settings_t *const s, iotdata_node_state_t *const state, const uint32_t tag, iotdata_settings_t *const defaults) {
+    if (s == NULL || state == NULL || defaults == NULL)
+        return false;
+    *defaults = *s;
+    return iotdata_state_insert(state, tag, IOTDATA_SETTINGS_STATE_VERSION, s, sizeof(*s), defaults);
+}
+
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline const iotdata_settings_report_t *iotdata_settings_report_find(const iotdata_settings_t *const s, const uint8_t subject) {
