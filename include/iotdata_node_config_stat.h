@@ -98,8 +98,8 @@ static inline bool iotdata_config_stat_changed(__attribute__((unused)) const iot
    how much you want to know and the topic is a decision about a broker's namespace; a node that
    publishes over something else keeps the first and has no use for the second. */
 #define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_MQTT(X) \
-    X(STAT_PUBLISH_MQTT_TOPIC_PREFIX, IOTDATA_CFGID_STAT_PUBLISH_MQTT_TOPIC, STRING, 1, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC, \
-      IOTDATA_CONFIG_FLAG_LOCAL | IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_STAT_NOTIFY, "the topic the counters are published under")
+    X(STAT_PUBLISH_MQTT_TOPIC_PREFIX, IOTDATA_CFGID_STAT_PUBLISH_MQTT_TOPIC, STRING, 1, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC, IOTDATA_CONFIG_FLAG_LOCAL | IOTDATA_CONFIG_FLAG_REBOOT, NULL, \
+      IOTDATA_CONFIG_STAT_NOTIFY, "the topic the counters are published under")
 
 /* Only a node with a table of other stations to show.
  *

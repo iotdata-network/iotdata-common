@@ -331,10 +331,18 @@ __attribute__((unused)) static void _iotdata_config_ids_are_unique(const int x) 
     }
 }
 
-enum { IOTDATA_CONFIG_ENTRIES(_CFG_ID) _IOTDATA_CFG_ID_END };
-enum { IOTDATA_CONFIG_ENTRIES(_CFG_TYPE) _IOTDATA_CFG_TYPE_END };
-enum { IOTDATA_CONFIG_ENTRIES(_CFG_IX) IOTDATA_CFG_COUNT };
-enum { IOTDATA_CONFIG_ENTRIES(_CFG_SIX) IOTDATA_CFG_STRING_COUNT };
+enum {
+    IOTDATA_CONFIG_ENTRIES(_CFG_ID) _IOTDATA_CFG_ID_END
+};
+enum {
+    IOTDATA_CONFIG_ENTRIES(_CFG_TYPE) _IOTDATA_CFG_TYPE_END
+};
+enum {
+    IOTDATA_CONFIG_ENTRIES(_CFG_IX) IOTDATA_CFG_COUNT
+};
+enum {
+    IOTDATA_CONFIG_ENTRIES(_CFG_SIX) IOTDATA_CFG_STRING_COUNT
+};
 
 /* One member per string row, each the length that row declared. All char arrays, so alignment is 1
    and sizeof is the exact sum -- this struct IS the aggregate cost, and it is readable in a map. */
@@ -1042,8 +1050,8 @@ static inline void _iotdata_config_show(const iotdata_console_emit_fn emit, cons
         if (_iotdata_config_pinned[i])
             emit("  PINNED on the command line -- restart without that argument to change it\n");
     } else
-        emit("  %-32s = %-12s [0x%03X %s%s%s%s%s]\n", row->name, val, (unsigned)row->id, _iotdata_config_type_name(row->type), (row->flags & IOTDATA_CONFIG_FLAG_READONLY) ? " ro" : "", (row->flags & IOTDATA_CONFIG_FLAG_LOCAL) ? " local" : "",
-             (row->flags & IOTDATA_CONFIG_FLAG_REBOOT) ? " reboot" : "", _iotdata_config_pinned[i] ? " pinned" : "");
+        emit("  %-32s = %-12s [0x%03X %s%s%s%s%s]\n", row->name, val, (unsigned)row->id, _iotdata_config_type_name(row->type), (row->flags & IOTDATA_CONFIG_FLAG_READONLY) ? " ro" : "",
+             (row->flags & IOTDATA_CONFIG_FLAG_LOCAL) ? " local" : "", (row->flags & IOTDATA_CONFIG_FLAG_REBOOT) ? " reboot" : "", _iotdata_config_pinned[i] ? " pinned" : "");
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

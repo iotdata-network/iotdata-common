@@ -101,8 +101,7 @@ static inline bool iotdata_config_bbox_changed(__attribute__((unused)) const iot
 #define IOTDATA_CONFIG_ENTRIES_BBOX_FILE(X) \
     X(BLACKBOX_FILE_DIRECTORY, IOTDATA_CFGID_BBOX_FILE_DIRECTORY, STRING, 1, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY_MAX, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY, IOTDATA_CONFIG_FLAG_LOCAL | IOTDATA_CONFIG_FLAG_REBOOT, NULL, \
       IOTDATA_CONFIG_BBOX_NOTIFY, "the directory the record file is written in") \
-    X(BLACKBOX_FILE_GENERATIONS, IOTDATA_CFGID_BBOX_FILE_GENERATIONS, U8, 0, 255, IOTDATA_CONFIG_BBOX_FILE_GENERATIONS, 0, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, \
-      "rotated files to keep behind the active one (0 = overwrite, keeping nothing)")
+    X(BLACKBOX_FILE_GENERATIONS, IOTDATA_CFGID_BBOX_FILE_GENERATIONS, U8, 0, 255, IOTDATA_CONFIG_BBOX_FILE_GENERATIONS, 0, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "rotated files to keep behind the active one (0 = overwrite, keeping nothing)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

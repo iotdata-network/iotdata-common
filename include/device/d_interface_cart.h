@@ -197,8 +197,8 @@ typedef struct {
 
 #define CART_CONFIG_DEFAULTS(power, live) \
     (cart_config_t) { \
-        .pin_power = (power), .pin_live = (live), .interval_ms = CART_INTERVAL_MS_DEFAULT, .boot_ms = CART_BOOT_MS_DEFAULT, .silent_ms = CART_SILENT_MS_DEFAULT, .settle_ms = CART_SETTLE_MS_DEFAULT, \
-        .limit_ms = CART_LIMIT_MS_DEFAULT, .retry_ms = CART_RETRY_MS_DEFAULT, .retry_max = CART_RETRY_MAX_DEFAULT \
+        .pin_power = (power), .pin_live = (live), .interval_ms = CART_INTERVAL_MS_DEFAULT, .boot_ms = CART_BOOT_MS_DEFAULT, .silent_ms = CART_SILENT_MS_DEFAULT, .settle_ms = CART_SETTLE_MS_DEFAULT, .limit_ms = CART_LIMIT_MS_DEFAULT, \
+        .retry_ms = CART_RETRY_MS_DEFAULT, .retry_max = CART_RETRY_MAX_DEFAULT \
     }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -230,9 +230,9 @@ typedef struct {
     uint8_t live_beats;    /* changes this window, saturating at CART_BEATS_MIN     */
     bool live_seen;        /* has it beaten ENOUGH to count as alive                */
 
-    uint32_t opened_ms;   /* when the power went on                                */
-    uint32_t closed_ms;   /* when it last went off; the interval runs from here    */
-    uint32_t quiet_ms;    /* when the beat was last judged to have stopped         */
+    uint32_t opened_ms; /* when the power went on                                */
+    uint32_t closed_ms; /* when it last went off; the interval runs from here    */
+    uint32_t quiet_ms;  /* when the beat was last judged to have stopped         */
 
     uint8_t fails; /* consecutive windows that produced nothing useful             */
 
@@ -243,23 +243,35 @@ typedef struct {
 
 static inline const char *cart_state_str(const cart_state_t s) {
     switch (s) {
-    case CART_OFF: return "off";
-    case CART_BOOTING: return "booting";
-    case CART_RUNNING: return "running";
-    case CART_SETTLING: return "settling";
-    default: return "?";
+    case CART_OFF:
+        return "off";
+    case CART_BOOTING:
+        return "booting";
+    case CART_RUNNING:
+        return "running";
+    case CART_SETTLING:
+        return "settling";
+    default:
+        return "?";
     }
 }
 
 static inline const char *cart_event_str(const cart_event_t e) {
     switch (e) {
-    case CART_EVENT_NONE: return "none";
-    case CART_EVENT_OPENED: return "opened";
-    case CART_EVENT_LIVE: return "live";
-    case CART_EVENT_CLOSED: return "closed";
-    case CART_EVENT_NO_BOOT: return "no-boot";
-    case CART_EVENT_OVERRAN: return "overran";
-    default: return "?";
+    case CART_EVENT_NONE:
+        return "none";
+    case CART_EVENT_OPENED:
+        return "opened";
+    case CART_EVENT_LIVE:
+        return "live";
+    case CART_EVENT_CLOSED:
+        return "closed";
+    case CART_EVENT_NO_BOOT:
+        return "no-boot";
+    case CART_EVENT_OVERRAN:
+        return "overran";
+    default:
+        return "?";
     }
 }
 
@@ -282,8 +294,8 @@ static inline void cart_init(cart_t *const c, const cart_config_t *const cfg, co
     c->state = CART_OFF;
     c->closed_ms = now_ms; /* the first window is one interval away, not immediate */
     c->live_level = hw_gpio_get(c->cfg.pin_live);
-    ESP_LOGI(__tag_cart, "init: power=%d live=%d, every %us, boot %us, silent %us, settle %us, limit %us", (int)c->cfg.pin_power, (int)c->cfg.pin_live, (unsigned)(c->cfg.interval_ms / 1000u),
-             (unsigned)(c->cfg.boot_ms / 1000u), (unsigned)(c->cfg.silent_ms / 1000u), (unsigned)(c->cfg.settle_ms / 1000u), (unsigned)(c->cfg.limit_ms / 1000u));
+    ESP_LOGI(__tag_cart, "init: power=%d live=%d, every %us, boot %us, silent %us, settle %us, limit %us", (int)c->cfg.pin_power, (int)c->cfg.pin_live, (unsigned)(c->cfg.interval_ms / 1000u), (unsigned)(c->cfg.boot_ms / 1000u),
+             (unsigned)(c->cfg.silent_ms / 1000u), (unsigned)(c->cfg.settle_ms / 1000u), (unsigned)(c->cfg.limit_ms / 1000u));
 }
 
 static inline bool cart_is_open(const cart_t *const c) {
@@ -407,7 +419,8 @@ static inline cart_event_t cart_tick(cart_t *const c, const uint32_t now_ms) {
         }
         return CART_EVENT_NONE;
 
-    default: return CART_EVENT_NONE;
+    default:
+        return CART_EVENT_NONE;
     }
 }
 

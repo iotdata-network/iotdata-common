@@ -13,7 +13,12 @@ typedef enum {
     LORA_MODULE_USB = 1,
 } lora_module_t;
 
-typedef enum { LORA_MODE_NORMAL, LORA_MODE_WAKE_ON_RECEIVE, LORA_MODE_CONFIG, LORA_MODE_DEEP_SLEEP } lora_mode_t;
+typedef enum {
+    LORA_MODE_NORMAL,
+    LORA_MODE_WAKE_ON_RECEIVE,
+    LORA_MODE_CONFIG,
+    LORA_MODE_DEEP_SLEEP
+} lora_mode_t;
 
 #define LORA_E22_ADDRESS_DEFAULT            0x0008
 #define LORA_E22_NETWORK_DEFAULT            0x00

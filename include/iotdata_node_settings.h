@@ -605,8 +605,7 @@ static inline void _iotdata_settings_show_report(const iotdata_console_emit_fn e
         emit("%-8u", (unsigned)r->period_s);
     else
         emit("%-8s", "never");
-    emit(" on-change=%-3s on-event=%s%s\n", (r->flags & IOTDATA_NODE_REPORT_ON_CHANGE) ? "on" : "off", (r->flags & IOTDATA_NODE_REPORT_ON_EVENT) ? "on" : "off",
-         iotdata_settings_report_is_pinned(subject) ? "  PINNED" : "");
+    emit(" on-change=%-3s on-event=%s%s\n", (r->flags & IOTDATA_NODE_REPORT_ON_CHANGE) ? "on" : "off", (r->flags & IOTDATA_NODE_REPORT_ON_EVENT) ? "on" : "off", iotdata_settings_report_is_pinned(subject) ? "  PINNED" : "");
 }
 
 static void iotdata_settings_console(const iotdata_console_emit_fn emit, const int argc, char **const argv) {

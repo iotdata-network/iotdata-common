@@ -30,9 +30,19 @@
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-typedef enum { FILTER_BLOCK = 0, FILTER_ALLOW = 1 } filter_action_t;
-typedef enum { FILTER_MANUAL = 0, FILTER_AUTO = 1 } filter_source_t;
-typedef enum { FILTER_SCOPE_ALL = 0, FILTER_SCOPE_MANUAL = 1, FILTER_SCOPE_AUTO = 2 } filter_scope_t;
+typedef enum {
+    FILTER_BLOCK = 0,
+    FILTER_ALLOW = 1
+} filter_action_t;
+typedef enum {
+    FILTER_MANUAL = 0,
+    FILTER_AUTO = 1
+} filter_source_t;
+typedef enum {
+    FILTER_SCOPE_ALL = 0,
+    FILTER_SCOPE_MANUAL = 1,
+    FILTER_SCOPE_AUTO = 2
+} filter_scope_t;
 
 typedef struct {
     uint16_t station;

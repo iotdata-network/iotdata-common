@@ -122,8 +122,7 @@ static inline bool iotdata_config_mesh_changed(__attribute__((unused)) const iot
     /* KEEPING THEIR 0x04x IDS while sitting in the 0x05x group, because an id is fixed for the life \
        of the fleet and a row that moved between groups is still the same row. Renumbering them to \
        look tidy would strand every cached name->id map and every hex dump anybody has read. */ \
-    X(MESH_PEER_TTL_ROUNDS, IOTDATA_CFGID_MESH_PEER_TTL_ROUNDS, U8, 1, 60, IOTDATA_CONFIG_MESH_PEER_TTL_ROUNDS, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, \
-      "forget a peer after this many of the root's beacon rounds without hearing it") \
+    X(MESH_PEER_TTL_ROUNDS, IOTDATA_CFGID_MESH_PEER_TTL_ROUNDS, U8, 1, 60, IOTDATA_CONFIG_MESH_PEER_TTL_ROUNDS, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "forget a peer after this many of the root's beacon rounds without hearing it") \
     X(MESH_TTL_INIT, IOTDATA_CFGID_MESH_TTL_INIT, U8, 1, IOTDATA_MESH_TTL_MAX, IOTDATA_CONFIG_MESH_TTL_INIT, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how many hops a frame we originate may take") \
     X(MESH_PARENT_MISS_ROUNDS, IOTDATA_CFGID_MESH_PARENT_MISS_ROUNDS, U8, 1, 60, IOTDATA_CONFIG_MESH_PARENT_MISS_ROUNDS, 0, iotdata_config_mesh_parent_miss_ok, IOTDATA_CONFIG_MESH_NOTIFY, \
       "declare the parent lost after this many of its beacon rounds are missed") \
