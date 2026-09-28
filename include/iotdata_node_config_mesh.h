@@ -8,9 +8,17 @@
 //
 // THREE GROUPS, BECAUSE THERE ARE THREE AUDIENCES and a row belongs to exactly one of them:
 //
-//     IOTDATA_CONFIG_ENTRIES_MESH(X)           what any mesh participant has
+//     IOTDATA_CONFIG_ENTRIES_MESH(X)           what any mesh participant has, which turns out to be
+//                                              only two things: whether it meshes, and whether it
+//                                              says so in the log
 //     IOTDATA_CONFIG_ENTRIES_MESH_RELAY(X)     what only a relay has -- it has a PARENT to lose,
-//                                              a beacon to rebroadcast, and frames to forward
+//                                              a beacon to rebroadcast, frames to forward, and a
+//                                              PEER TABLE to age out. The peer TTL and the initial
+//                                              TTL started in the group above and did not belong
+//                                              there: a root keeps no peer table (its station table
+//                                              is a different thing, holding sensors that never
+//                                              mesh) and originates no FORWARD, so both were rows
+//                                              it carried and nothing read.
 //     IOTDATA_CONFIG_ENTRIES_MESH_GATEWAY(X)   what only the root has -- it SETS the tree's cadence
 //
 // A group is a macro, not a table, so one file can hold all three and each application composes
@@ -76,12 +84,14 @@
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static bool iotdata_config_mesh_jitter_min_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
-static bool iotdata_config_mesh_jitter_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
-static bool iotdata_config_mesh_backoff_min_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
-static bool iotdata_config_mesh_backoff_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
-static bool iotdata_config_mesh_parent_timeout_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
-static bool iotdata_config_mesh_ack_backoff_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+__attribute__((unused)) static bool iotdata_config_mesh_jitter_min_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+__attribute__((unused)) static bool iotdata_config_mesh_jitter_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+__attribute__((unused)) static bool iotdata_config_mesh_backoff_min_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+__attribute__((unused)) static bool iotdata_config_mesh_backoff_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+__attribute__((unused)) static bool iotdata_config_mesh_parent_timeout_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+__attribute__((unused)) static bool iotdata_config_mesh_ack_backoff_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #ifndef IOTDATA_CONFIG_MESH_NOTIFY
 static inline bool iotdata_config_mesh_changed(__attribute__((unused)) const iotdata_config_row_t *const row, __attribute__((unused)) const iotdata_config_value_t *const was,
@@ -96,12 +106,15 @@ static inline bool iotdata_config_mesh_changed(__attribute__((unused)) const iot
 /* 0x040-0x04F -- any mesh participant */
 #define IOTDATA_CONFIG_ENTRIES_MESH(X) \
     X(MESH_ENABLE, IOTDATA_CFGID_MESH_ENABLE, BOOL, 0, 1, IOTDATA_CONFIG_MESH_ENABLE, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "take part in the mesh at all") \
-    X(MESH_DEBUG, IOTDATA_CFGID_MESH_DEBUG, BOOL, 0, 1, IOTDATA_CONFIG_MESH_DEBUG, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "log every mesh decision") \
-    X(MESH_PEER_TTL_MS, IOTDATA_CFGID_MESH_PEER_TTL_MS, U32, 1000, 3600000, IOTDATA_CONFIG_MESH_PEER_TTL_MS, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "forget a peer not heard from for this long") \
-    X(MESH_TTL_INIT, IOTDATA_CFGID_MESH_TTL_INIT, U8, 1, IOTDATA_MESH_TTL_MAX, IOTDATA_CONFIG_MESH_TTL_INIT, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how many hops a frame we originate may take")
+    X(MESH_DEBUG, IOTDATA_CFGID_MESH_DEBUG, BOOL, 0, 1, IOTDATA_CONFIG_MESH_DEBUG, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "log every mesh decision")
 
 /* 0x050-0x05F -- a relay: it has a parent to lose, a beacon to rebroadcast, frames to forward */
 #define IOTDATA_CONFIG_ENTRIES_MESH_RELAY(X) \
+    /* KEEPING THEIR 0x04x IDS while sitting in the 0x05x group, because an id is fixed for the life \
+       of the fleet and a row that moved between groups is still the same row. Renumbering them to \
+       look tidy would strand every cached name->id map and every hex dump anybody has read. */ \
+    X(MESH_PEER_TTL_MS, IOTDATA_CFGID_MESH_PEER_TTL_MS, U32, 1000, 3600000, IOTDATA_CONFIG_MESH_PEER_TTL_MS, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "forget a peer not heard from for this long") \
+    X(MESH_TTL_INIT, IOTDATA_CFGID_MESH_TTL_INIT, U8, 1, IOTDATA_MESH_TTL_MAX, IOTDATA_CONFIG_MESH_TTL_INIT, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how many hops a frame we originate may take") \
     X(MESH_PARENT_TIMEOUT_MS, IOTDATA_CFGID_MESH_PARENT_TIMEOUT_MS, U32, 1000, 3600000, IOTDATA_CONFIG_MESH_PARENT_TIMEOUT_MS, 0, iotdata_config_mesh_parent_timeout_ok, IOTDATA_CONFIG_MESH_NOTIFY, \
       "declare the parent lost after this long without one of its beacons") \
     X(MESH_HYSTERESIS_DB, IOTDATA_CFGID_MESH_HYSTERESIS_DB, U8, 0, 30, IOTDATA_CONFIG_MESH_HYSTERESIS_DB, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how much stronger an equal-cost parent must be before switching to it") \
@@ -132,16 +145,31 @@ static inline bool iotdata_config_mesh_changed(__attribute__((unused)) const iot
     X(MESH_ACK_REQUEUE_MS, IOTDATA_CFGID_MESH_ACK_REQUEUE_MS, U32, 0, 600000, IOTDATA_CONFIG_MESH_ACK_REQUEUE_MS, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "wait before re-submitting a retry the radio could not take") \
     X(MESH_ACK_PARK_MS, IOTDATA_CFGID_MESH_ACK_PARK_MS, U32, 100, 600000, IOTDATA_CONFIG_MESH_ACK_PARK_MS, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how long a frame with its retries spent sleeps before being looked at again")
 
-/* 0x060-0x06F -- the root: it sets the tree's cadence, and has no parent to lose */
+/* 0x060-0x06F -- the root: it sets the tree's cadence, and has no parent to lose.
+ *
+ * ONE NUMBER, ON ONE BOX, BINDING THE WHOLE FLEET. A relay does not beacon on a timer -- it
+ * rebroadcasts once when what it advertises changes -- so this interval is how often every relay
+ * below hears anything at all, and every relay's ageing constant is derived from it (see the
+ * comments on MESH_PEER_TTL_MS and MESH_PARENT_TIMEOUT_MS in iotdata_node_mesh_tuning.h: "~5x a 60s
+ * beacon", "~3 missed 60s beacon rounds"). Those live in a DIFFERENT node's table, so no validator
+ * here can see them and nothing refuses a value that orphans the tree every round.
+ * Raising this without raising them is the failure. See iotdata-specs/NOTES_ISSUES.md, I.1. */
 #define IOTDATA_CONFIG_ENTRIES_MESH_GATEWAY(X) \
     X(MESH_BEACON_INTERVAL_S, IOTDATA_CFGID_MESH_BEACON_INTERVAL_S, U16, 5, 3600, IOTDATA_CONFIG_MESH_BEACON_INTERVAL_S, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how often the root beacons, which sets the whole tree's cadence")
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #endif /* IOTDATA_NODE_CONFIG_MESH_H */
 
-/* --- the second include, once the table has been expanded ------------------------------------ */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #if defined(IOTDATA_NODE_CONFIG_EXPANDED) && !defined(IOTDATA_NODE_CONFIG_MESH_APPLIED)
 #define IOTDATA_NODE_CONFIG_MESH_APPLIED
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static bool iotdata_config_mesh_ack_backoff_max_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
     iotdata_config_value_t base;
@@ -168,5 +196,8 @@ static bool iotdata_config_mesh_parent_timeout_ok(__attribute__((unused)) const 
     iotdata_config_value_t ttl;
     return iotdata_config_update_peek(u, IOTDATA_CFGID_MESH_PEER_TTL_MS, &ttl) && v->u <= ttl.u;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_MESH_APPLIED */

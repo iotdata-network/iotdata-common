@@ -74,6 +74,8 @@
 #define IOTDATA_CONFIG_ID_MAX         0x0FFFu
 #define IOTDATA_CONFIG_ID_PROPRIETARY 0x0800u /* the upper half of the id space is the vendor's */
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline uint16_t iotdata_config_rec(const uint16_t id, const uint8_t type) {
     return (uint16_t)(((id & IOTDATA_CONFIG_ID_MAX) << 4) | (type & 0x0Fu));
 }

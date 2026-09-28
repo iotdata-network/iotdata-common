@@ -25,6 +25,9 @@
 // Requires d_interface_e22900t22.h, for lora_config_t and the defaults below.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+#ifndef IOTDATA_CONFIG_LORA_MODULE
+#define IOTDATA_CONFIG_LORA_MODULE LORA_MODULE_DIP
+#endif
 #ifndef IOTDATA_CONFIG_LORA_ADDRESS
 #define IOTDATA_CONFIG_LORA_ADDRESS LORA_E22_ADDRESS_DEFAULT
 #endif
@@ -49,6 +52,9 @@
 #ifndef IOTDATA_CONFIG_LORA_CRYPT
 #define IOTDATA_CONFIG_LORA_CRYPT LORA_CRYPT_DEFAULT
 #endif
+#ifndef IOTDATA_CONFIG_LORA_DEBUG
+#define IOTDATA_CONFIG_LORA_DEBUG LORA_DEBUG_DEFAULT
+#endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -69,6 +75,8 @@ static inline bool iotdata_config_lora_packet_size_ok(__attribute__((unused)) co
     return v->u == 240u || v->u == 128u || v->u == 64u || v->u == 32u;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #ifndef IOTDATA_CONFIG_LORA_NOTIFY
 static inline bool iotdata_config_lora_changed(__attribute__((unused)) const iotdata_config_row_t *const row, __attribute__((unused)) const iotdata_config_value_t *const was,
                                                __attribute__((unused)) const iotdata_config_info_t *const info) {
@@ -88,7 +96,8 @@ static inline bool iotdata_config_lora_changed(__attribute__((unused)) const iot
     X(LORA_AIR_RATE, 0x034, U16, 300, 62500, IOTDATA_CONFIG_LORA_AIR_RATE, IOTDATA_CONFIG_FLAG_REBOOT, iotdata_config_lora_air_rate_ok, IOTDATA_CONFIG_LORA_NOTIFY, "on-air bit rate; lower reaches further and takes longer") \
     X(LORA_PACKET_SIZE, 0x035, U8, 32, 240, IOTDATA_CONFIG_LORA_PACKET_SIZE, IOTDATA_CONFIG_FLAG_REBOOT, iotdata_config_lora_packet_size_ok, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 sub-packet size in bytes") \
     X(LORA_LBT, 0x036, BOOL, 0, 1, IOTDATA_CONFIG_LORA_LBT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "listen before transmitting, so two radios do not talk over each other") \
-    X(LORA_CRYPT, 0x037, U16, 0, 0xFFFF, IOTDATA_CONFIG_LORA_CRYPT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 scrambling key (0 = off); obfuscation, not encryption")
+    X(LORA_CRYPT, 0x037, U16, 0, 0xFFFF, IOTDATA_CONFIG_LORA_CRYPT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 scrambling key (0 = off); obfuscation, not encryption") \
+    X(LORA_DEBUG, 0x038, BOOL, 0, 1, IOTDATA_CONFIG_LORA_DEBUG, IOTDATA_CONFIG_FLAG_REBOOT, NULL, NULL, "log what the radio is doing")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -101,11 +110,14 @@ static inline bool iotdata_config_lora_changed(__attribute__((unused)) const iot
 #if defined(IOTDATA_NODE_CONFIG_EXPANDED) && !defined(IOTDATA_NODE_CONFIG_DEVICE_E22900T22_APPLIED)
 #define IOTDATA_NODE_CONFIG_DEVICE_E22900T22_APPLIED
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline void iotdata_config_lora_apply(lora_config_t *const c) {
     if (c == NULL)
         return;
-    c->module = LORA_MODULE_DIP;
-    c->rssi_packet = LORA_RSSI_PACKET_DEFAULT; /* deliberately NOT settable: diagnostics, not policy */
+    c->module = IOTDATA_CONFIG_LORA_MODULE;
+    c->rssi_packet = LORA_RSSI_PACKET_DEFAULT;
     c->rssi_channel = LORA_RSSI_CHANNEL_DEFAULT;
     c->e22_address = iotdata_config_u16(LORA_ADDRESS);
     c->e22_network = iotdata_config_u8(LORA_NETWORK);
@@ -115,6 +127,7 @@ static inline void iotdata_config_lora_apply(lora_config_t *const c) {
     c->packet_size = iotdata_config_u8(LORA_PACKET_SIZE);
     c->listen_before_transmit = iotdata_config_bool(LORA_LBT);
     c->crypt = iotdata_config_u16(LORA_CRYPT);
+    c->debug = iotdata_config_bool(LORA_DEBUG);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

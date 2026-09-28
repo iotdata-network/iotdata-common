@@ -46,6 +46,8 @@
 #define IOTDATA_CONFIG_DOWN_REPEAT_MIN (IOTDATA_DOWN_REPEAT_MS_DEFAULT / 60000UL)
 #endif
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #ifndef IOTDATA_CONFIG_DOWN_NOTIFY
 static inline bool iotdata_config_down_changed(__attribute__((unused)) const iotdata_config_row_t *const row, __attribute__((unused)) const iotdata_config_value_t *const was,
                                                __attribute__((unused)) const iotdata_config_info_t *const info) {
@@ -54,6 +56,8 @@ static inline bool iotdata_config_down_changed(__attribute__((unused)) const iot
 #define IOTDATA_CONFIG_DOWN_NOTIFY iotdata_config_down_changed
 #endif
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* 0 is a real value and means "never expire", which the store already understands -- so the floor is
    0 and not 1, and an operator who wants a command to wait indefinitely can say so. */
 #define IOTDATA_CONFIG_ENTRIES_DOWN(X) \
@@ -61,12 +65,19 @@ static inline bool iotdata_config_down_changed(__attribute__((unused)) const iot
     X(DOWN_TTL_BCAST_MIN, IOTDATA_CFGID_DOWN_TTL_BCAST_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_BCAST_MIN, 0, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "the same for a broadcast, which is held for everyone at once") \
     X(DOWN_REPEAT_MIN, IOTDATA_CFGID_DOWN_REPEAT_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_REPEAT_MIN, 0, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "how long before a delivered command may be sent to a node again")
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #endif /* IOTDATA_NODE_CONFIG_DOWN_H */
 
-/* --- the second include, once the table has been expanded ------------------------------------ */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #if defined(IOTDATA_NODE_CONFIG_EXPANDED) && !defined(IOTDATA_NODE_CONFIG_DOWN_APPLIED)
 #define IOTDATA_NODE_CONFIG_DOWN_APPLIED
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Minutes out of the table, milliseconds into the store, which is what it counts in. The setters
    clamp to IOTDATA_DOWN_TTL_MS_MAX themselves, so the row bounds and the store agree by
@@ -78,5 +89,8 @@ static inline void iotdata_config_down_apply(iotdata_down_t *const ds) {
     iotdata_down_set_ttl_bcast_ms(ds, iotdata_config_u32(DOWN_TTL_BCAST_MIN) * 60000UL);
     iotdata_down_set_repeat_ms(ds, iotdata_config_u32(DOWN_REPEAT_MIN) * 60000UL);
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_DOWN_APPLIED */

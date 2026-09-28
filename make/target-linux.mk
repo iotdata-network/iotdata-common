@@ -41,7 +41,21 @@ CFLAGS_DEFINES += -DIOTDATA_VERSION_APP='"$(NAME)"' -DIOTDATA_VERSION_SEMVER='"$
 TEST_TARGET    ?= $(TARGET)_test
 TEST_LIBS      ?= $(LIBS)
 SOURCES_ALL    ?= $(MAIN) $(if $(TEST_MAIN),$(TEST_MAIN)) $(SOURCES_TARGET)
-TARGETS_ALL    ?= $(TARGET) $(if $(TEST_MAIN),$(TEST_TARGET))
+TARGETS_ALL    ?= $(TARGET) $(if $(TEST_MAIN),$(TEST_TARGET)) $(TARGET).d $(if $(TEST_MAIN),$(TEST_TARGET).d)
+
+# WHAT WAS ACTUALLY INCLUDED, asked of the compiler rather than listed by hand.
+#
+# SOURCES is a hand-kept list and it had drifted: the gateway's own iotdata_gateway_conf.h was not
+# in it, so editing the config table rebuilt NOTHING and `make test` then ran an old binary against
+# new headers and passed. A test that goes green because it did not rebuild is worse than a failing
+# one, and this is a header-only codebase -- almost every change is to a file no list mentions.
+#
+# -MMD writes the real prerequisites beside the binary; -MP adds a phony target for each header so
+# that DELETING or renaming one is not a hard error the next time round. SOURCES stays as the
+# first-build prerequisite and for `format`; from the second build on, the .d file is the truth.
+CFLAGS_DEPEND  ?= -MMD -MP
+-include $(TARGET).d
+$(if $(TEST_MAIN),$(eval -include $(TEST_TARGET).d))
 
 .DEFAULT_GOAL := all
 .PHONY: all clean format
@@ -53,7 +67,7 @@ all: $(TARGET)
 # VERSION at a release point would leave the binary reporting the old one, which is exactly the
 # kind of quiet lie the version report exists to prevent.
 $(TARGET): $(MAIN) $(SOURCES) $(MAKEFILE_LIST)
-	$(CC) $(CFLAGS) -o $(TARGET) $(MAIN) $(LDFLAGS) $(LIBS)
+	$(CC) $(CFLAGS) $(CFLAGS_DEPEND) -MF $(TARGET).d -o $(TARGET) $(MAIN) $(LDFLAGS) $(LIBS)
 
 clean:
 	rm -f $(TARGETS_ALL)
@@ -63,8 +77,8 @@ format:
 # --- optional unit test -------------------------------------------------------------------------
 ifdef TEST_MAIN
 .PHONY: test
-$(TEST_TARGET): $(TEST_MAIN) $(SOURCES)
-	$(CC) $(CFLAGS) -o $(TEST_TARGET) $(TEST_MAIN) $(LDFLAGS) $(TEST_LIBS)
+$(TEST_TARGET): $(TEST_MAIN) $(SOURCES) $(MAKEFILE_LIST)
+	$(CC) $(CFLAGS) $(CFLAGS_DEPEND) -MF $(TEST_TARGET).d -o $(TEST_TARGET) $(TEST_MAIN) $(LDFLAGS) $(TEST_LIBS)
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 endif

@@ -25,6 +25,7 @@ typedef enum { LORA_MODE_NORMAL, LORA_MODE_WAKE_ON_RECEIVE, LORA_MODE_CONFIG, LO
 #define LORA_CRYPT_DEFAULT                  0x0000
 #define LORA_RSSI_PACKET_DEFAULT            true
 #define LORA_RSSI_CHANNEL_DEFAULT           false
+#define LORA_DEBUG_DEFAULT                  false
 
 typedef struct {
     lora_module_t module;
@@ -38,6 +39,7 @@ typedef struct {
     uint16_t crypt;
     bool rssi_packet;
     bool rssi_channel;
+    bool debug;
 } lora_config_t;
 
 const lora_config_t lora_config_default = {
@@ -52,6 +54,7 @@ const lora_config_t lora_config_default = {
     .crypt = LORA_CRYPT_DEFAULT,
     .rssi_packet = LORA_RSSI_PACKET_DEFAULT,
     .rssi_channel = LORA_RSSI_CHANNEL_DEFAULT,
+    .debug = LORA_DEBUG_DEFAULT,
 };
 
 static inline uint8_t _lora_e22_air_data_rate(uint16_t rate) {

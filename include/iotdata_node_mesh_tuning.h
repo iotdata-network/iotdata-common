@@ -11,7 +11,10 @@
 #define IOTDATA_CONFIG_MESH_DEBUG 0
 #endif
 #ifndef IOTDATA_CONFIG_MESH_PEER_TTL_MS
-#define IOTDATA_CONFIG_MESH_PEER_TTL_MS 300000u /* ~5x a 60s beacon */
+/* ~5x a 60s beacon -- and "a 60s beacon" is the ROOT's interval, which is settable on the root and
+   invisible from here. Raising it there without raising this orphans every relay between rounds;
+   iotdata-specs/NOTES_ISSUES.md I.1 has the analysis and the options. */
+#define IOTDATA_CONFIG_MESH_PEER_TTL_MS 300000u
 #endif
 #ifndef IOTDATA_CONFIG_MESH_TTL_INIT
 #define IOTDATA_CONFIG_MESH_TTL_INIT IOTDATA_MESH_TTL_DEFAULT
