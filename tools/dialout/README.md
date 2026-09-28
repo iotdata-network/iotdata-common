@@ -156,6 +156,39 @@ Then hand that public key to the server once:
 dialout-server enrol iotdata-tst-2 /path/to/its.pub     # or pipe it on stdin
 ```
 
+### Is it still alive?
+
+`dialout-server clients` has a LAST SEEN column. A client fills it in with a **ping**: on a round that
+finds no invitation, it opens one short ssh to the server, whose only effect is that the forced command
+behind its key (`dialout-seen`) records the time. Nothing is sent and nothing comes back — being able
+to authenticate *is* the signal, and it is the signal worth having, because it says this box can reach
+the rendezvous. A box that can reach DNS but not the server is broken in the way that matters, and
+would look healthy under any scheme that had it write its liveness somewhere else.
+
+```sh
+dialout-server clients
+NAME                 TOKEN   PORT   INVITED  TUNNEL  LAST SEEN
+iotdata-rem-b827eb2878c0 6827cc  47432  no       -       7m
+iotdata-rem-50411c64b8fc 78fadb  47239  no       -       1m
+iotdata-rem-b827eb20b3d4 bfef5f  47355  no       -       -        # never pinged: older client
+```
+
+`ping-every` rations it, independently of how often rounds happen — the two have nothing to do with
+each other. `0` means every uninvited round, which suits a timer box where a round is already a rare
+event and the radio is up anyway. `12h`, the default, suits a watch box that comes round every 60s and
+would otherwise announce itself 1440 times a day for no added insight. A tunnel is not pinged: `ssh -N`
+opens no session, so the forced command cannot run on that path, and the server stamps those itself
+when it sees the tunnel appear — a live tunnel being the strongest liveness there is.
+
+It costs nothing in credentials, which is the point: it reuses the enrolled key, so a box someone
+walks off with still holds exactly one capability, and the server still decides what that key may run.
+The alternative — handing every remote box a Cloudflare token so it can write its own DNS record —
+would give each of them the run of the whole zone, including the SRV endpoint every other client
+trusts, because Cloudflare scopes DNS tokens to a zone and no finer.
+
+`install` rewrites existing enrolments to point at `dialout-seen` (it only touches `command="..."`,
+never the key). Older clients keep working untouched — they simply never ping, so they show `-`.
+
 Check either end at any time with `dialout-client check` / `dialout-server status`, and skip DNS
 entirely while testing with `dialout-client dial --endpoint host:port --force`.
 

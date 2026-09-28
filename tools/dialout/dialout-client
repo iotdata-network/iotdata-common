@@ -8,11 +8,17 @@
 # One run does exactly this, and stops at the first thing that says no:
 #
 #   0. link-script up, if set -- for a box whose network IS the dial-out (a 4G modem). Fails -> stop.
-#   1. read the invite list (DNS TXT). Not invited -> stop, having opened nothing.
+#   1. read the invite list (DNS TXT). Not invited -> ping, if one is due, then stop having opened
+#      no tunnel. The ping is one short ssh whose only effect is that the server records the time,
+#      so `dialout-server clients` can tell a quiet box from a dead one. See ping-every.
 #   2. read the endpoint (DNS SRV) -> host and port. No record -> stop.
 #   3. ssh -N -R <our port>:localhost:22 to it.
 #   4. hold, until the invite is withdrawn, or nothing has used it for `idle`, or hold-max.
 #   5. link-script down, on every path out including the early ones.
+#
+# An INVITED round is not pinged: the tunnel it opens is the strongest liveness there is, and the
+# server stamps that itself -- ssh -N opens no session, so the forced command behind our key cannot
+# run on that path.
 #
 # Steps 1 and 2 are two DNS lookups, and the normal answer is no: a client nobody is waiting for
 # does that every 12 hours and goes back to sleep. With a modem it costs a few seconds of radio
@@ -135,6 +141,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # the previous round's, remembered in one small file. Everything else is logged as always.
 QUIET=0
 last_file() { printf '%s/watch.last' "$(state_dir)"; }
+ping_file() { printf '%s/ping.last' "$(state_dir)"; }
 remember() { { mkdir -p "$(state_dir)" && printf '%s\n' "$1" >"$(last_file)"; } 2>/dev/null || true; }
 say_once() {
     _st=$1
@@ -349,6 +356,9 @@ dial() {
         [ -n "$(cfg dns-domain)" ] || die "dns-domain not set (and require-invite=1) -- $(cfg_hint)"
         invited "$_tok" || {
             say_once not-invited "not invited ($_name/$_tok) -- nothing to do"
+            # ...but say hello while the link is up, so a silent box is distinguishable from a dead
+            # one. An INVITED round needs no ping: the tunnel is stamped server-side when it appears.
+            ping_maybe
             exit 0
         }
         [ "$QUIET" = 0 ] || remember invited
@@ -493,6 +503,14 @@ check() {
     fi
     if invited "$_tok" 2>/dev/null; then printf 'invited       yes\n'; else printf 'invited       no\n'; fi
     printf 'key           %s\n' "$([ -f "$(key_file)" ] && key_file || echo '(none -- run keygen)')"
+    _pe=$(cfg ping-every 12h)
+    _pl=$(cat "$(ping_file)" 2>/dev/null || echo 0)
+    case $_pl in '' | *[!0-9]*) _pl=0 ;; esac
+    if [ "$_pl" = 0 ]; then
+        printf 'ping          every %s, none sent yet\n' "$_pe"
+    else
+        printf 'ping          every %s, last %ss ago\n' "$_pe" "$(($(date +%s) - _pl))"
+    fi
 }
 
 status() {
@@ -577,6 +595,64 @@ watch() {
 
 # interval_s <span> -- seconds for the simple systemd spans (90, 90s, 30min, 12h, 1d). Prints nothing
 # for anything fancier, which is then simply not checked.
+# The liveness ping: one short ssh that opens a SESSION, so the server's forced command records the
+# time (see dialout-seen). Nothing is sent and nothing comes back -- being able to authenticate IS
+# the signal, and it is the signal that matters, because it proves this box can reach the rendezvous
+# rather than merely that it can reach a DNS server.
+#
+# Rate-limited by ping-every, independently of how often a round happens: a watch box asking every
+# 60s does not want to announce itself 1440 times a day, while a timer box at 12h probably wants one
+# every round (ping-every=0). The tunnel path is not pinged -- ssh -N opens no session, so the
+# forced command never runs there, and the server stamps those itself when the tunnel appears.
+ping_maybe() {
+    _every=$(cfg ping-every 12h)
+    _secs=$(interval_s "$_every")
+    if [ -z "$_secs" ]; then
+        log "ping: cannot make sense of ping-every='$_every' -- skipping (try 0, 900, 30m, 12h)"
+        return 0
+    fi
+    if [ "$_secs" != 0 ]; then
+        _last=$(cat "$(ping_file)" 2>/dev/null || echo 0)
+        case $_last in '' | *[!0-9]*) _last=0 ;; esac
+        _age=$(($(date +%s) - _last))
+        if [ "$_age" -lt "$_secs" ]; then
+            [ "$QUIET" = 1 ] || log "ping: last one was ${_age}s ago, next after ${_secs}s"
+            return 0
+        fi
+    fi
+    # _ep comes from dial()'s --endpoint; defaulted so this is safe to call from anywhere under set -u
+    if [ -n "${_ep:-}" ]; then
+        _phost=${_ep%:*} _pport=${_ep##*:}
+        [ "$_phost" != "$_pport" ] || _pport=$(cfg port-external 47022)
+    else
+        _pr=$(endpoint) || {
+            log "ping: no SRV record at $(srv_name) -- skipping"
+            return 0
+        }
+        set -- $_pr
+        _phost=$1 _pport=$2
+    fi
+    _pkey=$(key_file)
+    [ -f "$_pkey" ] || {
+        log "ping: no key at $_pkey -- run keygen and enrol it"
+        return 0
+    }
+    # -n so it cannot eat the caller's stdin; whatever we ask to run is replaced by the forced command
+    if ssh -n -T \
+        -o StrictHostKeyChecking=accept-new \
+        -o UserKnownHostsFile="$(state_dir)/known_hosts" \
+        -o IdentitiesOnly=yes -i "$_pkey" \
+        -o ConnectTimeout="$(cfg connect-timeout 20)" \
+        -o BatchMode=yes \
+        -p "$_pport" "$(cfg ssh-user dialoutd)@$_phost" ping >/dev/null 2>&1; then
+        { mkdir -p "$(state_dir)" && date +%s >"$(ping_file)"; } 2>/dev/null || true
+        log "ping: seen by $_phost:$_pport"
+    else
+        log "ping: FAILED to $_phost:$_pport -- server down, unreachable, or this key is not enrolled"
+    fi
+    return 0
+}
+
 interval_s() {
     case "$1" in '' | *[!0-9a-z]*) return 0 ;; esac
     _num=${1%%[a-z]*}
