@@ -1,0 +1,134 @@
+// test_node_settings_console.c - the `node` console bridge: reading, writing, and the default.
+//
+// The thing worth pinning is that EVERY SETTING IS A VALUE. There is no unset, no revert and no
+// fallback: seeding fills the block, persistence restores it, a write replaces it. What the command
+// adds is the one thing the persisted blob cannot show -- what this build's default WAS, so that
+// putting a value back is a thing an operator can actually do, by stating it.
+
+#include <assert.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "iotdata.h"
+#include "iotdata_node.h"
+#include "iotdata_node_partial.h"
+
+#include "device/d_format.h"
+#include "device/d_module_datastore_linux.h"
+
+/* stand in for the console */
+#define IOTDATA_NODE_CONSOLE_H
+typedef void (*iotdata_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static char g_out[8192];
+static size_t g_out_len = 0;
+__attribute__((format(printf, 1, 2))) static void test_emit(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    g_out_len += (size_t)vsnprintf(g_out + g_out_len, sizeof(g_out) - g_out_len, fmt, ap);
+    va_end(ap);
+}
+static bool said(const char *n) {
+    return strstr(g_out, n) != NULL;
+}
+
+#include "iotdata_node_state.h"
+#include "iotdata_node_settings.h"
+
+static int fails = 0;
+#define CHECK(c, m) \
+    do { \
+        if (!(c)) { \
+            printf("  FAIL: %s (line %d)\n", m, __LINE__); \
+            fails++; \
+        } \
+    } while (0)
+
+#define DERIVED_STATION 0x537
+
+static void node(const char *a, const char *b, const char *c, const char *d) {
+    char *argv[5] = { (char *)(uintptr_t)"node", (char *)(uintptr_t)a, (char *)(uintptr_t)b, (char *)(uintptr_t)c, (char *)(uintptr_t)d };
+    const int argc = (d != NULL) ? 5 : (c != NULL) ? 4 : (b != NULL) ? 3 : (a != NULL) ? 2 : 1;
+    g_out[0] = '\0';
+    g_out_len = 0;
+    iotdata_settings_console(test_emit, argc, argv);
+}
+
+int main(void) {
+    printf("the `node` console command: settings, and where each one came from\n\n");
+    datastore_t ds;
+    assert(datastore_open(&ds, "/tmp/iotdata-node-console-test"));
+    static iotdata_node_state_t state;
+    static iotdata_settings_t settings;
+    iotdata_state_init(&state, &ds, "state");
+    iotdata_settings_defaults(&settings, DERIVED_STATION);
+    assert(iotdata_settings_attach(&settings, &state));
+    iotdata_settings_console_attach(&settings, &state);
+
+    printf("as built: every value stated, and nothing flagged because nothing differs\n");
+    node(NULL, NULL, NULL, NULL);
+    CHECK(said("station        1335"), "the station is the one the hardware derived -- seeded, not deferred");
+    CHECK(!said("(default"), "and no default is printed, because the node IS running as built");
+    CHECK(said("version") && said("status"), "every reportable type is listed");
+    CHECK(!said("discriminator"), "and only the reportable ones -- a type nobody can ask for has no schedule");
+    CHECK(!said("(no record"), "each of which has a record: seeding is dense");
+
+    printf("\nwriting one shows what it was, which is the only way back to it\n");
+    node("station", "10", NULL, NULL);
+    CHECK(said("station") && said("10") && said("default 1335"), "the write answers with what is true, and with what it was");
+    CHECK(iotdata_settings_station(&settings) == 10, "and the reader agrees");
+    node("station", "1335", NULL, NULL);
+    CHECK(iotdata_settings_station(&settings) == DERIVED_STATION, "stating the default is how you get back to it");
+    node("station", "unset", NULL, NULL);
+    CHECK(said("is not a number"), "and 'unset' is not a value, so it is not a setting");
+    CHECK(iotdata_settings_station(&settings) == DERIVED_STATION, "nothing having changed");
+
+    printf("\nthe protocol's own rule, not just the field's width\n");
+    node("station", "0", NULL, NULL);
+    CHECK(said("not assignable"), "0 is not a station");
+    node("station", "4095", NULL, NULL);
+    CHECK(said("not assignable"), "nor is the broadcast id");
+    CHECK(iotdata_settings_station(&settings) == DERIVED_STATION, "and neither took");
+
+    printf("\na report schedule, by type name\n");
+    node("report", "STATUS", "period", "3600");
+    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 3600, "the period took");
+    node("report", "STATUS", "at-startup", "on");
+    CHECK(iotdata_settings_at_startup(&settings, IOTDATA_NODE_TLV_STATUS), "at-startup too");
+    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 3600, "and changing one did not clear the other");
+    node("report", "STATUS", "period", "off");
+    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 0, "'off' means NEVER, which is a value -- the flag carries it, not a sentinel");
+    CHECK(iotdata_settings_at_startup(&settings, IOTDATA_NODE_TLV_STATUS), "and still says nothing about at-startup");
+    node("report", "nonesuch", "period", "10");
+    CHECK(said("not a reportable type"), "an unknown subject is named");
+
+    printf("\nit persists, because the state block is where settings live\n");
+    node("station", "0x123", NULL, NULL);
+    CHECK(iotdata_settings_station(&settings) == 0x123, "hex accepted");
+    {
+        static iotdata_node_state_t s2;
+        static iotdata_settings_t back;
+        iotdata_state_init(&s2, &ds, "state");
+        iotdata_settings_defaults(&back, DERIVED_STATION);
+        assert(iotdata_settings_attach(&back, &s2));
+        (void)iotdata_state_load(&s2);
+        CHECK(iotdata_settings_station(&back) == 0x123, "and came back after a restart");
+        CHECK(iotdata_settings_period_s(&back, IOTDATA_NODE_TLV_STATUS) == 0, "with the rest of it");
+    }
+
+    printf("\nand a node with nowhere to write says so rather than pretending\n");
+    iotdata_settings_console_attach(&settings, NULL);
+    node(NULL, NULL, NULL, NULL);
+    CHECK(said("NOT PERSISTED"), "the listing warns");
+    node("station", "11", NULL, NULL);
+    CHECK(said("not persisted"), "and so does a write");
+    CHECK(iotdata_settings_station(&settings) == 11, "which still applied");
+
+    datastore_close(&ds);
+    printf("\n%s\n", fails == 0 ? "all ok" : "FAILED");
+    return fails == 0 ? 0 : 1;
+}
