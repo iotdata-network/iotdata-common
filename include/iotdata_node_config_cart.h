@@ -100,22 +100,20 @@ static inline bool iotdata_config_cart_changed(__attribute__((unused)) const iot
     X(CART_RETRY_MIN, IOTDATA_CFGID_CART_RETRY_MIN, U16, 0, 10080, IOTDATA_CONFIG_CART_RETRY_MIN, 0, NULL, IOTDATA_CONFIG_CART_NOTIFY, "minutes added to the interval per consecutive failed window") \
     X(CART_RETRY_MAX, IOTDATA_CFGID_CART_RETRY_MAX, U8, 0, 60, IOTDATA_CONFIG_CART_RETRY_MAX, 0, NULL, IOTDATA_CONFIG_CART_NOTIFY, "how many failures that back-off keeps stretching for")
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #endif /* IOTDATA_NODE_CONFIG_CART_H */
 
-/* --- the second include, once the table has been expanded ------------------------------------ */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #if defined(IOTDATA_NODE_CONFIG_EXPANDED) && !defined(IOTDATA_NODE_CONFIG_CART_APPLIED)
 #define IOTDATA_NODE_CONFIG_CART_APPLIED
 
-/*
- * THE BACKSTOP HAS TO OUTLAST A BOOT, or the window is unwinnable: the cart would be cut before it
- * could ever be heard from, every time, and every window would be filed as a failure. Checked from
- * both sides because an update may carry either one alone, and the staged view is what both judge.
- *
- * Nothing checks silent+settle against the backstop. It would be tidy and it would be wrong: a cart
- * that goes quiet near the limit SHOULD be cut at the limit rather than granted its full settle, and
- * cart_tick() already does exactly that.
- */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static bool iotdata_config_cart_boot_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
     iotdata_config_value_t limit;
     return iotdata_config_update_peek(u, IOTDATA_CFGID_CART_LIMIT_MIN, &limit) && v->u < limit.u * 60u;
@@ -125,8 +123,6 @@ static bool iotdata_config_cart_limit_ok(__attribute__((unused)) const iotdata_c
     return iotdata_config_update_peek(u, IOTDATA_CFGID_CART_BOOT_S, &boot) && v->u * 60u > boot.u;
 }
 
-/* The table back into the struct the module takes. The pins are the caller's: they are the one part
-   of this that the configuration has no business knowing. */
 static inline void iotdata_config_cart_apply(cart_config_t *const c, const gpio_num_t pin_power, const gpio_num_t pin_live) {
     if (c == NULL)
         return;
@@ -140,5 +136,8 @@ static inline void iotdata_config_cart_apply(cart_config_t *const c, const gpio_
     c->retry_ms = (uint32_t)iotdata_config_u16(CART_RETRY_MIN) * 60u * 1000u;
     c->retry_max = iotdata_config_u8(CART_RETRY_MAX);
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_CART_APPLIED */
