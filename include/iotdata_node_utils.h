@@ -46,6 +46,9 @@ static inline uint32_t _iotdata_node_hash32(const char *s) {
 
 #endif
 
+// ---------------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------------
+
 /*
  * The board's hardware address, true when there is a real one.
  *
@@ -67,12 +70,10 @@ static inline bool iotdata_node_mac(uint8_t mac[6]) {
         while ((ent = readdir(dir)) != NULL) {
             if (ent->d_name[0] == '.' || strcmp(ent->d_name, "lo") == 0)
                 continue;
-            if (_iotdata_node_sysfs(snprintf_inline(path, sizeof(path), "/sys/class/net/%s/type", ent->d_name), buf, sizeof(buf)) || atoi(buf) != 1) {                 /* ARPHRD_ETHER */
-                if (_iotdata_node_sysfs(snprintf_inline(path, sizeof(path), "/sys/class/net/%s/addr_assign_type", ent->d_name), buf, sizeof(buf)) || atoi(buf) != 0) { /* NET_ADDR_PERM */
+            if (_iotdata_node_sysfs(snprintf_inline(path, sizeof(path), "/sys/class/net/%s/type", ent->d_name), buf, sizeof(buf)) || atoi(buf) != 1)                 /* ARPHRD_ETHER */
+                if (_iotdata_node_sysfs(snprintf_inline(path, sizeof(path), "/sys/class/net/%s/addr_assign_type", ent->d_name), buf, sizeof(buf)) || atoi(buf) != 0) /* NET_ADDR_PERM */
                     if (best[0] == '\0' || strcmp(ent->d_name, best) < 0)
                         snprintf(best, sizeof(best), "%s", ent->d_name);
-                }
-            }
         }
         (void)closedir(dir);
     }

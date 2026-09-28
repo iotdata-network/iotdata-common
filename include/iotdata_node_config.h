@@ -115,6 +115,7 @@ static inline bool iotdata_config_type_is_signed(const uint8_t type) {
 // THE TABLE
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+#define IOTDATA_CONFIG_FLAG_NONE     0x00u
 #define IOTDATA_CONFIG_FLAG_REBOOT   0x01u /* takes effect only after a restart                       */
 #define IOTDATA_CONFIG_FLAG_READONLY 0x02u /* reportable, not writable: a fact rather than a setting  */
 /* Settable, but only from where a person already is: the console, the config file, the command
@@ -575,15 +576,15 @@ static inline const iotdata_config_row_t *iotdata_config_row(const uint16_t id) 
 static inline void _iotdata_config_string_set(const int i, const char *const src, const size_t len) {
     const iotdata_config_row_t *const row = &iotdata_config_table[i];
     char *const slot = _iotdata_config_slot(row);
-    if (slot == NULL)
-        return;
-    const size_t cap = _iotdata_config_slot_cap(row);
-    const size_t n = (len < cap) ? len : cap;
-    if (src != NULL && n > 0)
-        memcpy(slot, src, n);
-    slot[n] = '\0';
-    _iotdata_config_value[i].s.p = slot;
-    _iotdata_config_value[i].s.len = (uint16_t)n;
+    if (slot != NULL) {
+        const size_t cap = _iotdata_config_slot_cap(row);
+        const size_t n = (len < cap) ? len : cap;
+        if (src != NULL && n > 0)
+            memcpy(slot, src, n);
+        slot[n] = '\0';
+        _iotdata_config_value[i].s.p = slot;
+        _iotdata_config_value[i].s.len = (uint16_t)n;
+    }
 }
 
 static inline void iotdata_config_defaults(void) {
@@ -770,26 +771,25 @@ static inline bool iotdata_config_update_commit(iotdata_config_update_t *const u
        in hand, is the only place the comparison is honest. */
     for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
         was[i] = _iotdata_config_value[i];
-        if (!u->touched[i])
-            continue;
-        if (iotdata_config_table[i].type == IOTDATA_CONFIG_TYPE_STRING) {
-            /* A STAGED STRING IS BORROWED: it points at the caller's buffer -- the console's argv,
-               a decoded TLV, a line off a config file. Staging one and committing it later would be
-               a use-after-free; every path commits inside the same call, and this copy is what ends
-               the borrow. */
-            const char *const now = _iotdata_config_value[i].s.p;
-            const uint16_t nlen = _iotdata_config_value[i].s.len;
-            u->touched[i] = !((nlen == u->staged[i].s.len) && now != NULL && u->staged[i].s.p != NULL && memcmp(now, u->staged[i].s.p, nlen) == 0);
-            if (u->touched[i]) {
-                _iotdata_config_string_set(i, u->staged[i].s.p, u->staged[i].s.len);
-                changed = true;
-            }
-            continue;
-        }
-        u->touched[i] = (memcmp(&was[i], &u->staged[i], sizeof(was[i])) != 0);
         if (u->touched[i]) {
-            _iotdata_config_value[i] = u->staged[i];
-            changed = true;
+            if (iotdata_config_table[i].type == IOTDATA_CONFIG_TYPE_STRING) {
+                /* A STAGED STRING IS BORROWED: it points at the caller's buffer -- the console's argv,
+                a decoded TLV, a line off a config file. Staging one and committing it later would be
+                a use-after-free; every path commits inside the same call, and this copy is what ends
+                the borrow. */
+                u->touched[i] = !((_iotdata_config_value[i].s.len == u->staged[i].s.len) && _iotdata_config_value[i].s.p != NULL && u->staged[i].s.p != NULL &&
+                                  memcmp(_iotdata_config_value[i].s.p, u->staged[i].s.p, _iotdata_config_value[i].s.len) == 0);
+                if (u->touched[i]) {
+                    _iotdata_config_string_set(i, u->staged[i].s.p, u->staged[i].s.len);
+                    changed = true;
+                }
+            } else {
+                u->touched[i] = (memcmp(&was[i], &u->staged[i], sizeof(was[i])) != 0);
+                if (u->touched[i]) {
+                    _iotdata_config_value[i] = u->staged[i];
+                    changed = true;
+                }
+            }
         }
     }
     if (!changed)
@@ -801,12 +801,12 @@ static inline bool iotdata_config_update_commit(iotdata_config_update_t *const u
     const iotdata_config_info_t info = { .validation_only = false, .version_changed = false };
     bool reboot = false;
     for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
-        if (!u->touched[i]) /* narrowed above to "named AND moved" */
-            continue;
-        if ((iotdata_config_table[i].flags & IOTDATA_CONFIG_FLAG_REBOOT) != 0u)
-            reboot = true;
-        if (iotdata_config_table[i].notify != NULL && iotdata_config_table[i].notify(&iotdata_config_table[i], &was[i], &info))
-            reboot = true;
+        if (u->touched[i]) { /* narrowed above to "named AND moved" */
+            if ((iotdata_config_table[i].flags & IOTDATA_CONFIG_FLAG_REBOOT) != 0u)
+                reboot = true;
+            if (iotdata_config_table[i].notify != NULL && iotdata_config_table[i].notify(&iotdata_config_table[i], &was[i], &info))
+                reboot = true;
+        }
     }
     if (reboot_out != NULL)
         *reboot_out = reboot;
@@ -1024,12 +1024,6 @@ static inline void iotdata_config_console_attach(datastore_t *const ds) {
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 static inline void _iotdata_config_show(const iotdata_console_emit_fn emit, const int i, const bool detail) {
     const iotdata_config_row_t *const row = &iotdata_config_table[i];
     char val[32];
@@ -1054,9 +1048,6 @@ static inline void _iotdata_config_show(const iotdata_console_emit_fn emit, cons
              (row->flags & IOTDATA_CONFIG_FLAG_LOCAL) ? " local" : "", (row->flags & IOTDATA_CONFIG_FLAG_REBOOT) ? " reboot" : "", _iotdata_config_pinned[i] ? " pinned" : "");
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static void iotdata_config_console(const iotdata_console_emit_fn emit, const int argc, char **const argv) {

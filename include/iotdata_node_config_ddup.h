@@ -36,12 +36,12 @@
 // not a longer string.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_CFGID_DDUP_ENABLE 0x090
-#define IOTDATA_CFGID_DDUP_PORT   0x091
-#define IOTDATA_CFGID_DDUP_PEERS  0x092
-#define IOTDATA_CFGID_DDUP_DELAY  0x093
-#define IOTDATA_CFGID_DDUP_HOLD_MS 0x094
-#define IOTDATA_CFGID_DDUP_DEBUG  0x095
+#define IOTDATA_CFGID_DDUP_ENABLE                  0x090
+#define IOTDATA_CFGID_DDUP_PORT                    0x091
+#define IOTDATA_CFGID_DDUP_PEERS                   0x092
+#define IOTDATA_CFGID_DDUP_DELAY                   0x093
+#define IOTDATA_CFGID_DDUP_HOLD_MS                 0x094
+#define IOTDATA_CFGID_DDUP_DEBUG                   0x095
 #define IOTDATA_CFGID_DDUP_DEBUG_INJECT_LATENCY_MS 0x096
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -97,11 +97,10 @@ static inline bool iotdata_config_ddup_changed(__attribute__((unused)) const iot
 
 #define IOTDATA_CONFIG_ENTRIES_DDUP(X) \
     X(DDUP_ENABLE, IOTDATA_CFGID_DDUP_ENABLE, BOOL, 0, 1, IOTDATA_CONFIG_DDUP_ENABLE, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "dedup against other gateways at all") \
-    X(DDUP_PORT, IOTDATA_CFGID_DDUP_PORT, U16, 1, 65535, IOTDATA_CONFIG_DDUP_PORT, 0, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "the UDP port peers talk to each other on") \
-    X(DDUP_PEERS, IOTDATA_CFGID_DDUP_PEERS, STRING, 0, IOTDATA_CONFIG_DDUP_PEERS_MAX, IOTDATA_CONFIG_DDUP_PEERS, 0, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, \
-      "the other gateways, comma-separated host:port") \
-    X(DDUP_DELAY, IOTDATA_CFGID_DDUP_DELAY, U16, 0, 10000, IOTDATA_CONFIG_DDUP_DELAY, 0, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "how long to batch before announcing, in milliseconds; every one is added latency") \
-    X(DDUP_HOLD_MS, IOTDATA_CFGID_DDUP_HOLD_MS, U32, 0, 60000, IOTDATA_CONFIG_DDUP_HOLD_MS, 0, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, \
+    X(DDUP_PORT, IOTDATA_CFGID_DDUP_PORT, U16, 1, 65535, IOTDATA_CONFIG_DDUP_PORT, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "the UDP port peers talk to each other on") \
+    X(DDUP_PEERS, IOTDATA_CFGID_DDUP_PEERS, STRING, 0, IOTDATA_CONFIG_DDUP_PEERS_MAX, IOTDATA_CONFIG_DDUP_PEERS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "the other gateways, comma-separated host:port") \
+    X(DDUP_DELAY, IOTDATA_CFGID_DDUP_DELAY, U16, 0, 10000, IOTDATA_CONFIG_DDUP_DELAY, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "how long to batch before announcing, in milliseconds; every one is added latency") \
+    X(DDUP_HOLD_MS, IOTDATA_CFGID_DDUP_HOLD_MS, U32, 0, 60000, IOTDATA_CONFIG_DDUP_HOLD_MS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, \
       "ceiling on how long a reading waits for peers to contest it, in milliseconds (0 = publish at once, no election)") \
     X(DDUP_DEBUG, IOTDATA_CFGID_DDUP_DEBUG, BOOL, 0, 1, IOTDATA_CONFIG_DDUP_DEBUG, IOTDATA_CONFIG_FLAG_LOCAL, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "debug: log every dedup decision") \
     X(DDUP_DEBUG_INJECT_LATENCY_MS, IOTDATA_CFGID_DDUP_DEBUG_INJECT_LATENCY_MS, U32, 0, 10000, IOTDATA_CONFIG_DDUP_DEBUG_INJECT_LATENCY_MS, IOTDATA_CONFIG_FLAG_LOCAL, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, \

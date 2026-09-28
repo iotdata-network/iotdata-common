@@ -61,9 +61,12 @@ static inline bool iotdata_config_down_changed(__attribute__((unused)) const iot
 /* 0 is a real value and means "never expire", which the store already understands -- so the floor is
    0 and not 1, and an operator who wants a command to wait indefinitely can say so. */
 #define IOTDATA_CONFIG_ENTRIES_DOWN(X) \
-    X(DOWN_TTL_MIN, IOTDATA_CFGID_DOWN_TTL_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_MIN, 0, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "how long a held command waits for its node, in minutes (0 = forever)") \
-    X(DOWN_TTL_BCAST_MIN, IOTDATA_CFGID_DOWN_TTL_BCAST_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_BCAST_MIN, 0, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "the same for a broadcast, which is held for everyone at once") \
-    X(DOWN_REPEAT_MIN, IOTDATA_CFGID_DOWN_REPEAT_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_REPEAT_MIN, 0, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "how long before a delivered command may be sent to a node again")
+    X(DOWN_TTL_MIN, IOTDATA_CFGID_DOWN_TTL_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, \
+      "how long a held command waits for its node, in minutes (0 = forever)") \
+    X(DOWN_TTL_BCAST_MIN, IOTDATA_CFGID_DOWN_TTL_BCAST_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_BCAST_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, \
+      "the same for a broadcast, which is held for everyone at once") \
+    X(DOWN_REPEAT_MIN, IOTDATA_CFGID_DOWN_REPEAT_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_REPEAT_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, \
+      "how long before a delivered command may be sent to a node again")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

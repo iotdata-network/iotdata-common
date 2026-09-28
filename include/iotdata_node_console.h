@@ -340,9 +340,9 @@ void iotdata_console_poll(void) {
     int ch;
     while ((ch = iotdata_con_getc()) >= 0) {
         const char c = (char)ch;
-        if (c == '\r')
-            continue;
-        if (c == '\n') {
+        if (c == '\r') {
+            //
+        } else if (c == '\n') {
             iotdata_con_line[iotdata_con_len] = '\0';
             iotdata_console_dispatch(iotdata_con_line);
             iotdata_con_len = 0;

@@ -728,20 +728,19 @@ static void iotdata_settings_console(const iotdata_console_emit_fn emit, const i
 static inline void iotdata_settings_help(const iotdata_console_emit_fn emit, const iotdata_settings_t *const s) {
     char key[IOTDATA_SETTINGS_KEY_MAX], val[32];
     emit("\n  the protocol's own settings -- stating one here PINS it for the run:\n");
-    for (int k = 0; k < IOTDATA_SETTINGS_KEY_COUNT; k++) {
-        if (!iotdata_settings_key_name(k, key, sizeof(key)))
-            continue;
-        char opt[IOTDATA_SETTINGS_KEY_MAX + 4];
-        opt[0] = opt[1] = '-';
-        size_t at = 2;
-        for (const char *p = key; *p != '\0' && at + 1u < sizeof(opt); p++)
-            opt[at++] = *p;
-        opt[at] = '\0';
-        if (s != NULL && iotdata_settings_key_read(s, k, val, sizeof(val)))
-            emit("  %-34s default %s\n", opt, val);
-        else
-            emit("  %-34s\n", opt);
-    }
+    for (int k = 0; k < IOTDATA_SETTINGS_KEY_COUNT; k++)
+        if (iotdata_settings_key_name(k, key, sizeof(key))) {
+            char opt[IOTDATA_SETTINGS_KEY_MAX + 4];
+            opt[0] = opt[1] = '-';
+            size_t at = 2;
+            for (const char *p = key; *p != '\0' && at + 1u < sizeof(opt); p++)
+                opt[at++] = *p;
+            opt[at] = '\0';
+            if (s != NULL && iotdata_settings_key_read(s, k, val, sizeof(val)))
+                emit("  %-34s default %s\n", opt, val);
+            else
+                emit("  %-34s\n", opt);
+        }
 }
 
 /* Drop this into the application's iotdata_console_t array, beside IOTDATA_CONFIG_CONSOLE_COMMAND. */

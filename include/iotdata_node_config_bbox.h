@@ -91,17 +91,18 @@ static inline bool iotdata_config_bbox_changed(__attribute__((unused)) const iot
 
 /* 0x0A0-0x0AF -- every recorder, whatever backend it writes to */
 #define IOTDATA_CONFIG_ENTRIES_BBOX(X) \
-    X(BLACKBOX_ENABLED, IOTDATA_CFGID_BBOX_ENABLED, BOOL, 0, 1, IOTDATA_CONFIG_BBOX_ENABLED, 0, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "record diagnostics at all") \
-    X(BLACKBOX_MAX_RECORDS, IOTDATA_CFGID_BBOX_MAX_RECORDS, U32, 0, 1000000, IOTDATA_CONFIG_BBOX_MAX_RECORDS, 0, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records to keep before the oldest goes (0 = unbounded)") \
-    X(BLACKBOX_MAX_SECONDS, IOTDATA_CFGID_BBOX_MAX_SECONDS, U32, 0, 31536000, IOTDATA_CONFIG_BBOX_MAX_SECONDS, 0, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, \
+    X(BLACKBOX_ENABLED, IOTDATA_CFGID_BBOX_ENABLED, BOOL, 0, 1, IOTDATA_CONFIG_BBOX_ENABLED, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "record diagnostics at all") \
+    X(BLACKBOX_MAX_RECORDS, IOTDATA_CFGID_BBOX_MAX_RECORDS, U32, 0, 1000000, IOTDATA_CONFIG_BBOX_MAX_RECORDS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records to keep before the oldest goes (0 = unbounded)") \
+    X(BLACKBOX_MAX_SECONDS, IOTDATA_CFGID_BBOX_MAX_SECONDS, U32, 0, 31536000, IOTDATA_CONFIG_BBOX_MAX_SECONDS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, \
       "how long a record may sit in RAM before it is written down (0 = write through, losing nothing)") \
-    X(BLACKBOX_MAX_BYTES, IOTDATA_CFGID_BBOX_MAX_BYTES, U32, 0, 0xFFFFFFFF, IOTDATA_CONFIG_BBOX_MAX_BYTES, 0, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "bytes to keep before the store rotates or evicts (0 = unbounded)")
+    X(BLACKBOX_MAX_BYTES, IOTDATA_CFGID_BBOX_MAX_BYTES, U32, 0, 0xFFFFFFFF, IOTDATA_CONFIG_BBOX_MAX_BYTES, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "bytes to keep before the store rotates or evicts (0 = unbounded)")
 
 /* 0x0B0-0x0BF -- only when the backend is a filesystem */
 #define IOTDATA_CONFIG_ENTRIES_BBOX_FILE(X) \
     X(BLACKBOX_FILE_DIRECTORY, IOTDATA_CFGID_BBOX_FILE_DIRECTORY, STRING, 1, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY_MAX, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY, IOTDATA_CONFIG_FLAG_LOCAL | IOTDATA_CONFIG_FLAG_REBOOT, NULL, \
       IOTDATA_CONFIG_BBOX_NOTIFY, "the directory the record file is written in") \
-    X(BLACKBOX_FILE_GENERATIONS, IOTDATA_CFGID_BBOX_FILE_GENERATIONS, U8, 0, 255, IOTDATA_CONFIG_BBOX_FILE_GENERATIONS, 0, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "rotated files to keep behind the active one (0 = overwrite, keeping nothing)")
+    X(BLACKBOX_FILE_GENERATIONS, IOTDATA_CFGID_BBOX_FILE_GENERATIONS, U8, 0, 255, IOTDATA_CONFIG_BBOX_FILE_GENERATIONS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, \
+      "rotated files to keep behind the active one (0 = overwrite, keeping nothing)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
