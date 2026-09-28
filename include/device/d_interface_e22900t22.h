@@ -17,7 +17,7 @@ typedef enum { LORA_MODE_NORMAL, LORA_MODE_WAKE_ON_RECEIVE, LORA_MODE_CONFIG, LO
 
 #define LORA_E22_ADDRESS_DEFAULT            0x0008
 #define LORA_E22_NETWORK_DEFAULT            0x00
-#define LORA_CHANNEL_DEFAULT                0x0A
+#define LORA_CHANNEL_DEFAULT                0x0F
 #define LORA_TRANSMIT_POWER_DEFAULT         22
 #define LORA_AIR_DATA_RATE_DEFAULT          2400
 #define LORA_PACKET_SIZE_DEFAULT            240

@@ -52,6 +52,14 @@ test:
 	@$(TEST_DIR)/test_node_state
 	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_config.c -o $(TEST_DIR)/test_node_config -lm
 	@$(TEST_DIR)/test_node_config
+	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_config_mesh.c -o $(TEST_DIR)/test_node_config_mesh -lm
+	@$(TEST_DIR)/test_node_config_mesh
+	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_config_console.c -o $(TEST_DIR)/test_node_config_console -lm
+	@$(TEST_DIR)/test_node_config_console
+	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_config_string.c -o $(TEST_DIR)/test_node_config_string -lm
+	@$(TEST_DIR)/test_node_config_string
+	@$(TEST_CC) $(TEST_CFLAGS) -D_GNU_SOURCE test_node_settings_console.c -o $(TEST_DIR)/test_node_settings_console -lm
+	@$(TEST_DIR)/test_node_settings_console
 
 test-clean:
 	@rm -rf $(TEST_DIR)

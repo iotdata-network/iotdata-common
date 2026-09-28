@@ -72,6 +72,14 @@ typedef bool (*idep_control_fn)(uint16_t station, uint8_t subject, uint8_t actio
    recorder plugs it in the same way wherever it runs. */
 typedef size_t (*idep_diag_fn)(size_t *cursor, char *out, size_t outsize);
 
+/* The device's own CONFIG. Reached through callbacks rather than by naming iotdata_config_table,
+   because the table is compiled into the APPLICATION and this header is included before the X-macro
+   that expands it -- the same reason the variant and control seams are function pointers.
+   Build packs the table (resuming from `partial`); apply takes a record stream that arrived over the
+   air and returns whether it committed, setting `reboot_out` when a written row demands one. */
+typedef int (*idep_config_build_fn)(uint8_t *buf, size_t size, iotdata_partial_t *partial);
+typedef bool (*idep_config_apply_fn)(const uint8_t *buf, size_t len, bool *reboot_out);
+
 typedef struct {
     /* What this instance HAS -- the rest of VERSION (chip, IDF, stamp, eFuse serial) is detected
        by iotdata_node_version.h and needs nothing from the app. May be NULL. */
@@ -90,6 +98,12 @@ typedef struct {
        cannot be flushed would answer a write with a promise rather than a fact. */
     iotdata_settings_t *settings;
     iotdata_node_state_t *state;
+    /* The device's own configuration. BOTH OR NEITHER, for the settings pair's reason exactly: a
+       table that can be read but not written would answer a write by ignoring it, and a table that
+       can be written but not read could not answer with what is now true. A node with no config
+       leaves both NULL and answers a CONFIG request with an empty report, which is an answer. */
+    idep_config_build_fn config_build;
+    idep_config_apply_fn config_apply;
 
     const uint8_t *control_actions;
     uint8_t control_actions_count;
@@ -115,6 +129,17 @@ typedef struct {
     uint16_t receive_window_ms; /* advertised, so a sender can skip one too short to use */
     uint16_t packet_max;
 } idep_config_t;
+
+/* The receive cadence, resolved ONCE here rather than at each of the three places that want it.
+   A node that keeps a settings block holds the answer there -- always, because settings are seeded
+   dense; a node built without one has only what its config states. That is the whole composition,
+   and having it in one function is why the gateway cannot silently disagree with the relay. */
+static inline uint16_t idep_receive_window_ms(const idep_config_t *const cfg) {
+    return (cfg->settings != NULL) ? iotdata_settings_window_ms(cfg->settings) : cfg->receive_window_ms;
+}
+static inline uint32_t idep_receive_every_ms(const idep_config_t *const cfg) {
+    return (cfg->settings != NULL) ? iotdata_settings_interval_ms(cfg->settings) : cfg->receive_every_ms;
+}
 
 static inline size_t idep_packet_budget(const idep_config_t *const cfg) {
     const size_t want = (cfg->packet_max != 0u) ? (size_t)cfg->packet_max : (size_t)IOTDATA_MAX_PACKET_SIZE;
@@ -186,6 +211,30 @@ static inline void idep_node_init(idep_node_t *const n, const uint16_t station, 
  * contract forbids. The transient it causes -- relays holding frames for the old id, the mesh
  * re-learning -- is the same one a reboot would cause, and it resolves the same way.
  */
+/*
+ * COME BACK AS WHO YOU WERE. Run once, after iotdata_state_load(), to put the commissioned station
+ * back in force.
+ *
+ * It is needed because the node's own state block persists the SEQUENCE and not the station -- the
+ * station's only persistent home is the SETTINGS block, which is loaded at the same moment but was
+ * not consulted by anybody. So a node commissioned over the air came back after a power cut as
+ * whatever its hardware or its configuration said, having agreed to be something else.
+ *
+ * NOT adopt_station(), and the difference is the sequence. Adoption restarts the stream because a
+ * station CHANGE makes a new identity. This is not a change: the node is remembering the id it was
+ * already transmitting as before the reboot, and its sequence was persisted under that same id.
+ * Restarting it here would manufacture exactly the gap adoption exists to avoid.
+ */
+static inline bool idep_node_restore_station(idep_node_t *const n, const iotdata_settings_t *const s) {
+    if (n == NULL || s == NULL)
+        return false;
+    const uint16_t station = iotdata_settings_station(s);
+    if (station == n->station || station == 0u || station >= IOTDATA_STATION_MAX)
+        return false;
+    n->station = station;
+    return true;
+}
+
 static inline bool idep_node_adopt_station(idep_node_t *const n, const uint16_t station) {
     if (n == NULL || station == n->station || station == 0u || station >= IOTDATA_STATION_MAX)
         return false;
@@ -233,7 +282,7 @@ static inline uint16_t idep_sequence_take(idep_node_t *const n) {
 static inline bool idep_window_advance(const idep_config_t *const cfg, idep_node_t *const n, const uint32_t delta_ms) {
     if (cfg->receive_always)
         return false; /* always listening: nothing to schedule and nothing to announce */
-    const uint32_t every_ms = iotdata_settings_interval_ms(cfg->settings, cfg->receive_every_ms);
+    const uint32_t every_ms = idep_receive_every_ms(cfg);
     if (every_ms == 0)
         return false;
     if (n->window_pending)
@@ -255,7 +304,7 @@ static inline bool idep_window_pending(const idep_node_t *const n) {
 static inline void idep_window_begin(const idep_config_t *const cfg, idep_node_t *const n, const uint32_t now_ms) {
     n->window_pending = false;
     n->window_open = true;
-    n->window_end_ms = now_ms + iotdata_settings_window_ms(cfg->settings, cfg->receive_window_ms);
+    n->window_end_ms = now_ms + idep_receive_window_ms(cfg);
     n->elapsed_ms = 0;
     n->stat_windows++;
 }
@@ -280,7 +329,7 @@ static inline void idep_window_end(idep_node_t *const n) {
 static inline bool idep_receive_append(const idep_config_t *const cfg, iotdata_encoder_t *const enc) {
     uint8_t kv[8];
     /* 0 = unstated = "listening, for anything", which is the whole truth for an always-on node */
-    const size_t n = iotdata_node_receive_build(kv, sizeof(kv), cfg->receive_always ? 0u : iotdata_settings_window_ms(cfg->settings, cfg->receive_window_ms), 0);
+    const size_t n = iotdata_node_receive_build(kv, sizeof(kv), cfg->receive_always ? 0u : idep_receive_window_ms(cfg), 0);
     return iotdata_encode_tlv(enc, IOTDATA_NODE_TLV_RECEIVE, kv, (uint8_t)n) == IOTDATA_OK;
 }
 
@@ -412,16 +461,20 @@ static inline int idep_build_settings(const idep_config_t *const cfg, uint8_t *c
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* A node's own settings are PROPRIETARY keys, and this platform has none of its own to state -- so
-   the report is an EMPTY kvr, which is an answer and not a refusal.
-
-   The schedule that used to be reported here was protocol configuration wearing CONFIG's clothes:
-   a receive window and a status cadence. Both are now the trigger record, carried by
-   control(<subject>, set-trigger), which serves a proprietary type as readily as a system one. */
-static inline int idep_build_config(__attribute__((unused)) const idep_config_t *const cfg, uint8_t *const buf, const size_t size) {
-    iotdata_kvr_t kv;
-    iotdata_kvr_init(&kv, buf, size);
-    return kv.overflow ? -1 : (int)kv.len;
+/* The device's own configuration, as the [id|type][value] record stream the store and the wire
+   share. A node with no table reports NOTHING rather than an error -- an empty report is an answer.
+ *
+ * Not kvr, and this is the one system type that is not: a config id is 12 bits and a kvr key is 8,
+ * so the ids would not fit. The record carries its own type instead, which is what lets a reader
+ * that has never heard of an id still step over it.
+ *
+ * The schedule that used to be reported here was protocol configuration wearing CONFIG's clothes:
+ * a receive window and a status cadence. Both are now the trigger record, carried by
+ * control(<subject>, set-trigger), which serves a proprietary type as readily as a system one. */
+static inline int idep_build_config(const idep_config_t *const cfg, uint8_t *const buf, const size_t size, iotdata_partial_t *const partial) {
+    if (cfg->config_build == NULL)
+        return 0;
+    return cfg->config_build(buf, size, partial);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -440,7 +493,7 @@ static inline int idep_build(const idep_config_t *const cfg, const idep_node_t *
     case IOTDATA_NODE_TLV_STATUS:
         return idep_build_status(cfg, n, buf, size, scope);
     case IOTDATA_NODE_TLV_CONFIG:
-        return idep_build_config(cfg, buf, size);
+        return idep_build_config(cfg, buf, size, partial);
     case IOTDATA_NODE_TLV_SETTINGS:
         /* the selection is a list of KEYS, which is SETTINGS' own reading of it; the one byte the
            dispatcher carries is the first of them */
@@ -579,12 +632,18 @@ static inline bool idep_on_frame(const idep_config_t *const cfg, idep_node_t *co
         if (t->format == IOTDATA_TLV_FMT_RAW && t->type == IOTDATA_NODE_TLV_SETTINGS) {
             n->stat_commands++;
             if (cfg->settings != NULL && iotdata_settings_apply(cfg->settings, t->raw, t->length)) {
-                (void)iotdata_settings_commit(cfg->state);
+                (void)iotdata_settings_commit(cfg->settings, cfg->state);
                 /* a written station takes effect NOW, so the reply below goes out as who we have
                 become rather than as who we were */
-                (void)idep_node_adopt_station(n, iotdata_settings_station(cfg->settings, n->station));
+                (void)idep_node_adopt_station(n, iotdata_settings_station(cfg->settings));
             }
             (void)idep_report_scoped(cfg, n, IOTDATA_NODE_TLV_SETTINGS, 0);
+            acted = true;
+        } else if (t->format == IOTDATA_TLV_FMT_RAW && t->type == IOTDATA_NODE_TLV_CONFIG) {
+            n->stat_commands++;
+            if (cfg->config_apply != NULL)
+                (void)cfg->config_apply(t->raw, t->length, reboot_out);
+            (void)idep_report_scoped(cfg, n, IOTDATA_NODE_TLV_CONFIG, 0);
             acted = true;
         } else if (t->format == IOTDATA_TLV_FMT_RAW && t->type == IOTDATA_NODE_TLV_CONTROL) {
             idep_process_control(cfg, n, t->raw, t->length, reboot_out);

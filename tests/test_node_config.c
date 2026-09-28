@@ -4,11 +4,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h> /* the config table's text parser: strtof, strtoll */
 #include <string.h>
 
 #include "iotdata.h"
 #include "iotdata_node.h"
+#include "iotdata_node_partial.h"
 
+#include "device/d_format.h" /* snprintf_inline, which the config formatter returns through */
 #include "device/d_module_datastore_linux.h"
 #include "iotdata_node_config.h" /* the types, so the handler below can be written */
 
@@ -37,11 +40,14 @@ static bool tx_min_le_max(const iotdata_config_row_t *row, const iotdata_config_
 static bool tx_max_ge_min(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
 
 #define IOTDATA_CONFIG_ENTRIES(X) \
-    /*  NAME            id     TYPE   min    max     default  flags                       validate     notify */ \
-    X(TX_PERIOD_S, 0x001, U16, 10, 3600, 60, 0, NULL, NULL) \
-    X(LORA_CHANNEL, 0x002, U8, 0, 83, 23, IOTDATA_CONFIG_FLAG_REBOOT, NULL, on_channel) \
-    X(TRIM_MV, 0x003, I16, -500, 500, 0, 0, NULL, NULL) \
-    X(SERIAL_NO, 0x004, U32, 0, 0xFFFFFFFF, 7, IOTDATA_CONFIG_FLAG_READONLY, NULL, NULL) X(TX_MIN_S, 0x005, U16, 1, 3600, 20, 0, tx_min_le_max, NULL) X(TX_MAX_S, 0x006, U16, 1, 3600, 40, 0, tx_max_ge_min, NULL)
+    /*  NAME            id     TYPE   min    max     default  flags                       validate     notify        help */ \
+    X(TX_PERIOD_S, 0x001, U16, 10, 3600, 60, 0, NULL, NULL, "how often a reading goes out") \
+    X(LORA_CHANNEL, 0x002, U8, 0, 83, 23, IOTDATA_CONFIG_FLAG_REBOOT, NULL, on_channel, "the radio channel") \
+    X(TRIM_MV, 0x003, I16, -500, 500, 0, 0, NULL, NULL, "a signed calibration offset") \
+    X(SERIAL_NO, 0x004, U32, 0, 0xFFFFFFFF, 7, IOTDATA_CONFIG_FLAG_READONLY, NULL, NULL, "the unit's serial number, which is a fact and not a setting") \
+    X(DEBUG_MS, 0x007, U16, 1, 60000, 500, IOTDATA_CONFIG_FLAG_LOCAL, NULL, NULL, "how often the debug line prints") \
+    X(TX_MIN_S, 0x005, U16, 1, 3600, 20, 0, tx_min_le_max, NULL, "the shortest gap between transmissions") \
+    X(TX_MAX_S, 0x006, U16, 1, 3600, 40, 0, tx_max_ge_min, NULL, "the longest")
 
 #include "iotdata_node_config.h"
 
@@ -62,6 +68,9 @@ int main(void) {
     printf("iotdata_node_config: a compiled-in table, checked at build time\n\n");
 
     printf("defaults, and reading them back\n");
+    /* BEFORE anything has run: the table is already at its defaults, not at zero. An init path
+       ordered ahead of the load then reads a plausible value instead of a zero it would act on. */
+    CHECK(iotdata_config_u16(TX_PERIOD_S) == 60 && iotdata_config_u8(LORA_CHANNEL) == 23, "a read before any init sees the defaults, not zero");
     iotdata_config_defaults();
     CHECK(iotdata_config_u16(TX_PERIOD_S) == 60, "a default is the table's");
     CHECK(iotdata_config_u8(LORA_CHANNEL) == 23, "for every row");
@@ -147,6 +156,38 @@ int main(void) {
     iotdata_config_defaults();
     CHECK(iotdata_config_load(&ds), "loaded");
     CHECK(iotdata_config_i16(TRIM_MV) == -500, "a negative value survives the round trip");
+
+    printf("\nFLAG_LOCAL: settable where a person is, refused off the air\n");
+    iotdata_config_defaults();
+    { /* locally: an ordinary write */
+        iotdata_config_update_t lu;
+        iotdata_config_update_begin(&lu);
+        CHECK(iotdata_config_update_stage(&lu, IOTDATA_CFG_DEBUG_MS, &(iotdata_config_value_t){ .u = 2000 }), "console, file, command line: yes");
+        CHECK(iotdata_config_update_commit(&lu, &ds, NULL), "committed");
+        CHECK(iotdata_config_u16(DEBUG_MS) == 2000, "and took");
+    }
+    { /* the same id, the same value, off the radio */
+        iotdata_config_update_t ru;
+        iotdata_config_update_begin_remote(&ru);
+        CHECK(!iotdata_config_update_stage(&ru, IOTDATA_CFG_DEBUG_MS, &(iotdata_config_value_t){ .u = 3000 }), "over the air: no");
+        CHECK(!iotdata_config_update_commit(&ru, &ds, NULL), "and it poisons the update, like any refusal");
+        CHECK(iotdata_config_u16(DEBUG_MS) == 2000, "nothing moved");
+    }
+    { /* a remote batch containing one: all or nothing still holds */
+        iotdata_config_update_t ru;
+        iotdata_config_update_begin_remote(&ru);
+        (void)iotdata_config_update_stage(&ru, IOTDATA_CFG_TX_PERIOD_S, &(iotdata_config_value_t){ .u = 90 });
+        (void)iotdata_config_update_stage(&ru, IOTDATA_CFG_DEBUG_MS, &(iotdata_config_value_t){ .u = 3000 });
+        CHECK(!iotdata_config_update_commit(&ru, &ds, NULL), "one local row refuses the whole remote batch");
+        CHECK(iotdata_config_u16(TX_PERIOD_S) != 90, "so the writable one did not take either");
+    }
+    /* and it is still REPORTED: a manager that cannot read it cannot say what the node is doing */
+    {
+        uint8_t wire[IOTDATA_CONFIG_IMAGE_MAX];
+        iotdata_partial_t p = { 0 };
+        const int n = iotdata_config_pack(wire, sizeof(wire), &p);
+        CHECK(n > 0 && p.chunk == IOTDATA_CFG_COUNT, "every row is in the report, local ones included");
+    }
 
     datastore_close(&ds);
     printf("\n%s\n", fails == 0 ? "all ok" : "FAILED");

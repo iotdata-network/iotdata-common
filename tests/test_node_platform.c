@@ -185,19 +185,19 @@ int main(void) {
     CHECK(len == 0, "no settings block: an empty report, which is still a report");
 
     static iotdata_settings_t settings;
-    iotdata_settings_defaults(&settings);
+    iotdata_settings_defaults(&settings, 0x0111);
     const idep_config_t cfgset = { .caps = &caps, .status = st_cb, .tx = tx_cb, .settings = &settings, .receive_always = true };
     len = idep_build(&cfgset, &n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
     CHECK(len > 0, "a settings block reports");
     cur = 0;
     bool saw_station = false, saw_receive = false;
     while (iotdata_kvr_next(buf, (uint8_t)len, &cur, &k, &v, &vl)) {
-        if (k == IOTDATA_NODE_SETTINGS_STATION && vl == 2 && iotdata_node_settings_get_u16(v, 0) == IOTDATA_NODE_SETTINGS_UNSET)
+        if (k == IOTDATA_NODE_SETTINGS_STATION && vl == 2 && iotdata_node_settings_get_u16(v, 0) == 0x0111)
             saw_station = true;
         if (k == IOTDATA_NODE_SETTINGS_RECEIVE && vl == IOTDATA_NODE_SETTINGS_RECEIVE_SIZE)
             saw_receive = true;
     }
-    CHECK(saw_station, "an unwritten station reads as UNSET, not as zero");
+    CHECK(saw_station, "an unwritten station reads as the one the hardware derived, not as a sentinel");
     CHECK(saw_receive, "and the receive triple is always the triple");
 
     /* a write assigns, and the answer is what is NOW TRUE -- which is the whole error channel */
@@ -229,21 +229,27 @@ int main(void) {
 
     /* A written schedule OVERRIDES the node's default; an absent entry DEFERS to it. That is the
        whole composition rule, and it is why every reader takes the default as a parameter. */
-    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS, 99) == 600, "a stated period wins");
-    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_VERSION, 99) == 99, "an unstated one defers");
-    CHECK(iotdata_settings_period_s(NULL, IOTDATA_NODE_TLV_STATUS, 99) == 99, "and no block at all defers");
+    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 600, "a written period wins");
+    CHECK(iotdata_settings_period_s(NULL, IOTDATA_NODE_TLV_STATUS) == 0, "and a node with no block at all schedules nothing");
     /* a stated entry with ON_PERIOD clear says NEVER, which is an answer and not an absence */
     iotdata_settings_report_t never = { .subject = IOTDATA_NODE_TLV_VERSION, .flags = IOTDATA_NODE_REPORT_AT_STARTUP };
     CHECK(iotdata_settings_report_set(&settings, &never), "stated");
-    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_VERSION, 99) == 0, "`do not schedule this` is not `no opinion`");
-    CHECK(iotdata_settings_at_startup(&settings, IOTDATA_NODE_TLV_VERSION, false), "and its startup flag is honoured");
-    CHECK(iotdata_settings_at_startup(&settings, IOTDATA_NODE_TLV_CONFIG, true), "an unstated subject keeps the default");
+    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_VERSION) == 0, "ON_PERIOD clear says NEVER, and never is a value");
+    CHECK(iotdata_settings_at_startup(&settings, IOTDATA_NODE_TLV_VERSION), "and its startup flag is honoured");
 
-    /* the station a node comes up as: written if written, derived otherwise */
-    CHECK(iotdata_settings_station(&settings, 0x0111) == 0x0537, "a written station wins");
+    /* the station a node comes up as: seeded from what the hardware derived, replaced by a write */
+    CHECK(iotdata_settings_station(&settings) == 0x0537, "a written station wins");
     iotdata_settings_t fresh;
-    iotdata_settings_defaults(&fresh);
-    CHECK(iotdata_settings_station(&fresh, 0x0111) == 0x0111, "an uncommissioned node keeps what its hardware says");
+    iotdata_settings_defaults(&fresh, 0x0111);
+    CHECK(iotdata_settings_station(&fresh) == 0x0111, "an uncommissioned node comes up as what its hardware says");
+
+    /* and it is seeded DENSE: every reportable subject has a record, so a report never leaves the
+       far end guessing which default this particular build happens to hold */
+    for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT; t++)
+        if (iotdata_node_tlv_is_reportable(t))
+            CHECK(iotdata_settings_report_find(&fresh, t) != NULL, iotdata_node_tlv_name(t));
+    CHECK(iotdata_settings_period_s(&fresh, IOTDATA_NODE_TLV_STATUS) == IOTDATA_SETTINGS_DEFAULT_PERIOD_STATUS_S, "status keeps its heartbeat");
+    CHECK(iotdata_settings_at_startup(&fresh, IOTDATA_NODE_TLV_VERSION), "and a node announces what it is on coming up");
 
     /* adopting one restarts the stream: ONE STATION ONE SEQUENCE means a new id is a new sequence */
     idep_node_init(&n, 0x0111, NULL, 0u);

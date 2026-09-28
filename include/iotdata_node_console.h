@@ -3,24 +3,24 @@
 #define IOTDATA_NODE_CONSOLE_H
 
 /*
- * iotdata_node_console.h — a small, generic USB-serial-JTAG command line for esp32 apps.
+ * iotdata_node_console.h — a small, generic USB-serial-JTAG console line for esp32 apps.
  *
- * Non-blocking and verb-based: a set of built-in commands (help, vers, stat, logl, boot) plus any
- * commands the app plugs in on top. Designed to be driven from a cooperative main loop — call
- * iotdata_command_poll() each pass; it drains whatever the console has and dispatches a full line.
+ * Non-blocking and verb-based: a set of built-in consoles (help, vers, stat, logl, boot) plus any
+ * consoles the app plugs in on top. Designed to be driven from a cooperative main loop — call
+ * iotdata_console_poll() each pass; it drains whatever the console has and dispatches a full line.
  * Output is plain printf (over the same USB-serial-JTAG console the app logs on), so records/status
  * come straight back over USB.
  *
- * Single-header: in ONE translation unit (the app's unity TU) define IOTDATA_COMMAND_IMPLEMENTATION
+ * Single-header: in ONE translation unit (the app's unity TU) define IOTDATA_CONSOLE_IMPLEMENTATION
  * before including; other TUs just include it for the declarations.
  *
- *   static void cmd_foo(int argc, char **argv) { (void)argc; (void)argv; iotdata_command_reply("foo!\n"); }
- *   static const iotdata_command_t app_cmds[] = { { "foo", cmd_foo, "do the foo thing" } };
- *   iotdata_command_init(app_cmds, sizeof app_cmds / sizeof app_cmds[0]);   // after boot
+ *   static void con_foo(iotdata_console_emit_fn emit, int argc, char **argv) { (void)argc; (void)argv; emit("foo!\n"); }
+ *   static const iotdata_console_t app_cons[] = { { "foo", con_foo, "do the foo thing" } };
+ *   iotdata_console_init(app_cons, sizeof app_cons / sizeof app_cons[0]);   // after boot
  *   ...
- *   for (;;) { ...; iotdata_command_poll(); }                                // non-blocking, each pass
+ *   for (;;) { ...; iotdata_console_poll(); }                                // non-blocking, each pass
  *
- * Pass (NULL, 0) for no app commands. The cmds array must live for the program's lifetime (static).
+ * Pass (NULL, 0) for no app consoles. The cons array must live for the program's lifetime (static).
  * On non-esp32 (host) builds this compiles to no-ops, so shared code can include it unconditionally.
  *
  * esp32 component requirements (the TU that defines the implementation must be in a component that
@@ -28,46 +28,41 @@
  * heap / log / esp_system come in as common dependencies.)
  */
 
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
 #include <stddef.h>
 
-typedef void (*iotdata_command_fn)(int argc, char **argv); /* argv[0] is the command name */
+typedef void (*iotdata_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/* argv[0] is the console name. */
+typedef void (*iotdata_console_fn)(iotdata_console_emit_fn emit, int argc, char **argv);
 
 typedef struct {
     const char *name;      /* the verb typed at the console            */
-    iotdata_command_fn fn; /* handler                              */
+    iotdata_console_fn fn; /* handler                              */
     const char *help;      /* one-line description for `help` (or NULL) */
-} iotdata_command_t;
+} iotdata_console_t;
 
-/* Bring up the console reader and register the app's extra commands (layered on top of the built-ins,
- * which always win a name clash). Call once, after the console is up. */
-void iotdata_command_init(const iotdata_command_t *cmds, size_t count);
-
-/* Poll the console once — NON-BLOCKING. Call every main-loop pass. Reads any pending bytes and, when a
- * full line has arrived, tokenises it (whitespace) and dispatches to the matching command. */
-void iotdata_command_poll(void);
-
-/* Emit one line of command output as a pseudo log line "C (<ms>) <message>" (see IOTDATA_COMMAND_TAG)
- * so a host-side monitor can tell command I/O apart from interleaved ESP_LOG lines — match/strip/
- * capture on the leading 'C', just like it does the I/W/E/D levels. ALL command handlers — built-in
- * and app — should print through this, one line per call (include the trailing '\n' in fmt). Plain
- * printf still works but its output won't carry the tag. */
-void iotdata_command_reply(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-
-/* ============================ implementation ============================ */
-#ifdef IOTDATA_COMMAND_IMPLEMENTATION
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdarg.h>
+#if !defined(ESP_PLATFORM)
+#include <poll.h>
+#include <unistd.h>
+#endif
 
 /* Command output is emitted as a pseudo log line "<TAG> (<ms>) <message>" — the same shape as an
  * ESP_LOG "<LEVEL> (<ms>) tag: msg" line — so a host monitor can grep/strip it by the leading level
  * letter (default 'C'), consistent with the I/W/E/D log lines it's interleaved with. Override the
  * letter before including if it clashes. */
-#ifndef IOTDATA_COMMAND_TAG
-#define IOTDATA_COMMAND_TAG "C"
+#ifndef IOTDATA_CONSOLE_TAG
+#define IOTDATA_CONSOLE_TAG "C"
 #endif
 
 #if defined(ESP_PLATFORM)
@@ -88,35 +83,49 @@ void iotdata_command_reply(const char *fmt, ...) __attribute__((format(printf, 1
 #pragma GCC diagnostic pop
 #endif
 
-void iotdata_command_reply(const char *fmt, ...) {
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
+void iotdata_console_reply(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
 #if defined(ESP_PLATFORM)
-    printf(IOTDATA_COMMAND_TAG " (%u) ", (unsigned)esp_log_timestamp()); /* ms since boot, like ESP_LOG */
+    printf(IOTDATA_CONSOLE_TAG " (%u) ", (unsigned)esp_log_timestamp()); /* ms since boot, like ESP_LOG */
 #else
-    fputs(IOTDATA_COMMAND_TAG " (0) ", stdout);
+    fputs(IOTDATA_CONSOLE_TAG " (0) ", stdout);
 #endif
     (void)vprintf(fmt, ap);
     va_end(ap);
 }
 
-#ifndef IOTDATA_COMMAND_LINE_MAX
-#define IOTDATA_COMMAND_LINE_MAX 128
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
+#ifndef IOTDATA_CONSOLE_LINE_MAX
+#define IOTDATA_CONSOLE_LINE_MAX 128
 #endif
-#ifndef IOTDATA_COMMAND_ARGC_MAX
-#define IOTDATA_COMMAND_ARGC_MAX 8
+#ifndef IOTDATA_CONSOLE_ARGC_MAX
+#define IOTDATA_CONSOLE_ARGC_MAX 8
 #endif
 
-static const iotdata_command_t *iotdata__cmd_app = NULL;
-static size_t iotdata__cmd_app_n = 0;
-static char iotdata__cmd_line[IOTDATA_COMMAND_LINE_MAX];
-static size_t iotdata__cmd_len = 0;
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
+#if !defined(ESP_PLATFORM)
+static bool iotdata_con_open = false; /* there is a stdin worth looking at, and it has not ended */
+#endif
+static const iotdata_console_t *iotdata_con_app = NULL;
+static size_t iotdata_con_app_n = 0;
+static char iotdata_con_line[IOTDATA_CONSOLE_LINE_MAX];
+static size_t iotdata_con_len = 0;
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 #if defined(ESP_PLATFORM)
 
-static esp_log_level_t iotdata__log_level = (esp_log_level_t)CONFIG_LOG_DEFAULT_LEVEL;
+static esp_log_level_t iotdata_con_log_level = (esp_log_level_t)CONFIG_LOG_DEFAULT_LEVEL;
 
-static const char *iotdata__log_name(esp_log_level_t l) {
+static const char *iotdata_con_log_name(esp_log_level_t l) {
     switch (l) {
     case ESP_LOG_NONE:
         return "none";
@@ -134,7 +143,7 @@ static const char *iotdata__log_name(esp_log_level_t l) {
         return "?";
     }
 }
-static bool iotdata__log_parse(const char *s, esp_log_level_t *out) {
+static bool iotdata_con_log_parse(const char *s, esp_log_level_t *out) {
     if (!strcmp(s, "none") || !strcmp(s, "0"))
         *out = ESP_LOG_NONE;
     else if (!strcmp(s, "error") || !strcmp(s, "1"))
@@ -151,7 +160,8 @@ static bool iotdata__log_parse(const char *s, esp_log_level_t *out) {
         return false;
     return true;
 }
-static const char *iotdata__reset_name(int r) {
+
+static const char *iotdata_con_reset_name(int r) {
     switch (r) {
     case ESP_RST_POWERON:
         return "poweron";
@@ -174,123 +184,177 @@ static const char *iotdata__reset_name(int r) {
     }
 }
 
-static void iotdata__cmd_vers(__attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
+static void iotdata_con_cmd_vers(const iotdata_console_emit_fn emit, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
     const esp_app_desc_t *const d = esp_app_get_description();
     esp_chip_info_t chip;
     esp_chip_info(&chip);
-    iotdata_command_reply("app=%s vers=%s built=%s %s\n", d ? d->project_name : "?", d ? d->version : "?", d ? d->date : "?", d ? d->time : "?");
-    iotdata_command_reply("platform=%s chip-rev=%d cores=%d idf=%s\n", CONFIG_IDF_TARGET, (int)chip.revision, (int)chip.cores, esp_get_idf_version());
+    emit("app=%s vers=%s built=%s %s\n", d ? d->project_name : "?", d ? d->version : "?", d ? d->date : "?", d ? d->time : "?");
+    emit("platform=%s chip-rev=%d cores=%d idf=%s\n", CONFIG_IDF_TARGET, (int)chip.revision, (int)chip.cores, esp_get_idf_version());
 }
 
-static void iotdata__cmd_stat(__attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
-    iotdata_command_reply("uptime=%us reset=%s\n", (unsigned)(esp_timer_get_time() / 1000000), iotdata__reset_name((int)esp_reset_reason()));
-    iotdata_command_reply("heap: free=%u min=%u largest=%u\n", (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+// ------------------------------------------------------------------------------------------------------------------------
+
+static void iotdata_con_cmd_stat(const iotdata_console_emit_fn emit, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
+    emit("uptime=%us reset=%s\n", (unsigned)(esp_timer_get_time() / 1000000), iotdata_con_reset_name((int)esp_reset_reason()));
+    emit("heap: free=%u min=%u largest=%u\n", (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
 }
 
-static void iotdata__cmd_logl(int argc, char **argv) {
+// ------------------------------------------------------------------------------------------------------------------------
+
+static void iotdata_con_cmd_logl(const iotdata_console_emit_fn emit, int argc, char **argv) {
     if (argc < 2) {
-        iotdata_command_reply("log level = %s\n", iotdata__log_name(iotdata__log_level));
+        emit("log level = %s\n", iotdata_con_log_name(iotdata_con_log_level));
         return;
     }
     esp_log_level_t lvl;
-    if (!iotdata__log_parse(argv[1], &lvl)) {
-        iotdata_command_reply("logl: unknown level '%s' (none|error|warn|info|debug|verbose | 0..5)\n", argv[1]);
+    if (!iotdata_con_log_parse(argv[1], &lvl)) {
+        emit("logl: unknown level '%s' (none|error|warn|info|debug|verbose | 0..5)\n", argv[1]);
         return;
     }
     esp_log_level_set("*", lvl); /* dynamic ceiling is CONFIG_LOG_MAXIMUM_LEVEL — can't raise past it */
-    iotdata__log_level = lvl;
-    iotdata_command_reply("log level = %s\n", iotdata__log_name(lvl));
+    iotdata_con_log_level = lvl;
+    emit("log level = %s\n", iotdata_con_log_name(lvl));
 }
 
-static void iotdata__cmd_boot(__attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
-    iotdata_command_reply("rebooting\n");
+// ------------------------------------------------------------------------------------------------------------------------
+
+static void iotdata_con_cmd_boot(const iotdata_console_emit_fn emit, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
+    emit("rebooting\n");
     fflush(stdout);
     esp_rom_delay_us(50000); /* let the reply drain out of the USB TX buffer before the reset */
     esp_restart();
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 #endif /* ESP_PLATFORM */
 
-/* Built-ins mirror the iotdata telemetry TLVs, restricted to what is knowable generically:
- *   vers ~ VERSION TLV  (app name/version/build, platform/chip, idf)
- *   stat ~ STATUS + HEALTH TLVs, generic subset (session uptime, reset reason, heap)
- * The board/persistent HEALTH+STATUS fields — cpu_temp, supply_mv, restarts, lifetime uptime — need
- * hardware or cross-boot state the generic layer doesn't own, so an app plugs those in as its own
- * command (e.g. a `health`). */
-static const iotdata_command_t iotdata__cmd_builtin[] = {
-#if defined(ESP_PLATFORM)
-    { "vers", iotdata__cmd_vers, "device firmware / platform / build version" },
-    { "stat", iotdata__cmd_stat, "device uptime, reset reason, heap" },
-    { "logl", iotdata__cmd_logl, "device loglevel — 'logl' shows, 'logl <lvl>' sets" },
-    { "boot", iotdata__cmd_boot, "device restart" },
-#endif
-};
-#define IOTDATA__BUILTIN_N (sizeof iotdata__cmd_builtin / sizeof iotdata__cmd_builtin[0])
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
-static void iotdata__print_help(void) {
-    iotdata_command_reply("commands:\n");
-    iotdata_command_reply("  %-8s %s\n", "help", "list commands");
-    for (size_t i = 0; i < IOTDATA__BUILTIN_N; i++)
-        iotdata_command_reply("  %-8s %s\n", iotdata__cmd_builtin[i].name, iotdata__cmd_builtin[i].help ? iotdata__cmd_builtin[i].help : "");
-    for (size_t i = 0; i < iotdata__cmd_app_n; i++)
-        iotdata_command_reply("  %-8s %s\n", iotdata__cmd_app[i].name, iotdata__cmd_app[i].help ? iotdata__cmd_app[i].help : "");
+static const iotdata_console_t iotdata_con_builtin[] = {
+#if defined(ESP_PLATFORM)
+    { "vers", iotdata_con_cmd_vers, "device firmware / platform / build version" },
+    { "stat", iotdata_con_cmd_stat, "device uptime, reset reason, heap" },
+    { "logl", iotdata_con_cmd_logl, "device loglevel — 'logl' shows, 'logl <lvl>' sets" },
+    { "boot", iotdata_con_cmd_boot, "device restart" },
+#endif
+    /* A terminator, so the array is never empty -- every built-in above is ESP-only, and a host
+       build would otherwise declare `= { }`, which is not C before C23. */
+    { NULL, NULL, NULL },
+};
+/* Walked to the NULL rather than by a count: on a host every built-in above is compiled out, and
+   `i < 0` on a size_t is a warning as well as a pointless loop. */
+
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
+static void iotdata_con_cmd_help(const iotdata_console_emit_fn emit) {
+    emit("commands:\n");
+    emit("  %-8s %s\n", "help", "list commands");
+    for (size_t i = 0; iotdata_con_builtin[i].name != NULL; i++)
+        emit("  %-8s %s\n", iotdata_con_builtin[i].name, iotdata_con_builtin[i].help ? iotdata_con_builtin[i].help : "");
+    for (size_t i = 0; i < iotdata_con_app_n; i++)
+        emit("  %-8s %s\n", iotdata_con_app[i].name, iotdata_con_app[i].help ? iotdata_con_app[i].help : "");
 }
 
-static void iotdata__dispatch(char *line) {
-    char *argv[IOTDATA_COMMAND_ARGC_MAX];
+// ------------------------------------------------------------------------------------------------------------------------
+
+static void iotdata_console_dispatch(char *line) {
+    char *argv[IOTDATA_CONSOLE_ARGC_MAX];
     int argc = 0;
-    for (char *tok = strtok(line, " \t"); tok != NULL && argc < IOTDATA_COMMAND_ARGC_MAX; tok = strtok(NULL, " \t"))
+    for (char *tok = strtok(line, " \t"); tok != NULL && argc < IOTDATA_CONSOLE_ARGC_MAX; tok = strtok(NULL, " \t"))
         argv[argc++] = tok;
     if (argc == 0)
         return; /* blank line */
     if (strcmp(argv[0], "help") == 0) {
-        iotdata__print_help();
+        iotdata_con_cmd_help(iotdata_console_reply);
         return;
     }
-    for (size_t i = 0; i < IOTDATA__BUILTIN_N; i++) /* built-ins win a name clash */
-        if (strcmp(argv[0], iotdata__cmd_builtin[i].name) == 0) {
-            iotdata__cmd_builtin[i].fn(argc, argv);
+    for (size_t i = 0; iotdata_con_builtin[i].name != NULL; i++) /* built-ins win a name clash */
+        if (strcmp(argv[0], iotdata_con_builtin[i].name) == 0) {
+            iotdata_con_builtin[i].fn(iotdata_console_reply, argc, argv);
             return;
         }
-    for (size_t i = 0; i < iotdata__cmd_app_n; i++)
-        if (strcmp(argv[0], iotdata__cmd_app[i].name) == 0) {
-            iotdata__cmd_app[i].fn(argc, argv);
+    for (size_t i = 0; i < iotdata_con_app_n; i++)
+        if (strcmp(argv[0], iotdata_con_app[i].name) == 0) {
+            iotdata_con_app[i].fn(iotdata_console_reply, argc, argv);
             return;
         }
-    iotdata_command_reply("unknown command '%s' (try 'help')\n", argv[0]);
+    iotdata_console_reply("unknown command '%s' (try 'help')\n", argv[0]);
 }
 
-void iotdata_command_init(const iotdata_command_t *cmds, size_t count) {
-    iotdata__cmd_app = cmds;
-    iotdata__cmd_app_n = count;
-    iotdata__cmd_len = 0;
+// ------------------------------------------------------------------------------------------------------------------------
+
+void iotdata_console_init(const iotdata_console_t *cons, size_t count) {
+    iotdata_con_app = cons;
+    iotdata_con_app_n = count;
+    iotdata_con_len = 0;
 #if defined(ESP_PLATFORM)
     usb_serial_jtag_driver_config_t cfg = { .tx_buffer_size = 256, .rx_buffer_size = 256 };
     if (usb_serial_jtag_driver_install(&cfg) == ESP_OK)
         usb_serial_jtag_vfs_use_driver(); /* route stdio through the driver so reads + printf agree */
-    iotdata_command_reply("iotdata-command: ready (type 'help')\n");
+#else
+    /* Nothing to set up: the poll in getc() asks before it reads, so stdin is left exactly as the
+       shell handed it over. A process with no terminal simply never has a byte ready. */
+    iotdata_con_open = true;
+#endif
+    iotdata_console_reply("iotdata-console: ready (try 'help')\n");
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* One byte if there is one, -1 if there is not. NEVER BLOCKS on either platform, because this is
+   called from the middle of a main loop that has a radio to service. */
+static int iotdata_con_getc(void) {
+#if defined(ESP_PLATFORM)
+    uint8_t c;
+    return (usb_serial_jtag_read_bytes(&c, 1, 0) == 1) ? (int)c : -1; /* timeout 0 -> drain the FIFO */
+#else
+    if (!iotdata_con_open)
+        return -1;
+    /* ASKED FIRST, and only read once the answer is yes.
+     *
+     * The obvious alternative is O_NONBLOCK on stdin, and it is a trap on the host this runs on:
+     * stdin and stdout of a process started from a terminal usually share one open file
+     * description, so setting it there sets it for OUTPUT too -- and a gateway that logs every
+     * frame would then start losing writes to EAGAIN the moment it got busy. poll() asks about the
+     * one descriptor we mean, changes nothing, and cannot block with a zero timeout. */
+    struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
+    if (poll(&pfd, 1, 0) <= 0 || (pfd.revents & POLLIN) == 0)
+        return -1;
+    unsigned char c;
+    const ssize_t n = read(STDIN_FILENO, &c, 1);
+    if (n == 1)
+        return (int)c;
+    if (n == 0)
+        iotdata_con_open = false; /* EOF: stop asking, or a closed stdin spins the loop */
+    return -1;
 #endif
 }
 
-void iotdata_command_poll(void) {
-#if defined(ESP_PLATFORM)
-    uint8_t c;
-    while (usb_serial_jtag_read_bytes(&c, 1, 0) == 1) { /* timeout 0 → drain the FIFO, never block */
+void iotdata_console_poll(void) {
+    int ch;
+    while ((ch = iotdata_con_getc()) >= 0) {
+        const char c = (char)ch;
         if (c == '\r')
             continue;
         if (c == '\n') {
-            iotdata__cmd_line[iotdata__cmd_len] = '\0';
-            iotdata__dispatch(iotdata__cmd_line);
-            iotdata__cmd_len = 0;
-        } else if (iotdata__cmd_len < sizeof(iotdata__cmd_line) - 1) {
-            iotdata__cmd_line[iotdata__cmd_len++] = (char)c;
+            iotdata_con_line[iotdata_con_len] = '\0';
+            iotdata_console_dispatch(iotdata_con_line);
+            iotdata_con_len = 0;
+        } else if (iotdata_con_len < sizeof(iotdata_con_line) - 1) {
+            iotdata_con_line[iotdata_con_len++] = c;
         } else {
-            iotdata__cmd_len = 0; /* overlong line → drop it */
+            iotdata_con_len = 0; /* overlong line -> drop it */
         }
     }
-#endif
 }
 
-#endif /* IOTDATA_COMMAND_IMPLEMENTATION */
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_CONSOLE_H */

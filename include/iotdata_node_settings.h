@@ -30,6 +30,9 @@
 #define IOTDATA_SETTINGS_STATE_TAG     0x53455431u /* "SET1" */
 #define IOTDATA_SETTINGS_STATE_VERSION 1u
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 typedef struct {
     uint8_t subject;
     uint16_t flags;    /* IOTDATA_NODE_REPORT_* */
@@ -49,26 +52,158 @@ typedef struct {
     iotdata_settings_report_t report[IOTDATA_SETTINGS_REPORT_MAX];
 } iotdata_settings_t;
 
-/* Unset everywhere, so a node that has never been written reads back as "nothing stated" rather
-   than as a schedule of zeroes. A station of UNSET means "use what I derived from my hardware". */
-static inline void iotdata_settings_defaults(iotdata_settings_t *const s) {
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// THE DEFAULTS UNDER THE SETTINGS
+//
+// What a node comes up as before anything has been written to it -- the values iotdata_settings_defaults()
+// SEEDS, not values a reader falls back to. Nothing reads them at run time: seeding copies them into
+// the settings block once and from then on the block is the only answer to the question.
+//
+// They live here rather than in one node's own module because a default that each node picks
+// separately is not a default, it is a coincidence. (They were local to the relay. The gateway,
+// having no copy, came up with ZERO -- no startup burst, no periodic anything -- which nobody
+// decided and nobody could see.)
+//
+// An application overrides any of them before including this header.
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#ifndef IOTDATA_SETTINGS_DEFAULT_STARTUP
+#define IOTDATA_SETTINGS_DEFAULT_STARTUP ((1u << IOTDATA_NODE_TLV_VERSION) | (1u << IOTDATA_NODE_TLV_VARIANT))
+#endif
+
+/* Six hours. Slow on purpose: STATUS is a heartbeat, and on a shared 2.4kbps channel a fleet's
+   heartbeats are the traffic nobody accounted for. */
+#ifndef IOTDATA_SETTINGS_DEFAULT_PERIOD_STATUS_S
+#define IOTDATA_SETTINGS_DEFAULT_PERIOD_STATUS_S 21600u
+#endif
+
+/* How long the receiver stays on, and how often it opens. An application that listens on some
+   other cadence overrides these before including; what matters is that the node HAS an answer. */
+#ifndef IOTDATA_SETTINGS_DEFAULT_WINDOW_MS
+#define IOTDATA_SETTINGS_DEFAULT_WINDOW_MS 5000u
+#endif
+#ifndef IOTDATA_SETTINGS_DEFAULT_INTERVAL_S
+#define IOTDATA_SETTINGS_DEFAULT_INTERVAL_S 60u
+#endif
+
+/* Spread the startup burst over this window. A fleet that lost power together comes back together,
+   and without this every node in it would announce itself in the same second. */
+#ifndef IOTDATA_SETTINGS_DEFAULT_STARTUP_BACKOFF_MS
+#define IOTDATA_SETTINGS_DEFAULT_STARTUP_BACKOFF_MS 30000u
+#endif
+
+/*
+ * EVERY SETTING HAS A VALUE, and this is where they come from before anybody has said otherwise.
+ *
+ * There is no "unset". A setting works exactly as a config row does: it has a default -- derived
+ * from the hardware, fixed by the build, or stated by the configuration on a host -- and a write
+ * replaces it. Nothing reverts, because "go back to the default" is expressible as setting the
+ * default, and a node that could hold NO answer would make every reader carry a fallback and every
+ * reader's fallback a second place for the truth to live.
+ *
+ * SEEDED DENSELY, one report record per reportable type, and that is deliberate rather than
+ * incidental. A settings report that omits a subject makes whoever asked guess the default from a
+ * specification, across a fleet whose builds do not all share one -- and that guess is exactly what
+ * cannot be checked from the other end of a radio link. The records cost nothing to keep: the array
+ * is inside the persisted struct either way, so only the report on the air is longer.
+ *
+ * `derived` is what this node is called when nobody has said otherwise: its MAC-derived station on
+ * a device, whatever the configuration says on a host.
+ */
+static inline void iotdata_settings_defaults(iotdata_settings_t *const s, const uint16_t derived) {
     if (s == NULL)
         return;
     *s = (iotdata_settings_t){ 0 };
-    s->station = IOTDATA_NODE_SETTINGS_UNSET;
-    s->window_ms = IOTDATA_NODE_SETTINGS_UNSET;
-    s->interval_s = IOTDATA_NODE_SETTINGS_UNSET;
-    s->offset_s = IOTDATA_NODE_SETTINGS_UNSET;
+    s->station = derived;
+    s->window_ms = (uint16_t)IOTDATA_SETTINGS_DEFAULT_WINDOW_MS;
+    s->interval_s = (uint16_t)IOTDATA_SETTINGS_DEFAULT_INTERVAL_S;
+    s->offset_s = 0;
+    for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT && s->report_count < (uint8_t)IOTDATA_SETTINGS_REPORT_MAX; t++) {
+        if (!iotdata_node_tlv_is_reportable(t))
+            continue; /* a type nobody can ask for has no schedule to state */
+        const bool at_startup = ((IOTDATA_SETTINGS_DEFAULT_STARTUP >> t) & 1u) != 0u;
+        const uint16_t period = (t == IOTDATA_NODE_TLV_STATUS) ? (uint16_t)IOTDATA_SETTINGS_DEFAULT_PERIOD_STATUS_S : 0u;
+        s->report[s->report_count++] = (iotdata_settings_report_t){
+            .subject = t,
+            .flags = (uint16_t)((at_startup ? IOTDATA_NODE_REPORT_AT_STARTUP : 0u) | ((period > 0u) ? IOTDATA_NODE_REPORT_ON_PERIOD : 0u)),
+            .period_s = period,
+            .change_s = 0,
+            .events = 0,
+        };
+    }
 }
 
-/* Register as a state block. Must be called before iotdata_state_load(), like any other block. */
+/* The snapshot, kept as the state layer's restore-to image AND as the answer to "what would this
+   have been": the only way to put a value back to its default is to know the default and state it,
+   so something has to be able to say what it is. */
+__attribute__((unused)) static iotdata_settings_t _iotdata_settings_default;
+
+/*
+ * PINNED, the same idea config rows have and for the same reason: stated on the command line, and
+ * so immutable for as long as this run lasts. The argument is a forcing function -- somebody at the
+ * machine said what this is -- and a write that took would leave the node disagreeing with the
+ * command that started it, until the next restart silently undid the write. Refused from the air
+ * AND from the console; the escape is to restart without the argument.
+ *
+ * A bit per scalar and a bit per subject, because the schedule is pinned per subject: an installer
+ * who fixed the STATUS heartbeat has said nothing about DIAGNOSTICS.
+ */
+#define IOTDATA_SETTINGS_PIN_STATION  0x01u
+#define IOTDATA_SETTINGS_PIN_WINDOW   0x02u
+#define IOTDATA_SETTINGS_PIN_INTERVAL 0x04u
+#define IOTDATA_SETTINGS_PIN_OFFSET   0x08u
+
+__attribute__((unused)) static uint8_t _iotdata_settings_pin;
+__attribute__((unused)) static uint32_t _iotdata_settings_pin_report; /* bit N = subject N's schedule */
+
+static inline void iotdata_settings_pin(const uint8_t which) {
+    _iotdata_settings_pin |= which;
+}
+static inline bool iotdata_settings_is_pinned(const uint8_t which) {
+    return (_iotdata_settings_pin & which) != 0u;
+}
+static inline void iotdata_settings_pin_report(const uint8_t subject) {
+    if (subject < 32u)
+        _iotdata_settings_pin_report |= (uint32_t)1u << subject;
+}
+static inline bool iotdata_settings_report_is_pinned(const uint8_t subject) {
+    return (subject < 32u) && (((_iotdata_settings_pin_report >> subject) & 1u) != 0u);
+}
+
+/*
+ * WHERE A WRITE PERSISTS TO, when the state blob is not the answer -- the same swappable sink the
+ * config framework has, and for the same reason.
+ *
+ * On a device the settings are a state block and that is right: an opaque image, written whole. On
+ * a HOST the configuration is a file a person edits, and there is only one of them -- settings and
+ * config fuse into that same file. A host attaches a sink that writes into it, and then settings
+ * are not a second store hidden in a blob nobody can inspect: they are lines beside the config
+ * lines, read by the same loader and visible to whoever has to work out what a box is doing.
+ */
+typedef bool (*iotdata_settings_saver_fn)(const iotdata_settings_t *s);
+__attribute__((unused)) static iotdata_settings_saver_fn _iotdata_settings_saver = NULL;
+static inline void iotdata_settings_saver_attach(const iotdata_settings_saver_fn fn) {
+    _iotdata_settings_saver = fn;
+}
+
+/* THIS build's defaults, frozen. attach() does it; a host with no state block calls it directly,
+   because the console's "(default N)" has to come from somewhere either way. */
+static inline void iotdata_settings_freeze(const iotdata_settings_t *const s) {
+    if (s != NULL)
+        _iotdata_settings_default = *s;
+}
+
+/* Register as a state block. Must be called before iotdata_state_load(), like any other block.
+ *
+ * SNAPSHOTS what the application seeded, rather than overwriting it. Whatever is in `s` at this
+   point IS this build's default, and it is what the state layer restores to when nothing has been
+   persisted -- the same relationship a config row has with its table entry. So call
+   iotdata_settings_defaults() first, adjust anything this node states differently, then attach. */
 static inline bool iotdata_settings_attach(iotdata_settings_t *const s, iotdata_node_state_t *const state) {
     if (s == NULL || state == NULL)
         return false;
-    static iotdata_settings_t defaults;
-    iotdata_settings_defaults(&defaults);
-    iotdata_settings_defaults(s);
-    return iotdata_state_insert(state, IOTDATA_SETTINGS_STATE_TAG, IOTDATA_SETTINGS_STATE_VERSION, s, sizeof(*s), &defaults);
+    iotdata_settings_freeze(s);
+    return iotdata_state_insert(state, IOTDATA_SETTINGS_STATE_TAG, IOTDATA_SETTINGS_STATE_VERSION, s, sizeof(*s), &_iotdata_settings_default);
 }
 
 /* The schedule for one subject, or NULL if none was ever set for it. */
@@ -106,18 +241,21 @@ static inline bool iotdata_settings_report_set(iotdata_settings_t *const s, cons
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // WHAT THE NODE ASKS
 //
-// Every reader takes the node's own default and returns it when the setting is NOT STATED. That is
-// the whole composition rule: a written entry overrides, an absent one defers, and a node with no
-// settings block at all behaves exactly as it did before there was one. `s` may be NULL throughout.
+// Every reader returns THE VALUE. No fallback argument, because there is no case where the block
+// does not hold one: seeding filled it, persistence restored it, or a write replaced it. A reader
+// that took a default would put a second copy of the answer at each of these call sites, and the
+// copies would drift -- which is exactly how the gateway came to run with a zero schedule.
+//
+// `s` may still be NULL, for a node built without a settings block at all; the readers answer with
+// the type's own nothing, and a caller that cares tests the pointer once at wiring time.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* The station to come up as. A written one wins; otherwise whatever the hardware derived, which is
-   what an uncommissioned node has. */
-static inline uint16_t iotdata_settings_station(const iotdata_settings_t *const s, const uint16_t derived) {
-    if (s == NULL || s->station == IOTDATA_NODE_SETTINGS_UNSET)
-        return derived;
-    return s->station;
+/* The station to come up as -- seeded from the hardware-derived id, replaced by commissioning. */
+static inline uint16_t iotdata_settings_station(const iotdata_settings_t *const s) {
+    return (s != NULL) ? s->station : 0u;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline uint16_t _iotdata_settings_flags(const iotdata_settings_t *const s, const uint8_t subject) {
     const iotdata_settings_report_t *const r = iotdata_settings_report_find(s, subject);
@@ -125,31 +263,26 @@ static inline uint16_t _iotdata_settings_flags(const iotdata_settings_t *const s
 }
 
 /* Emit this subject once at boot? */
-static inline bool iotdata_settings_at_startup(const iotdata_settings_t *const s, const uint8_t subject, const bool dflt) {
-    if (iotdata_settings_report_find(s, subject) == NULL)
-        return dflt;
+static inline bool iotdata_settings_at_startup(const iotdata_settings_t *const s, const uint8_t subject) {
     return (_iotdata_settings_flags(s, subject) & IOTDATA_NODE_REPORT_AT_STARTUP) != 0u;
 }
 
-/* The on-period cadence in seconds; 0 means never. A stated entry with ON_PERIOD clear says NEVER,
-   which is a real answer and not an absence -- that is the difference between "do not schedule
-   this" and "I have no opinion". */
-static inline uint16_t iotdata_settings_period_s(const iotdata_settings_t *const s, const uint8_t subject, const uint16_t dflt) {
+/* The on-period cadence in seconds; 0 means NEVER, and never is a value. ON_PERIOD clear is how a
+   schedule says "do not run this one" -- it is an answer, which is why it needs no sentinel. */
+static inline uint16_t iotdata_settings_period_s(const iotdata_settings_t *const s, const uint8_t subject) {
     const iotdata_settings_report_t *const r = iotdata_settings_report_find(s, subject);
-    if (r == NULL)
-        return dflt;
-    if ((r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) == 0u || r->period_s == IOTDATA_NODE_SETTINGS_UNSET)
+    if (r == NULL || (r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) == 0u)
         return 0u;
     return r->period_s;
 }
 
-static inline uint16_t iotdata_settings_window_ms(const iotdata_settings_t *const s, const uint16_t dflt) {
-    return (s == NULL || s->window_ms == IOTDATA_NODE_SETTINGS_UNSET) ? dflt : s->window_ms;
+static inline uint16_t iotdata_settings_window_ms(const iotdata_settings_t *const s) {
+    return (s != NULL) ? s->window_ms : 0u;
 }
 
 /* How often the window opens, in MILLISECONDS to match what a scheduler counts in. */
-static inline uint32_t iotdata_settings_interval_ms(const iotdata_settings_t *const s, const uint32_t dflt) {
-    return (s == NULL || s->interval_s == IOTDATA_NODE_SETTINGS_UNSET) ? dflt : (uint32_t)s->interval_s * 1000u;
+static inline uint32_t iotdata_settings_interval_ms(const iotdata_settings_t *const s) {
+    return (s != NULL) ? (uint32_t)s->interval_s * 1000u : 0u;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -203,7 +336,7 @@ static inline bool iotdata_settings_apply(iotdata_settings_t *const s, const uin
                    unassignable and IOTDATA_STATION_MAX is broadcast, so the usable range is
                    strictly between them. A write outside it does not take, and the read-back says
                    so -- which is the whole error channel. */
-                if (want != s->station && (want == IOTDATA_NODE_SETTINGS_UNSET || (want != 0u && want < IOTDATA_STATION_MAX)))
+                if (want != s->station && want != 0u && want < IOTDATA_STATION_MAX && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_STATION))
                     s->station = want, changed = true;
             }
             break;
@@ -217,15 +350,22 @@ static inline bool iotdata_settings_apply(iotdata_settings_t *const s, const uin
                     .events = iotdata_node_settings_get_u16(val, 7),
                 };
                 const iotdata_settings_report_t *const had = iotdata_settings_report_find(s, r.subject);
-                if ((had == NULL || memcmp(had, &r, sizeof(r)) != 0) && iotdata_settings_report_set(s, &r))
+                if ((had == NULL || memcmp(had, &r, sizeof(r)) != 0) && !iotdata_settings_report_is_pinned(r.subject) && iotdata_settings_report_set(s, &r))
                     changed = true;
             }
             break;
         case IOTDATA_NODE_SETTINGS_RECEIVE:
             if (vlen == IOTDATA_NODE_SETTINGS_RECEIVE_SIZE) {
+                /* The triple arrives whole, but it is PINNED a field at a time: a write carrying
+                   all three where one is pinned takes the other two rather than being refused
+                   outright, and the read-back that follows is what says which. */
                 const uint16_t w = iotdata_node_settings_get_u16(val, 0), i = iotdata_node_settings_get_u16(val, 2), o = iotdata_node_settings_get_u16(val, 4);
-                if (w != s->window_ms || i != s->interval_s || o != s->offset_s)
-                    s->window_ms = w, s->interval_s = i, s->offset_s = o, changed = true;
+                if (w != s->window_ms && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_WINDOW))
+                    s->window_ms = w, changed = true;
+                if (i != s->interval_s && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_INTERVAL))
+                    s->interval_s = i, changed = true;
+                if (o != s->offset_s && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_OFFSET))
+                    s->offset_s = o, changed = true;
             }
             break;
         default:
@@ -237,8 +377,473 @@ static inline bool iotdata_settings_apply(iotdata_settings_t *const s, const uin
 
 /* Persist NOW rather than on the tick. Write-behind would make the response a promise: a power cut
    between the answer and the flush leaves the node disagreeing with what it just told a manager. */
-static inline bool iotdata_settings_commit(iotdata_node_state_t *const state) {
+/* EITHER sink counts, which is the point of there being two: a node persists through its state
+   block and a host through the file it shares with the config. */
+static inline bool iotdata_settings_persists(const iotdata_node_state_t *const state) {
+    return (_iotdata_settings_saver != NULL) || (state != NULL);
+}
+
+static inline bool iotdata_settings_commit(iotdata_settings_t *const s, iotdata_node_state_t *const state) {
+    if (_iotdata_settings_saver != NULL)
+        return _iotdata_settings_saver(s);
     return (state != NULL) && iotdata_state_flush(state);
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// THE FILE FACE -- settings as named lines, so a host can keep them where it keeps everything else
+//
+// ONE FILE, ONE LOADER. On a linux box the configuration is a file a person edits, and there is no
+// good reason for the protocol's own values to live somewhere else -- least of all in an opaque
+// state blob beside it, which is what they did. A host routes a line by its name: anything starting
+// "node-" is a setting, everything else is a config row, and the two share the reader, the writer
+// and the precedence rules. On a device none of this compiles in to anything that runs; the state
+// block is still the store there, and a blob is the right shape for NVS.
+//
+// THE NAMES ARE THE DENSE MODEL SPELLED OUT. One line per settable thing, including the ones at
+// their default, because the whole argument for density is that a fleet of mixed builds does not
+// share one default and a file that omits a value is telling you to go and guess it.
+//
+//     node-station = 1335
+//     node-window  = 5000                 ms the receiver stays on
+//     node-report-status-at-startup = off
+//     node-report-status-period     = 21600   seconds, or "never"
+//
+// NO STDIO. This header is included by firmware that has no printf worth the flash, so the two
+// conversions it needs are written out rather than borrowed.
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define IOTDATA_SETTINGS_KEY_PREFIX "node-"
+#define IOTDATA_SETTINGS_KEY_COUNT  (4 + 2 * IOTDATA_NODE_TLV_SYSTEM_COUNT)
+#define IOTDATA_SETTINGS_KEY_MAX    64
+
+/* Append, and say whether it all fitted. A truncated key would silently name a different setting,
+   so every caller checks rather than trusting the buffer. */
+static inline bool _iotdata_settings_cat(char *const out, const size_t size, size_t *const n, const char *add) {
+    for (; *add != '\0'; add++) {
+        if (*n + 1u >= size)
+            return false;
+        out[(*n)++] = *add;
+    }
+    out[*n] = '\0';
+    return true;
+}
+
+static inline bool _iotdata_settings_u2a(uint32_t v, char *const out, const size_t size) {
+    char rev[12];
+    size_t n = 0;
+    do {
+        rev[n++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    } while (v != 0u && n < sizeof(rev));
+    if (n + 1u > size)
+        return false;
+    for (size_t i = 0; i < n; i++)
+        out[i] = rev[n - 1u - i];
+    out[n] = '\0';
+    return true;
+}
+
+/* Decimal or 0x-hex. Nothing else: no "unset", no "default", because a setting holds a value and a
+   value is all this has to read. */
+static inline bool _iotdata_settings_a2u(const char *const t, uint32_t *const out) {
+    const char *d = t;
+    const bool hex = (d[0] == '0' && (d[1] | 0x20) == 'x');
+    uint32_t v = 0;
+    unsigned n = 0;
+    for (d += hex ? 2 : 0; *d != '\0'; d++, n++) {
+        uint32_t c;
+        if (*d >= '0' && *d <= '9')
+            c = (uint32_t)(*d - '0');
+        else if (hex && (*d | 0x20) >= 'a' && (*d | 0x20) <= 'f')
+            c = (uint32_t)((*d | 0x20) - 'a') + 10u;
+        else
+            return false;
+        v = v * (hex ? 16u : 10u) + c;
+    }
+    *out = v;
+    return n > 0;
+}
+
+static inline bool _iotdata_settings_a2b(const char *const t, bool *const out) {
+    if (strcmp(t, "on") == 0 || strcmp(t, "true") == 0 || strcmp(t, "yes") == 0 || strcmp(t, "1") == 0)
+        *out = true;
+    else if (strcmp(t, "off") == 0 || strcmp(t, "false") == 0 || strcmp(t, "no") == 0 || strcmp(t, "0") == 0)
+        *out = false;
+    else
+        return false;
+    return true;
+}
+
+/* Index -> subject, for the two-keys-per-subject half of the space. */
+static inline uint8_t _iotdata_settings_key_subject(const int i) {
+    return (uint8_t)((i - 4) / 2);
+}
+static inline bool _iotdata_settings_key_is_startup(const int i) {
+    return ((i - 4) % 2) == 0;
+}
+
+/* The name of key `i`, or false if that index names nothing -- a type that cannot be reported has
+   no schedule, so its two slots exist in the index space and never in a file. */
+static inline bool iotdata_settings_key_name(const int i, char *const out, const size_t size) {
+    if (out == NULL || size == 0 || i < 0 || i >= IOTDATA_SETTINGS_KEY_COUNT)
+        return false;
+    size_t n = 0;
+    out[0] = '\0';
+    if (!_iotdata_settings_cat(out, size, &n, IOTDATA_SETTINGS_KEY_PREFIX))
+        return false;
+    if (i < 4) {
+        static const char *const scalar[4] = { "station", "window", "interval", "offset" };
+        return _iotdata_settings_cat(out, size, &n, scalar[i]);
+    }
+    const uint8_t subject = _iotdata_settings_key_subject(i);
+    const char *const name = iotdata_node_tlv_name(subject);
+    if (name == NULL || !iotdata_node_tlv_is_reportable(subject))
+        return false;
+    return _iotdata_settings_cat(out, size, &n, "report-") && _iotdata_settings_cat(out, size, &n, name) && _iotdata_settings_cat(out, size, &n, _iotdata_settings_key_is_startup(i) ? "-at-startup" : "-period");
+}
+
+/* Names match the way config row names do: case-insensitively, with `_` and `-` the same letter.
+   A file, a command line and a C identifier all spell the same setting differently, and matching
+   loosely here is what lets the collision check below compare a row's NAME -- which is its macro
+   symbol, "STATION_ID" -- against a prefix written "node-". */
+static inline bool _iotdata_settings_same(const char *a, const char *b, const bool prefix) {
+    while (*a != '\0' && *b != '\0' && (((*a | 0x20) == (*b | 0x20)) || ((*a == '_' || *a == '-') && (*b == '_' || *b == '-'))))
+        a++, b++;
+    return prefix ? (*b == '\0') : (*a == '\0' && *b == '\0');
+}
+
+static inline int iotdata_settings_key_index(const char *const key) {
+    if (key == NULL)
+        return -1;
+    char name[IOTDATA_SETTINGS_KEY_MAX];
+    for (int i = 0; i < IOTDATA_SETTINGS_KEY_COUNT; i++)
+        if (iotdata_settings_key_name(i, name, sizeof(name)) && _iotdata_settings_same(key, name, false))
+            return i;
+    return -1;
+}
+
+/* Is this line ours at all? The routing rule, in one place, so a host's loader does not have to
+   know how the names are built -- only that a name beginning with the prefix belongs to settings. */
+static inline bool iotdata_settings_key_is_ours(const char *const key) {
+    return (key != NULL) && _iotdata_settings_same(key, IOTDATA_SETTINGS_KEY_PREFIX, true);
+}
+
+static inline bool iotdata_settings_key_read(const iotdata_settings_t *const s, const int i, char *const out, const size_t size) {
+    if (s == NULL || out == NULL || size == 0 || i < 0 || i >= IOTDATA_SETTINGS_KEY_COUNT)
+        return false;
+    if (i < 4) {
+        static const size_t off[4] = { 0, 1, 2, 3 };
+        const uint16_t v = (off[i] == 0) ? s->station : (off[i] == 1) ? s->window_ms : (off[i] == 2) ? s->interval_s : s->offset_s;
+        return _iotdata_settings_u2a(v, out, size);
+    }
+    const uint8_t subject = _iotdata_settings_key_subject(i);
+    const iotdata_settings_report_t *const r = iotdata_settings_report_find(s, subject);
+    if (r == NULL)
+        return false;
+    if (_iotdata_settings_key_is_startup(i)) {
+        size_t n = 0;
+        out[0] = '\0';
+        return _iotdata_settings_cat(out, size, &n, (r->flags & IOTDATA_NODE_REPORT_AT_STARTUP) ? "on" : "off");
+    }
+    if ((r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) == 0u) {
+        size_t n = 0;
+        out[0] = '\0';
+        return _iotdata_settings_cat(out, size, &n, "never"); /* a value, and it reads as one */
+    }
+    return _iotdata_settings_u2a(r->period_s, out, size);
+}
+
+/*
+ * Apply one line. LOCAL AUTHORITY, so pins are not consulted: a pin is set FROM the command line
+ * after the command line has been applied, exactly as a config row's is, and a file read at startup
+ * is the layer a pin protects rather than a write it refuses.
+ *
+ * Returns false on a value this build cannot use, so a loader can name the line that is wrong.
+ */
+static inline bool iotdata_settings_key_write(iotdata_settings_t *const s, const int i, const char *const text) {
+    if (s == NULL || text == NULL || i < 0 || i >= IOTDATA_SETTINGS_KEY_COUNT)
+        return false;
+    uint32_t v = 0;
+    if (i < 4) {
+        if (!_iotdata_settings_a2u(text, &v) || v > 0xFFFFu)
+            return false;
+        if (i == 0 && !iotdata_station_is_assignable((uint16_t)v))
+            return false;
+        if (i == 0)
+            s->station = (uint16_t)v;
+        else if (i == 1)
+            s->window_ms = (uint16_t)v;
+        else if (i == 2)
+            s->interval_s = (uint16_t)v;
+        else
+            s->offset_s = (uint16_t)v;
+        return true;
+    }
+    const uint8_t subject = _iotdata_settings_key_subject(i);
+    if (!iotdata_node_tlv_is_reportable(subject))
+        return false;
+    /* stated whole: start from what is already there, so setting one half keeps the other */
+    const iotdata_settings_report_t *const cur = iotdata_settings_report_find(s, subject);
+    iotdata_settings_report_t r = (cur != NULL) ? *cur : (iotdata_settings_report_t){ .subject = subject, .flags = 0, .period_s = 0, .change_s = 0, .events = 0 };
+    r.subject = subject;
+    if (_iotdata_settings_key_is_startup(i)) {
+        bool on = false;
+        if (!_iotdata_settings_a2b(text, &on))
+            return false;
+        r.flags = (uint16_t)(on ? (r.flags | IOTDATA_NODE_REPORT_AT_STARTUP) : (r.flags & (uint16_t)~IOTDATA_NODE_REPORT_AT_STARTUP));
+    } else {
+        if (strcmp(text, "never") == 0 || strcmp(text, "off") == 0)
+            v = 0u;
+        else if (!_iotdata_settings_a2u(text, &v) || v > 0xFFFFu)
+            return false;
+        r.period_s = (uint16_t)v;
+        r.flags = (uint16_t)((r.period_s > 0u) ? (r.flags | IOTDATA_NODE_REPORT_ON_PERIOD) : (r.flags & (uint16_t)~IOTDATA_NODE_REPORT_ON_PERIOD));
+    }
+    return iotdata_settings_report_set(s, &r);
+}
+
+/* Pin key `i` -- what a host calls for each setting that appeared on ITS command line. */
+/* The four scalar pins ARE the four scalar indices, which is what lets this be a shift rather than
+   a switch -- and what makes reordering either list a silent misfire, so the compiler holds them
+   together instead. */
+_Static_assert(IOTDATA_SETTINGS_PIN_STATION == (1u << 0) && IOTDATA_SETTINGS_PIN_WINDOW == (1u << 1) && IOTDATA_SETTINGS_PIN_INTERVAL == (1u << 2) && IOTDATA_SETTINGS_PIN_OFFSET == (1u << 3),
+               "the scalar pin bits must match the scalar key indices");
+
+static inline void iotdata_settings_key_pin(const int i) {
+    if (i < 0 || i >= IOTDATA_SETTINGS_KEY_COUNT)
+        return;
+    if (i < 4)
+        iotdata_settings_pin((uint8_t)(1u << i)); /* STATION, WINDOW, INTERVAL, OFFSET, in order */
+    else
+        iotdata_settings_pin_report(_iotdata_settings_key_subject(i));
+}
+
+static inline bool iotdata_settings_key_is_pinned(const int i) {
+    if (i < 0 || i >= IOTDATA_SETTINGS_KEY_COUNT)
+        return false;
+    return (i < 4) ? iotdata_settings_is_pinned((uint8_t)(1u << i)) : iotdata_settings_report_is_pinned(_iotdata_settings_key_subject(i));
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#ifdef IOTDATA_NODE_CONSOLE_H
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// THE CONSOLE
+//
+// `node`, the twin of `conf`: same shape, same place, appearing by itself when a console exists.
+// CONFIG is what the device can be set to; SETTINGS is what the PROTOCOL can be set to, and the two
+// stay apart here for the same reason they stay apart on the wire.
+//
+// IT SAYS WHAT THE DEFAULT WAS, which is the whole reason to have it. Every value here is stated --
+// there is no "unset" to put a field back with -- so getting back to a default means knowing what
+// the default is and writing it. That is a deliberate trade: a fleet of mixed builds does not share
+// one default, so "revert" would mean something different on each node, whereas a value does not.
+// The listing prints the current value and, where they differ, the one this build came up with.
+//
+//     node                          everything, with defaults where they differ
+//     node station [<id>]
+//     node window  [<ms>]           how long the receiver stays on
+//     node interval [<s>]           how often it opens
+//     node report [<type> [...]]    at-startup on|off, period <s>|off
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static iotdata_settings_t *_iotdata_settings_console = NULL;
+static iotdata_node_state_t *_iotdata_settings_console_state = NULL;
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline void iotdata_settings_console_attach(iotdata_settings_t *const s, iotdata_node_state_t *const state) {
+    _iotdata_settings_console = s;
+    _iotdata_settings_console_state = state;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+/* A TLV type by name, for the subject of a report. Generated from the type table rather than a list
+   of its own, so a type added there is addressable here without anyone remembering to say so. */
+static inline int _iotdata_settings_subject(const char *const want) {
+    for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT; t++) {
+        const char *const n = iotdata_node_tlv_name(t);
+        if (n != NULL && iotdata_node_tlv_is_reportable(t)) {
+            const char *a = n, *b = want;
+            while (*a != '\0' && *b != '\0' && ((*a | 0x20) == (*b | 0x20)))
+                a++, b++;
+            if (*a == '\0' && *b == '\0')
+                return (int)t;
+        }
+    }
+    return -1;
+}
+
+static inline void _iotdata_settings_show_field(const iotdata_console_emit_fn emit, const char *const name, const unsigned value, const unsigned dflt, const char *const unit, const bool pinned) {
+    if (pinned)
+        emit("  %-14s %u%s PINNED on the command line%s\n", name, value, unit, (value == dflt) ? "" : " (default differs)");
+    else if (value == dflt)
+        emit("  %-14s %u%s\n", name, value, unit);
+    else
+        emit("  %-14s %u%s (default %u%s)\n", name, value, unit, dflt, unit);
+}
+
+static inline void _iotdata_settings_show_report(const iotdata_console_emit_fn emit, const iotdata_settings_t *const s, const uint8_t subject) {
+    const iotdata_settings_report_t *const r = iotdata_settings_report_find(s, subject);
+    const char *const name = iotdata_node_tlv_name(subject);
+    if (r == NULL) { /* only a subject the table has no room for -- seeding gives every other one a record */
+        emit("  %-14s (no record: the schedule is full)\n", (name != NULL) ? name : "?");
+        return;
+    }
+    /* ON_PERIOD clear prints as "never" rather than as a zero with a caveat beside it: the zero is
+       not a missing number, it is the answer. Two emits rather than a formatted buffer, so this
+       file needs nothing of stdio beyond the callback it was handed. */
+    emit("  %-14s at-startup=%-3s period(s)=", (name != NULL) ? name : "?", (r->flags & IOTDATA_NODE_REPORT_AT_STARTUP) ? "on" : "off");
+    if ((r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) != 0u)
+        emit("%-8u", (unsigned)r->period_s);
+    else
+        emit("%-8s", "never");
+    emit(" on-change=%-3s on-event=%s%s\n", (r->flags & IOTDATA_NODE_REPORT_ON_CHANGE) ? "on" : "off", (r->flags & IOTDATA_NODE_REPORT_ON_EVENT) ? "on" : "off",
+         iotdata_settings_report_is_pinned(subject) ? "  PINNED" : "");
+}
+
+static void iotdata_settings_console(const iotdata_console_emit_fn emit, const int argc, char **const argv) {
+    iotdata_settings_t *const s = _iotdata_settings_console;
+    if (s == NULL) {
+        emit("node: this node keeps no protocol settings\n");
+        return;
+    }
+    const bool persists = iotdata_settings_persists(_iotdata_settings_console_state);
+
+    if (argc < 2) {
+        emit("node: protocol settings%s\n", persists ? "" : " (NOT PERSISTED: nowhere to write them)");
+        _iotdata_settings_show_field(emit, "station", (unsigned)iotdata_settings_station(s), (unsigned)_iotdata_settings_default.station, "", iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_STATION));
+        _iotdata_settings_show_field(emit, "window", (unsigned)iotdata_settings_window_ms(s), (unsigned)_iotdata_settings_default.window_ms, "ms", iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_WINDOW));
+        _iotdata_settings_show_field(emit, "interval", (unsigned)(iotdata_settings_interval_ms(s) / 1000u), (unsigned)_iotdata_settings_default.interval_s, "s", iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_INTERVAL));
+        emit("  reports:\n");
+        for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT; t++)
+            if (iotdata_node_tlv_is_reportable(t))
+                _iotdata_settings_show_report(emit, s, t);
+        return;
+    }
+
+    uint32_t v = 0;
+    bool wrote = false;
+    if (strcmp(argv[1], "station") == 0 || strcmp(argv[1], "window") == 0 || strcmp(argv[1], "interval") == 0) {
+        uint16_t *const field = (strcmp(argv[1], "station") == 0) ? &s->station : (strcmp(argv[1], "window") == 0) ? &s->window_ms : &s->interval_s;
+        const uint8_t pin = (uint8_t)((strcmp(argv[1], "station") == 0) ? IOTDATA_SETTINGS_PIN_STATION : (strcmp(argv[1], "window") == 0) ? IOTDATA_SETTINGS_PIN_WINDOW : IOTDATA_SETTINGS_PIN_INTERVAL);
+        if (argc < 3) {
+            const uint16_t d = (strcmp(argv[1], "station") == 0) ? _iotdata_settings_default.station : (strcmp(argv[1], "window") == 0) ? _iotdata_settings_default.window_ms : _iotdata_settings_default.interval_s;
+            _iotdata_settings_show_field(emit, argv[1], (unsigned)*field, (unsigned)d, "", iotdata_settings_is_pinned(pin));
+            return;
+        }
+        /* the console is refused too, not only the radio: the argument was somebody's decision about
+           this box, and "unless you are sitting at it" is a weaker claim than the one they made */
+        if (iotdata_settings_is_pinned(pin)) {
+            emit("%s: PINNED on the command line -- restart without that argument to change it\n", argv[1]);
+            return;
+        }
+        if (!_iotdata_settings_a2u(argv[2], &v) || (v > 0xFFFFu)) {
+            emit("%s: '%s' is not a number\n", argv[1], argv[2]);
+            return;
+        }
+        /* A station is checked against the protocol's own rule, not just the field's width: 0 is not
+           a station and the broadcast id would make this node answer every broadcast as its own. */
+        if (strcmp(argv[1], "station") == 0 && !iotdata_station_is_assignable((uint16_t)v)) {
+            emit("station: %u is not assignable (1..%u)\n", (unsigned)v, (unsigned)IOTDATA_STATION_ASSIGNABLE_MAX);
+            return;
+        }
+        *field = (uint16_t)v;
+        wrote = true;
+    } else if (strcmp(argv[1], "report") == 0) {
+        if (argc < 3) {
+            for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT; t++)
+                if (iotdata_node_tlv_is_reportable(t))
+                    _iotdata_settings_show_report(emit, s, t);
+            return;
+        }
+        const int subject = _iotdata_settings_subject(argv[2]);
+        if (subject < 0) {
+            emit("report: '%s' is not a reportable type\n", argv[2]);
+            return;
+        }
+        if (argc < 5) {
+            _iotdata_settings_show_report(emit, s, (uint8_t)subject);
+            return;
+        }
+        if (iotdata_settings_report_is_pinned((uint8_t)subject)) {
+            emit("report %s: PINNED on the command line -- restart without that argument to change it\n", argv[2]);
+            return;
+        }
+        /* Stated whole: a report record that exists says everything about that subject, so a change
+           to one part starts from what is already stated rather than from nothing. */
+        const iotdata_settings_report_t *const cur = iotdata_settings_report_find(s, (uint8_t)subject);
+        iotdata_settings_report_t r = (cur != NULL) ? *cur : (iotdata_settings_report_t){ .subject = (uint8_t)subject, .flags = 0, .period_s = 0, .change_s = 0, .events = 0 };
+        r.subject = (uint8_t)subject;
+        bool on = false;
+        if (strcmp(argv[3], "at-startup") == 0 && _iotdata_settings_a2b(argv[4], &on))
+            r.flags = (uint16_t)(on ? (r.flags | IOTDATA_NODE_REPORT_AT_STARTUP) : (r.flags & (uint16_t)~IOTDATA_NODE_REPORT_AT_STARTUP));
+        else if (strcmp(argv[3], "period") == 0 && (strcmp(argv[4], "off") == 0 || (_iotdata_settings_a2u(argv[4], &v) && v <= 0xFFFFu))) {
+            if (strcmp(argv[4], "off") == 0)
+                v = 0u; /* "off" and "0" are the same answer, and it is NEVER rather than "no opinion" */
+            /* "off" is period 0: a stated entry with ON_PERIOD clear says NEVER, which is a real
+               answer and not the same as having no opinion. */
+            r.period_s = (uint16_t)v;
+            r.flags = (uint16_t)((r.period_s > 0u) ? (r.flags | IOTDATA_NODE_REPORT_ON_PERIOD) : (r.flags & (uint16_t)~IOTDATA_NODE_REPORT_ON_PERIOD));
+        } else {
+            emit("report: expected 'at-startup on|off' or 'period <seconds>|off'\n");
+            return;
+        }
+        if (!iotdata_settings_report_set(s, &r)) {
+            emit("report: no room for another subject\n");
+            return;
+        }
+        wrote = true;
+    } else {
+        emit("node: '%s'? try `node` for what there is\n", argv[1]);
+        return;
+    }
+
+    if (wrote) {
+        /* Persisted NOW rather than on the tick, for the reason a settings write over the air is:
+           a station id that is only in RAM is one a power cut takes back. */
+        const bool ok = persists && iotdata_settings_commit(s, _iotdata_settings_console_state);
+        /* the answer is what is now true, and ONLY about what was asked: re-entering with the same
+           subject and no value is the read that pairs with the write just made */
+        char *nargv[3] = { argv[0], argv[1], (argc > 2) ? argv[2] : NULL };
+        iotdata_settings_console(emit, (strcmp(argv[1], "report") == 0) ? 3 : 2, nargv);
+        if (!ok)
+            emit("  (not persisted: this node has nowhere to write it)\n");
+    }
+}
+
+/*
+ * The settings as command-line options, for a --help -- the twin of iotdata_config_help().
+ *
+ * A host that reads "node-" lines out of its configuration file accepts them as arguments too, and
+ * an argument is the ONLY way to pin one. A feature nobody can find is not a feature, so the list
+ * that already knows every key generates this rather than a hand-kept paragraph going stale.
+ */
+static inline void iotdata_settings_help(const iotdata_console_emit_fn emit, const iotdata_settings_t *const s) {
+    char key[IOTDATA_SETTINGS_KEY_MAX], val[32];
+    emit("\n  the protocol's own settings -- stating one here PINS it for the run:\n");
+    for (int k = 0; k < IOTDATA_SETTINGS_KEY_COUNT; k++) {
+        if (!iotdata_settings_key_name(k, key, sizeof(key)))
+            continue;
+        char opt[IOTDATA_SETTINGS_KEY_MAX + 4];
+        opt[0] = opt[1] = '-';
+        size_t at = 2;
+        for (const char *p = key; *p != '\0' && at + 1u < sizeof(opt); p++)
+            opt[at++] = *p;
+        opt[at] = '\0';
+        if (s != NULL && iotdata_settings_key_read(s, k, val, sizeof(val)))
+            emit("  %-34s default %s\n", opt, val);
+        else
+            emit("  %-34s\n", opt);
+    }
+}
+
+/* Drop this into the application's iotdata_console_t array, beside IOTDATA_CONFIG_CONSOLE_COMMAND. */
+#define IOTDATA_SETTINGS_CONSOLE_COMMAND { "node", iotdata_settings_console, "show or set protocol settings: node [station|window|interval|report] ..." }
+
+#endif /* IOTDATA_NODE_CONSOLE_H */
 
 #endif /* IOTDATA_NODE_SETTINGS_H */
