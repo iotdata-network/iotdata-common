@@ -115,7 +115,7 @@ static inline bool iotdata_config_mesh_changed(__attribute__((unused)) const iot
 /* 0x040-0x04F -- any mesh participant */
 #define IOTDATA_CONFIG_ENTRIES_MESH(X) \
     X(MESH_ENABLE, IOTDATA_CFGID_MESH_ENABLE, BOOL, 0, 1, IOTDATA_CONFIG_MESH_ENABLE, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "take part in the mesh at all") \
-    X(MESH_DEBUG, IOTDATA_CFGID_MESH_DEBUG, BOOL, 0, 1, IOTDATA_CONFIG_MESH_DEBUG, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "log every mesh decision")
+    X(MESH_DEBUG, IOTDATA_CFGID_MESH_DEBUG, BOOL, 0, 1, IOTDATA_CONFIG_MESH_DEBUG, IOTDATA_CONFIG_FLAG_LOCAL, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "log every mesh decision")
 
 /* 0x050-0x05F -- a relay: it has a parent to lose, a beacon to rebroadcast, frames to forward */
 #define IOTDATA_CONFIG_ENTRIES_MESH_RELAY(X) \

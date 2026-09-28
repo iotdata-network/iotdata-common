@@ -97,7 +97,7 @@ static inline bool iotdata_config_lora_changed(__attribute__((unused)) const iot
     X(LORA_PACKET_SIZE, 0x035, U8, 32, 240, IOTDATA_CONFIG_LORA_PACKET_SIZE, IOTDATA_CONFIG_FLAG_REBOOT, iotdata_config_lora_packet_size_ok, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 sub-packet size in bytes") \
     X(LORA_LBT, 0x036, BOOL, 0, 1, IOTDATA_CONFIG_LORA_LBT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "listen before transmitting, so two radios do not talk over each other") \
     X(LORA_CRYPT, 0x037, U16, 0, 0xFFFF, IOTDATA_CONFIG_LORA_CRYPT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 scrambling key (0 = off); obfuscation, not encryption") \
-    X(LORA_DEBUG, 0x038, BOOL, 0, 1, IOTDATA_CONFIG_LORA_DEBUG, IOTDATA_CONFIG_FLAG_REBOOT, NULL, NULL, "log what the radio is doing")
+    X(LORA_DEBUG, 0x038, BOOL, 0, 1, IOTDATA_CONFIG_LORA_DEBUG, IOTDATA_CONFIG_FLAG_LOCAL, NULL, NULL, "log what the radio is doing")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

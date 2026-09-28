@@ -91,7 +91,7 @@ static inline bool iotdata_config_cart_changed(__attribute__((unused)) const iot
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_CONFIG_ENTRIES_CART(X) \
-    X(CART_ENABLE, IOTDATA_CFGID_CART_ENABLE, BOOL, 0, 1, IOTDATA_CONFIG_CART_ENABLE, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_CART_NOTIFY, "power a companion board on a schedule at all") \
+    X(CART_ENABLE, IOTDATA_CFGID_CART_ENABLE, BOOL, 0, 1, IOTDATA_CONFIG_CART_ENABLE, 0, NULL, IOTDATA_CONFIG_CART_NOTIFY, "power a companion board on a schedule at all") \
     X(CART_INTERVAL_MIN, IOTDATA_CFGID_CART_INTERVAL_MIN, U16, 1, 10080, IOTDATA_CONFIG_CART_INTERVAL_MIN, 0, NULL, IOTDATA_CONFIG_CART_NOTIFY, "minutes between windows, measured from the last cut") \
     X(CART_BOOT_S, IOTDATA_CFGID_CART_BOOT_S, U16, 5, 3600, IOTDATA_CONFIG_CART_BOOT_S, 0, iotdata_config_cart_boot_ok, IOTDATA_CONFIG_CART_NOTIFY, "seconds to hear the first cartbeat before giving up on the boot") \
     X(CART_SILENT_S, IOTDATA_CFGID_CART_SILENT_S, U16, 1, 3600, IOTDATA_CONFIG_CART_SILENT_S, 0, NULL, IOTDATA_CONFIG_CART_NOTIFY, "seconds without a cartbeat before believing it has stopped") \

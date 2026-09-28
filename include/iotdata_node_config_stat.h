@@ -86,21 +86,15 @@ static inline bool iotdata_config_stat_changed(__attribute__((unused)) const iot
 
 /* Anything with somewhere to write a line. */
 #define IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY(X) \
-    X(STAT_DISPLAY_INTERVAL, IOTDATA_CFGID_STAT_DISPLAY_INTERVAL, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_INTERVAL, 0, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
-      "how often to show this node's own counters, in seconds (0 = never)")
-
+    X(STAT_DISPLAY_INTERVAL, IOTDATA_CFGID_STAT_DISPLAY_INTERVAL, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_INTERVAL, 0, NULL, IOTDATA_CONFIG_STAT_NOTIFY, "how often to show this node's own counters, in seconds (0 = never)")
 /* Anything with a transport to send them over. */
 #define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH(X) \
-    X(STAT_PUBLISH_INTERVAL, IOTDATA_CFGID_STAT_PUBLISH_INTERVAL, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_PUBLISH_INTERVAL, 0, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
-      "how often to publish this node's own counters, in seconds (0 = never)")
-
+    X(STAT_PUBLISH_INTERVAL, IOTDATA_CFGID_STAT_PUBLISH_INTERVAL, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_PUBLISH_INTERVAL, 0, NULL, IOTDATA_CONFIG_STAT_NOTIFY, "how often to publish this node's own counters, in seconds (0 = never)")
 /* ...when that transport is MQTT. Separate from PUBLISH because the cadence is a decision about
    how much you want to know and the topic is a decision about a broker's namespace; a node that
    publishes over something else keeps the first and has no use for the second. */
 #define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_MQTT(X) \
-    X(STAT_PUBLISH_MQTT_TOPIC_PREFIX, IOTDATA_CFGID_STAT_PUBLISH_MQTT_TOPIC, STRING, 1, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC, IOTDATA_CONFIG_FLAG_LOCAL | IOTDATA_CONFIG_FLAG_REBOOT, NULL, \
-      IOTDATA_CONFIG_STAT_NOTIFY, "the topic the counters are published under")
-
+    X(STAT_PUBLISH_MQTT_TOPIC_PREFIX, IOTDATA_CFGID_STAT_PUBLISH_MQTT_TOPIC, STRING, 1, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC, 0, NULL, IOTDATA_CONFIG_STAT_NOTIFY, "the topic the counters are published under")
 /* Only a node with a table of other stations to show.
  *
  * NAMED FOR THE MESH, and on a gateway that is slightly generous: the table it gates also carries
@@ -108,8 +102,7 @@ static inline bool iotdata_config_stat_changed(__attribute__((unused)) const iot
  * is the composition rule that actually matters -- a node with no mesh has no such table at all --
  * and one name has to serve both. Worth revisiting if a non-meshing node ever grows one. */
 #define IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY_MESH(X) \
-    X(STAT_DISPLAY_MESH_INTERVAL, IOTDATA_CFGID_STAT_DISPLAY_MESH_INTERVAL, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_MESH_INTERVAL, 0, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
-      "how often to show the stations this node knows about, in seconds (0 = never)")
+    X(STAT_DISPLAY_MESH_INTERVAL, IOTDATA_CFGID_STAT_DISPLAY_MESH_INTERVAL, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_MESH_INTERVAL, 0, NULL, IOTDATA_CONFIG_STAT_NOTIFY, "how often to show the stations this node knows about, in seconds (0 = never)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

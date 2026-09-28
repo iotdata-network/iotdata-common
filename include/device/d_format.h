@@ -18,7 +18,7 @@
    argument where only an expression fits -- a "%s" in a larger printf, or a struct field. The
    caller owns the buffer and therefore its lifetime, which is why this is not a static-buffer
    convenience: two of these in one printf would otherwise fight over it. */
-__attribute__((format(printf, 3, 4))) static inline const char *snprintf_inline(char *const buf, const size_t size, const char *const fmt, ...) {
+__attribute__((format(printf, 3, 4))) static inline char *snprintf_inline(char *const buf, const size_t size, const char *const fmt, ...) {
     va_list args;
     va_start(args, fmt);
     (void)vsnprintf(buf, size, fmt, args);
