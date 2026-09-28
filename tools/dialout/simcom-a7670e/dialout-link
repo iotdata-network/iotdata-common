@@ -40,11 +40,15 @@ up)
         _opts=nodefaultroute
     fi
     log "dialing $PEER"
+    # pppd's own output is discarded here on purpose. It already logs everything to syslog, and
+    # because updetach keeps it in the foreground its stderr would be inherited by whoever called
+    # this hook -- so every pppd line landed in the journal TWICE, once tagged pppd and once tagged
+    # dialout-client. The exit status is what we actually need; `journalctl -t pppd` has the detail.
     _rc=0
     if command -v timeout >/dev/null 2>&1; then
-        timeout "$WAIT" pppd call "$PEER" updetach $_opts || _rc=$?
+        timeout "$WAIT" pppd call "$PEER" updetach $_opts >/dev/null 2>&1 || _rc=$?
     else
-        pppd call "$PEER" updetach $_opts || _rc=$?
+        pppd call "$PEER" updetach $_opts >/dev/null 2>&1 || _rc=$?
     fi
     if [ "$_rc" != 0 ]; then
         log "dial failed (rc $_rc) -- journalctl -t pppd -n 20"

@@ -66,19 +66,48 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # defaults; whatever needs a domain then says which file to create. Keys reach
 # the shell as CFG_<key with - turned to _>; anything else in the key is dropped rather than
 # eval'd, because this walks into an eval and a config file should not be able to run code.
+_NL='
+'
+
+# Read each config file ONCE, then parse it without forking.
+#
+# This used to run three `tr` pipelines per line and read the file with the shell's `read` builtin,
+# which cost two different ways. The forks cost ~3.5s of CPU per run on a Pi Zero 1 / ROCK S0, which
+# matters when `watch` does it every round. Worse, `read` fetches tiny chunks to find each newline:
+# harmless on disk, pathological over a CIFS share, where every line becomes SMB round trips. Parsing
+# this 9.8KB file from a mounted /opt took 54 SECONDS on a Pi Zero 1 against 91ms locally, which made
+# `install` look like it had hung (2026-09-28). One `cat` per file and pure parameter expansion fixes
+# both. Run the local copy anyway -- see the README -- but it is no longer a trap if you forget.
 cfg_load() {
     for _f in "$@"; do
         [ -f "$_f" ] || continue
-        while IFS= read -r _line || [ -n "$_line" ]; do
+        _data=$(cat "$_f") || continue
+        while [ -n "$_data" ]; do
+            case $_data in
+            *"$_NL"*) _line=${_data%%"$_NL"*}; _data=${_data#*"$_NL"} ;;
+            *) _line=$_data; _data='' ;;
+            esac
             case "$_line" in '' | '#'*) continue ;; esac
             case "$_line" in *=*) ;; *) continue ;; esac
-            _k=$(printf '%s' "${_line%%=*}" | tr -d ' \t' | tr '-' '_' | tr -cd 'A-Za-z0-9_')
-            [ -n "$_k" ] || continue
+            # key: trim both ends (this also drops a CR from a DOS-edited file), then - becomes _
+            _k=${_line%%=*}
+            _k=${_k%"${_k##*[![:space:]]}"}
+            _k=${_k#"${_k%%[![:space:]]*}"}
+            _kk=''
+            while :; do
+                case $_k in
+                *-*) _kk=$_kk${_k%%-*}_; _k=${_k#*-} ;;
+                *) _kk=$_kk$_k; break ;;
+                esac
+            done
+            # Anything else in a key and we skip the line. The old `tr -cd` quietly squashed stray
+            # characters into a DIFFERENT key instead, which is worse: the value reaches `eval`.
+            case $_kk in '' | *[!A-Za-z0-9_]*) continue ;; esac
             _v=${_line#*=}
             _v=${_v%"${_v##*[![:space:]]}"}
             _v=${_v#"${_v%%[![:space:]]*}"}
-            eval "CFG_$_k=\$_v"
-        done <"$_f"
+            eval "CFG_$_kk=\$_v"
+        done
     done
 }
 

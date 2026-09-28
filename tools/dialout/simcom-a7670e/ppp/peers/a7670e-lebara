@@ -18,9 +18,21 @@ password wap
 local
 nocrtscts
 
-# Let the carrier give us both addresses and its resolvers (-> /etc/ppp/resolv.conf).
+# This image boots with ipv6.disable=1, so there is no IPv6 stack at all -- /proc/sys/net/ipv6 does
+# not even exist. Without this, pppd still tries IPV6CP on every dial and logs two copies of
+# "IPv6 socket creation failed: Address family not supported by protocol" for nothing.
+noipv6
+
+# Let the carrier give us both addresses. NO usepeerdns, deliberately: Debian's ppp ships
+# /etc/ppp/ip-up.d/0000usepeerdns, which (with no resolvconf and no systemd-resolved, which is this
+# image) REWRITES /etc/resolv.conf to the carrier's own resolver and nothing else. That resolver is a
+# carrier-private address, so it is only reachable while ppp0 holds the default route -- meaning that
+# on the bench, where ethernet holds it, every name lookup on the box fails for as long as the modem
+# is up. It cost a confusing hour: dialout kept reporting "not invited" because its DNS lookup died,
+# not because the invite was missing. We do not need it either way: the image resolves via Quad9, and
+# Quad9 was verified working over this APN (dig @9.9.9.9 routed out ppp0 answers fine), so DNS works
+# on the bench over ethernet and in the field over ppp0.
 noipdefault
-usepeerdns
 
 # Notice a dead link instead of sitting on it.
 lcp-echo-interval 10

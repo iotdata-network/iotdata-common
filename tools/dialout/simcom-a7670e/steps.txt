@@ -129,10 +129,19 @@ The client calls the hook "up" before its DNS lookups -- there is no DNS until t
 and "down" on every way out, including the usual one where there was no invitation waiting, so an
 uninvited check costs a few seconds of radio instead of minutes.
 
-DNS: usepeerdns writes the carrier resolver to /etc/ppp/resolv.conf only, it does NOT touch
-/etc/resolv.conf, and no hook was added to make it. The image resolves via Quad9, and those queries
-go out over ppp0 once it holds the default route, so DNS works without touching resolv.conf. The
-carrier resolver (192.168.253.11) is only reachable over the link anyway.
+DNS: the peers file does NOT use usepeerdns, on purpose. Debian's ppp ships
+/etc/ppp/ip-up.d/0000usepeerdns, and on this image (no resolvconf, no systemd-resolved) it does not
+merely write /etc/ppp/resolv.conf -- it REWRITES /etc/resolv.conf to the carrier resolver alone, and
+ip-down puts it back. That resolver is carrier-private, reachable only while ppp0 holds the default
+route, so on the bench (ethernet holding the default route) every lookup on the box fails while the
+modem is up. That is worth knowing because of how it presents: dialout says "not invited" and gives
+up, looking like a server or DNS-record problem, when really its invite lookup could not resolve
+anything at all. Verified 2026-09-28.
+
+We do not need the carrier resolver: the image resolves via Quad9, and Quad9 answers over this APN
+(dig @9.9.9.9 with a host route out ppp0 works), so DNS is fine on the bench via ethernet and in the
+field via ppp0. If you ever do want usepeerdns back, add host routes for the nameservers in
+/etc/ppp/resolv.conf via ppp0 in dialout-link, or it will only work when ppp0 is the default route.
 
 Gotchas
 -------
@@ -205,3 +214,26 @@ Log
 2026-09-25  Added this directory: peers and chat files, dialout-link hook, install.sh, these notes.
             dialout itself is NOT yet enrolled on this box -- keygen, enrol and install --interval
             are still to do.
+2026-09-28  dialout WIRED TO THE MODEM and proven end to end against the iotgate server. Added
+            link-script=/usr/local/sbin/dialout-link (+ link-timeout=60) to
+            dialout.iotdata-rem-b827eb2878c0.cfg, and moved the box off watch mode onto the 12h
+            timer (a modem box must use the timer; the client refuses watch with a link-script, and
+            watch would raise the radio every round -- it was also burning ~3.5s CPU every 300s on
+            this single-core Zero).
+            Proof, with the box still on ethernet for access and the server's IP forced out ppp0:
+              server:  iotdata-rem-b827eb2878c0  6827cc  47432  invited yes  TUNNEL UP
+              server:  Child connection from 148.252.133.242  <- the MODEM's carrier IP,
+                       not 82.13.227.102 which is this site's; that is the proof of path
+              server:  ssh banner read back through 127.0.0.1:47432 = SSH-2.0-dropbear_2025.89
+              box:     ppp0 delta rx=3470 tx=6133 during the dial
+            Removed usepeerdns from the peers file -- see the DNS paragraph above; that one cost an
+            hour of chasing a phantom "not invited".
+2026-09-28  Quieted the dial log: added noipv6 to the peers file (the image boots ipv6.disable=1, so
+            pppd was logging "IPv6 socket creation failed" on every dial for nothing), and stopped
+            dialout-link letting pppd's output be inherited by its caller -- every pppd line was
+            appearing twice in the journal, once as pppd and once as dialout-client. pppd still logs
+            to syslog, so `journalctl -t pppd` is unchanged.
+            Also seen: after `dialout-server invite`, the invite TXT can take a minute or two to be
+            consistent (60s TTL, and public resolvers answer from several caches), so a dial in that
+            window legitimately reports "not invited". Wait for it to settle before concluding
+            anything is broken.

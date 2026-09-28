@@ -138,6 +138,17 @@ dialout-client install --watch         # stays running, dials whenever invited (
 `install-dir` (default `/usr/local/lib/dialout`) and runs the service from there — never from the
 checkout, which on a dev box may be a network share that is not mounted at boot. To update a box,
 re-run `install` from the checkout; `status` says whether the installed copy differs.
+`dialout-server install` does the same, for the same reason, and both take `--prefix DIR` to override
+it. One thing that copy does *not* carry is `iotdata-conf`: if the Cloudflare token is reached that
+way and that path is on a share, a server starting at boot comes up unable to publish DNS (the config
+is read once), so on such a box put `cloudflare-token=` in `dialout.<hostname>.cfg` instead — install
+copies that, mode 600.
+
+Two traps worth knowing, both learned the hard way. `install` copies the per-host cfg **from wherever
+it is run**, so running it from the checkout reverts a box-local edit of `dialout.<hostname>.cfg` —
+keep per-box settings such as a modem's `link-script` in the checkout copy. And run the *installed*
+client, not the one on the share: the config parse alone took 94 s over CIFS against 0.7 s locally on
+a Pi Zero 1, which makes `install` look like it has hung.
 
 Then hand that public key to the server once:
 
