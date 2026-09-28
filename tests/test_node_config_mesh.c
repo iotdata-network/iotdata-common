@@ -63,15 +63,19 @@ int main(void) {
     CHECK(IOTDATA_CFG_COUNT == 29, "three down + four common + twelve relay + nine ack + one gateway");
     CHECK(IOTDATA_CFG_DOWN_TTL_MIN == 0x020, "the downstream hold store at 0x020 -- not mesh: a gateway with no mesh still holds");
     CHECK(IOTDATA_CFG_MESH_ENABLE == 0x040, "common is based at 0x040");
-    CHECK(IOTDATA_CFG_MESH_PARENT_TIMEOUT_MS == 0x050, "relay at 0x050");
+    CHECK(IOTDATA_CFG_MESH_HYSTERESIS_DB == 0x051, "relay at 0x05x");
+    /* the round counts KEPT the ids their millisecond predecessors held -- the one recorded
+       exception to never-reuse, taken while nothing deployed can be confused by it. See the note
+       in iotdata_node_config_mesh.h and NOTES_ISSUES.md I.1. */
+    CHECK(IOTDATA_CFG_MESH_PEER_TTL_ROUNDS == 0x042 && IOTDATA_CFG_MESH_PARENT_MISS_ROUNDS == 0x050, "same ids, new unit");
     CHECK(IOTDATA_CFG_MESH_REPORT_PEERS_MS == 0x05B, "the neighbour-report cadence paces a FRAME, so it is mesh config and not the app's");
     CHECK(IOTDATA_CFG_MESH_BEACON_INTERVAL_S == 0x060, "gateway at 0x060");
     CHECK(IOTDATA_CFG_MESH_ACK_MAX_RETRIES == 0x070, "the relay ack block at 0x070 -- a SECOND range, not a renumbering of the first");
 
     printf("\ndefaults are the values the code used as #defines\n");
     iotdata_config_defaults();
-    CHECK(iotdata_config_u32(MESH_PEER_TTL_MS) == 300000u, "peer ttl");
-    CHECK(iotdata_config_u32(MESH_PARENT_TIMEOUT_MS) == 190000u, "parent timeout");
+    CHECK(iotdata_config_u8(MESH_PEER_TTL_ROUNDS) == 5u, "peer ttl, in the root's beacon rounds");
+    CHECK(iotdata_config_u8(MESH_PARENT_MISS_ROUNDS) == 3u, "parent loss, likewise -- see NOTES_ISSUES.md I.1");
     CHECK(iotdata_config_u8(MESH_HYSTERESIS_DB) == 10, "hysteresis");
     CHECK(iotdata_config_u8(MESH_TTL_INIT) == IOTDATA_MESH_TTL_DEFAULT, "ttl from the protocol's own default");
     CHECK(iotdata_config_u16(MESH_BEACON_INTERVAL_S) == 60u, "beacon cadence, in seconds as the root has always had it");
@@ -96,9 +100,9 @@ int main(void) {
         CHECK(iotdata_config_u32(MESH_REBROADCAST_JITTER_MAX_MS) == 30000u && iotdata_config_u32(MESH_REBROADCAST_JITTER_MIN_MS) == 20000u, "the pair moved as one");
     }
 
-    printf("\na parent timeout above the peer ttl is unreachable, so it is refused\n");
-    CHECK(!set_one(&ds, IOTDATA_CFG_MESH_PARENT_TIMEOUT_MS, 400000), "above the ttl: the peer is gone first");
-    CHECK(set_one(&ds, IOTDATA_CFG_MESH_PARENT_TIMEOUT_MS, 200000), "below it");
+    printf("\na parent loss later than the peer ttl is unreachable, so it is refused\n");
+    CHECK(!set_one(&ds, IOTDATA_CFG_MESH_PARENT_MISS_ROUNDS, 9), "beyond the ttl: the peer is gone first");
+    CHECK(set_one(&ds, IOTDATA_CFG_MESH_PARENT_MISS_ROUNDS, 4), "below it");
 
     printf("\nover the air: a CONFIG record stream is the write, and all-or-nothing\n");
     iotdata_config_defaults();

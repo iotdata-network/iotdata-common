@@ -10,11 +10,8 @@
 #ifndef IOTDATA_CONFIG_MESH_DEBUG
 #define IOTDATA_CONFIG_MESH_DEBUG 0
 #endif
-#ifndef IOTDATA_CONFIG_MESH_PEER_TTL_MS
-/* ~5x a 60s beacon -- and "a 60s beacon" is the ROOT's interval, which is settable on the root and
-   invisible from here. Raising it there without raising this orphans every relay between rounds;
-   iotdata-specs/NOTES_ISSUES.md I.1 has the analysis and the options. */
-#define IOTDATA_CONFIG_MESH_PEER_TTL_MS 300000u
+#ifndef IOTDATA_CONFIG_MESH_PEER_TTL_ROUNDS
+#define IOTDATA_CONFIG_MESH_PEER_TTL_ROUNDS 5u
 #endif
 #ifndef IOTDATA_CONFIG_MESH_TTL_INIT
 #define IOTDATA_CONFIG_MESH_TTL_INIT IOTDATA_MESH_TTL_DEFAULT
@@ -22,13 +19,11 @@
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* How often a relay tells the gateway what it can hear. Observational -- a topology view, not an
-   operational path -- so slow is fine and cheap is better. */
 #ifndef IOTDATA_CONFIG_MESH_REPORT_PEERS_MS
 #define IOTDATA_CONFIG_MESH_REPORT_PEERS_MS 120000u
 #endif
-#ifndef IOTDATA_CONFIG_MESH_PARENT_TIMEOUT_MS
-#define IOTDATA_CONFIG_MESH_PARENT_TIMEOUT_MS 190000u /* ~3 missed 60s beacon rounds */
+#ifndef IOTDATA_CONFIG_MESH_PARENT_MISS_ROUNDS
+#define IOTDATA_CONFIG_MESH_PARENT_MISS_ROUNDS 3u
 #endif
 #ifndef IOTDATA_CONFIG_MESH_HYSTERESIS_DB
 #define IOTDATA_CONFIG_MESH_HYSTERESIS_DB 10

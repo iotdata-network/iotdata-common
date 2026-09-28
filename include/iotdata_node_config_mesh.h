@@ -46,19 +46,28 @@
 // never reused so that a cached map stays valid across firmware versions. Retire an id by burning
 // it, not by recycling it; iotdata_node_config.h turns a reuse into a compile error.
 //
+//   ...with ONE exception on the record, taken deliberately while that is still free. 0x042 and
+//   0x050 held MESH_PEER_TTL_MS and MESH_PARENT_TIMEOUT_MS, absolute times; they now hold
+//   MESH_PEER_TTL_ROUNDS and MESH_PARENT_MISS_ROUNDS, the same decisions counted in the root's
+//   beacon rounds (NOTES_ISSUES.md I.1). Same meaning, different unit and width, so a stale cached
+//   map would read a live value and be wrong about it -- which is exactly what burning an id
+//   prevents. It is safe here only because nothing is deployed that cannot be reflashed. Once
+//   something is, this rule has no exceptions.
+//
 // THE DEFAULTS LIVE IN iotdata_node_mesh_tuning.h, which this header requires. They are separate so
 // that a mesh MODULE can have the numbers without the CONFIG machinery -- see that file.
 //
-// UNITS ARE IN THE NAME because the two roles genuinely differ: a relay's timers are milliseconds
-// because that is what its queues are in, and the root's beacon cadence is seconds because that is
-// what it has always been. Converting silently at the seam would be one more place to be wrong.
+// UNITS ARE IN THE NAME because the roles genuinely differ: a relay's queues are in milliseconds,
+// the root's cadence is in seconds, and a relay's tolerance is in ROUNDS of that cadence -- which
+// is the one unit that cannot be stated wrongly, since it is relative to what the root says.
+// Converting silently at any of those seams would be one more place to be wrong.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_CFGID_MESH_ENABLE                    0x040
 #define IOTDATA_CFGID_MESH_DEBUG                     0x041
-#define IOTDATA_CFGID_MESH_PEER_TTL_MS               0x042
+#define IOTDATA_CFGID_MESH_PEER_TTL_ROUNDS           0x042
 #define IOTDATA_CFGID_MESH_TTL_INIT                  0x043
-#define IOTDATA_CFGID_MESH_PARENT_TIMEOUT_MS         0x050
+#define IOTDATA_CFGID_MESH_PARENT_MISS_ROUNDS        0x050
 #define IOTDATA_CFGID_MESH_HYSTERESIS_DB             0x051
 #define IOTDATA_CFGID_MESH_REBROADCAST_JITTER_MIN_MS 0x052
 #define IOTDATA_CFGID_MESH_REBROADCAST_JITTER_MAX_MS 0x053
@@ -88,7 +97,7 @@ __attribute__((unused)) static bool iotdata_config_mesh_jitter_min_ok(const iotd
 __attribute__((unused)) static bool iotdata_config_mesh_jitter_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
 __attribute__((unused)) static bool iotdata_config_mesh_backoff_min_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
 __attribute__((unused)) static bool iotdata_config_mesh_backoff_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
-__attribute__((unused)) static bool iotdata_config_mesh_parent_timeout_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+__attribute__((unused)) static bool iotdata_config_mesh_parent_miss_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
 __attribute__((unused)) static bool iotdata_config_mesh_ack_backoff_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -113,10 +122,11 @@ static inline bool iotdata_config_mesh_changed(__attribute__((unused)) const iot
     /* KEEPING THEIR 0x04x IDS while sitting in the 0x05x group, because an id is fixed for the life \
        of the fleet and a row that moved between groups is still the same row. Renumbering them to \
        look tidy would strand every cached name->id map and every hex dump anybody has read. */ \
-    X(MESH_PEER_TTL_MS, IOTDATA_CFGID_MESH_PEER_TTL_MS, U32, 1000, 3600000, IOTDATA_CONFIG_MESH_PEER_TTL_MS, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "forget a peer not heard from for this long") \
+    X(MESH_PEER_TTL_ROUNDS, IOTDATA_CFGID_MESH_PEER_TTL_ROUNDS, U8, 1, 60, IOTDATA_CONFIG_MESH_PEER_TTL_ROUNDS, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, \
+      "forget a peer after this many of the root's beacon rounds without hearing it") \
     X(MESH_TTL_INIT, IOTDATA_CFGID_MESH_TTL_INIT, U8, 1, IOTDATA_MESH_TTL_MAX, IOTDATA_CONFIG_MESH_TTL_INIT, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how many hops a frame we originate may take") \
-    X(MESH_PARENT_TIMEOUT_MS, IOTDATA_CFGID_MESH_PARENT_TIMEOUT_MS, U32, 1000, 3600000, IOTDATA_CONFIG_MESH_PARENT_TIMEOUT_MS, 0, iotdata_config_mesh_parent_timeout_ok, IOTDATA_CONFIG_MESH_NOTIFY, \
-      "declare the parent lost after this long without one of its beacons") \
+    X(MESH_PARENT_MISS_ROUNDS, IOTDATA_CFGID_MESH_PARENT_MISS_ROUNDS, U8, 1, 60, IOTDATA_CONFIG_MESH_PARENT_MISS_ROUNDS, 0, iotdata_config_mesh_parent_miss_ok, IOTDATA_CONFIG_MESH_NOTIFY, \
+      "declare the parent lost after this many of its beacon rounds are missed") \
     X(MESH_HYSTERESIS_DB, IOTDATA_CFGID_MESH_HYSTERESIS_DB, U8, 0, 30, IOTDATA_CONFIG_MESH_HYSTERESIS_DB, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how much stronger an equal-cost parent must be before switching to it") \
     X(MESH_REBROADCAST_JITTER_MIN_MS, IOTDATA_CFGID_MESH_REBROADCAST_JITTER_MIN_MS, U32, 0, 60000, IOTDATA_CONFIG_MESH_REBROADCAST_JITTER_MIN_MS, 0, iotdata_config_mesh_jitter_min_ok, IOTDATA_CONFIG_MESH_NOTIFY, \
       "the shortest wait before rebroadcasting a beacon") \
@@ -147,13 +157,12 @@ static inline bool iotdata_config_mesh_changed(__attribute__((unused)) const iot
 
 /* 0x060-0x06F -- the root: it sets the tree's cadence, and has no parent to lose.
  *
- * ONE NUMBER, ON ONE BOX, BINDING THE WHOLE FLEET. A relay does not beacon on a timer -- it
- * rebroadcasts once when what it advertises changes -- so this interval is how often every relay
- * below hears anything at all, and every relay's ageing constant is derived from it (see the
- * comments on MESH_PEER_TTL_MS and MESH_PARENT_TIMEOUT_MS in iotdata_node_mesh_tuning.h: "~5x a 60s
- * beacon", "~3 missed 60s beacon rounds"). Those live in a DIFFERENT node's table, so no validator
- * here can see them and nothing refuses a value that orphans the tree every round.
- * Raising this without raising them is the failure. See iotdata-specs/NOTES_ISSUES.md, I.1. */
+ * ONE NUMBER, ON ONE BOX, SETTING THE WHOLE FLEET'S CLOCK
+ *
+ * A relay does not beacon on a timer; it rebroadcasts once when what it advertises changes. So this
+ * interval is how often every relay below hears anything at all, and every relay's ageing constant
+ * is a multiple of.
+ */
 #define IOTDATA_CONFIG_ENTRIES_MESH_GATEWAY(X) \
     X(MESH_BEACON_INTERVAL_S, IOTDATA_CFGID_MESH_BEACON_INTERVAL_S, U16, 5, 3600, IOTDATA_CONFIG_MESH_BEACON_INTERVAL_S, 0, NULL, IOTDATA_CONFIG_MESH_NOTIFY, "how often the root beacons, which sets the whole tree's cadence")
 
@@ -192,9 +201,9 @@ static bool iotdata_config_mesh_backoff_max_ok(__attribute__((unused)) const iot
     iotdata_config_value_t mn;
     return iotdata_config_update_peek(u, IOTDATA_CFGID_MESH_FORWARD_BACKOFF_MIN_MS, &mn) && v->u >= mn.u;
 }
-static bool iotdata_config_mesh_parent_timeout_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
+static bool iotdata_config_mesh_parent_miss_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
     iotdata_config_value_t ttl;
-    return iotdata_config_update_peek(u, IOTDATA_CFGID_MESH_PEER_TTL_MS, &ttl) && v->u <= ttl.u;
+    return iotdata_config_update_peek(u, IOTDATA_CFGID_MESH_PEER_TTL_ROUNDS, &ttl) && v->u <= ttl.u;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
