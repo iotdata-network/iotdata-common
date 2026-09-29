@@ -46,7 +46,7 @@ static iotdata_bb_pw_event_t power_event_of(const uint32_t cycles, const int16_t
     if (cycles <= 1u)
         return IOTDATA_BB_PW_BOOT;
     if (was_mv > 0) {
-        const uint8_t was_pct = battery_percent_of(was_mv, BATTERY_TYPE, false, false);
+        const uint8_t was_pct = battery_percent_of(was_mv, battery_profile(), false, false);
         if (now_pct < BATTERY_PCT_CRITICAL && was_pct >= BATTERY_PCT_CRITICAL)
             return IOTDATA_BB_PW_CRITICAL;
         if (now_pct <= BATTERY_PCT_LOW && was_pct > BATTERY_PCT_LOW)
@@ -66,16 +66,17 @@ static void power_startup(const int16_t now_mv) {
 static void power_describe(const bool battery_present) {
     char buf[32];
     if (battery_present) {
+        const battery_profile_t *const prof = battery_profile();
         int min_mv = 0, max_mv = 0;
-        battery_range_mv(BATTERY_TYPE, false, false, &min_mv, &max_mv);
+        battery_range_mv(prof, false, false, &min_mv, &max_mv);
         iotdata_bb_power_source_t pack = IOTDATA_BB_POWER_SOURCE_INIT(PW_RAIL_PACK, IOTDATA_BB_PW_TYPE_BATTERY);
-        pack.chem = power_chem_of(BATTERY_TYPE);
-        pack.cells = 1;
+        pack.chem = power_chem_of(prof->type);
+        pack.cells = 1; /* 1S only: a series pack reads plausibly and gauges nonsense -- see the profile */
         pack.min_mv = min_mv;
         pack.max_mv = max_mv;
-        pack.capacity_mah = BATTERY_CAPACITY_MAH;
+        pack.capacity_mah = prof->capacity_mah;
         pack.ratio_x100 = BATTERY_DIVIDER_RATIO_X100;
-        pack.offset_mv = BATTERY_OFFSET_MV;
+        pack.offset_mv = prof->offset_mv;
         iotdata_diagnostics_power_source(&pack);
         iotdata_diagnostics_power_detail(PW_RAIL_PACK, "adc", snprintf_inline(buf, sizeof(buf), "gpio%d/%dnf", (int)PIN_BATTERY_ADC, BATTERY_DIVIDER_C1_NF));
     }

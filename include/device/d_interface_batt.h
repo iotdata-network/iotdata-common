@@ -106,6 +106,13 @@ typedef struct {
 #ifndef BATTERY_OFFSET_MV
 #define BATTERY_OFFSET_MV 0
 #endif
+
+/* The PACK's capacity, not the cell's: two 500mAh cells in parallel is 1000. 0 means "not stated",
+   which is honest -- a wrong number here would be quietly believed by anything estimating runtime. */
+#ifndef BATTERY_CAPACITY_MAH
+#define BATTERY_CAPACITY_MAH 0
+#endif
+
 #ifndef BATTERY_DIVIDER_C1_NF
 #define BATTERY_DIVIDER_C1_NF 10 /* the cap across R2*/
 #endif
@@ -119,10 +126,13 @@ typedef struct {
 #define BATTERY_SAMPLE_COUNT 8
 #endif
 
+#ifndef BATTERY_SAMPLE_INTERVAL_US
 #define BATTERY_SAMPLE_INTERVAL_US 2000
-#define BATTERY_ADC_UNIT           ADC_UNIT_1 /* ADC2 shares its hardware with the radio on some parts */
-#define BATTERY_ADC_ATTEN          ADC_ATTEN_DB_12
-#define BATTERY_ADC_BITWIDTH       ADC_BITWIDTH_12
+#endif
+
+#define BATTERY_ADC_UNIT     ADC_UNIT_1 /* ADC2 shares its hardware with the radio on some parts */
+#define BATTERY_ADC_ATTEN    ADC_ATTEN_DB_12
+#define BATTERY_ADC_BITWIDTH ADC_BITWIDTH_12
 
 /* Chemistry limits, and the two points where a Li-ion discharge curve bends. Overridable, because
    the useful values are properties of the INSTALLATION rather than of the cell:
@@ -172,6 +182,57 @@ typedef struct {
 
 #define BATTERY_TEST_JITTER_MAX_MV 200
 #define BATTERY_TEST_CYCLE_MS      1000
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+//
+// THE PROFILE: what is true of THIS pack on THIS board, as opposed to what is true of the chemistry.
+//
+// The split is the one the chemistry comment above already draws. MIN and MAX are properties of the
+// INSTALLATION -- what a particular charger leaves a cell resting at, and where a particular node
+// stops being useful, which moves with the regulator and with how hard the radio pulls on transmit.
+// A board carrying a 30dBm module sags further under a transmit than one carrying 22dBm, and that
+// is a different MIN for the same cell. KNEE and MID are NOT here, because they are the shape of the
+// discharge curve and belong to the chemistry.
+//
+// CAPACITY IS INVENTORY, NOT A GAUGE INPUT. It has no effect on voltage->percent and must not gain
+// one: it is here so a fleet can say what a node runs on, and so a runtime estimate has something to
+// multiply. IMR/INR/ICR are all "li-ion" as far as the curve is concerned -- an IMR14500 is a
+// 3.7V/4.2V cell like an 18650, just a smaller one, and giving it its own type would claim a curve
+// that does not exist.
+//
+// The defaults come from the build, so a board that configures nothing behaves exactly as before.
+//
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define BATTERY_DEFAULT_MV_MIN     ((BATTERY_TYPE) == BATTERY_TYPE_LIFEPO4 ? BATTERY_LIFEPO4_MV_MIN : BATTERY_LIION_MV_MIN)
+#define BATTERY_DEFAULT_MV_MAX     ((BATTERY_TYPE) == BATTERY_TYPE_LIFEPO4 ? BATTERY_LIFEPO4_MV_MAX : BATTERY_LIION_MV_MAX)
+
+typedef struct {
+    battery_type_t type;
+    uint16_t capacity_mah; /* the PACK's; 0 = not stated. Inventory only -- never feeds the gauge. */
+    int16_t mv_min;        /* where THIS node stops being useful, not the cell's datasheet cutoff */
+    int16_t mv_max;        /* what THIS charger leaves a full cell RESTING at, not its cutoff */
+    int16_t offset_mv;     /* calibration trim against a meter */
+} battery_profile_t;
+
+static battery_profile_t _battery_profile = {
+    .type = BATTERY_TYPE,
+    .capacity_mah = BATTERY_CAPACITY_MAH,
+    .mv_min = BATTERY_DEFAULT_MV_MIN,
+    .mv_max = BATTERY_DEFAULT_MV_MAX,
+    .offset_mv = BATTERY_OFFSET_MV,
+};
+
+static inline const battery_profile_t *battery_profile(void) {
+    return &_battery_profile;
+}
+
+static inline bool battery_profile_set(const battery_profile_t *const p) {
+    if (p == NULL || p->mv_min >= p->mv_max)
+        return false;
+    _battery_profile = *p;
+    return true;
+}
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -229,14 +290,9 @@ static inline const char *battery_status_str(const battery_status_t status) {
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void battery_range_mv(const battery_type_t type, const bool cold, const bool hot, int *const min_mv, int *const max_mv) {
-    if (type == BATTERY_TYPE_LIFEPO4) {
-        *min_mv = BATTERY_LIFEPO4_MV_MIN;
-        *max_mv = BATTERY_LIFEPO4_MV_MAX;
-    } else {
-        *min_mv = BATTERY_LIION_MV_MIN;
-        *max_mv = BATTERY_LIION_MV_MAX;
-    }
+static inline void battery_range_mv(const battery_profile_t *const p, const bool cold, const bool hot, int *const min_mv, int *const max_mv) {
+    *min_mv = p->mv_min;
+    *max_mv = p->mv_max;
     if (cold)
         *min_mv -= BATTERY_COLD_MIN_DROP_MV;
     if (hot)
@@ -247,10 +303,11 @@ static inline void battery_range_mv(const battery_type_t type, const bool cold, 
    on a long plateau, then drops away below the knee. A straight line over the whole range reads
    ~50% for most of the life and then falls off a cliff. LiFePO4 is flat enough that the straight
    line is the honest answer. Integer throughout */
-static inline uint8_t battery_percent_of(const int mv, const battery_type_t type, const bool cold, const bool hot) {
+static inline uint8_t battery_percent_of(const int mv, const battery_profile_t *const p, const bool cold, const bool hot) {
 
+    const battery_type_t type = p->type;
     int min_mv, max_mv;
-    battery_range_mv(type, cold, hot, &min_mv, &max_mv);
+    battery_range_mv(p, cold, hot, &min_mv, &max_mv);
     if (mv <= min_mv)
         return 0;
     if (mv >= max_mv)
@@ -341,7 +398,7 @@ static inline int battery_measure_mv(void) {
 
     hw_gpio_set(PIN_BATTERY_EN, false);
 
-    return ok ? (((pin_mv * BATTERY_DIVIDER_RATIO_X100) / 100) + BATTERY_OFFSET_MV) : -1;
+    return ok ? (((pin_mv * BATTERY_DIVIDER_RATIO_X100) / 100) + _battery_profile.offset_mv) : -1;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -353,7 +410,7 @@ static inline bool battery_read(battery_reading_t *const out, int16_t *const pre
         return false;
 
     out->voltage_mv = mv;
-    out->percent = battery_percent_of(mv, BATTERY_TYPE, false, false);
+    out->percent = battery_percent_of(mv, battery_profile(), false, false);
     out->state = battery_state_of(out->percent);
     out->charging = (*previous_mv > 0) && (mv > (int)*previous_mv + BATTERY_CHARGING_HYSTERESIS_MV);
     *previous_mv = (int16_t)mv;
@@ -423,7 +480,7 @@ static inline bool battery_probe(void) {
         int pack_mv = 0;
         switch (status = battery_status(&pack_mv)) {
         case BATTERY_STATUS_OK:
-            ESP_LOGI(__tag_batt, "probe: divider present (%s, %dmV, adc=GPIO%d, en=GPIO%d)", battery_type_str(BATTERY_TYPE), pack_mv, PIN_BATTERY_ADC, PIN_BATTERY_EN);
+            ESP_LOGI(__tag_batt, "probe: divider present (%s, %dmV, adc=GPIO%d, en=GPIO%d)", battery_type_str(_battery_profile.type), pack_mv, PIN_BATTERY_ADC, PIN_BATTERY_EN);
             break;
         case BATTERY_STATUS_SWITCH_STUCK:
             ESP_LOGW(__tag_batt, "probe: the pin does not return to ground -- Q2 backwards (a P-FET's body diode, or an E/C swap), R2 missing, or C1 too large for BATTERY_SETTLE_MS");
@@ -456,17 +513,17 @@ static inline bool battery_test(const uint32_t duration_ms) {
 
     bool ok = true;
 
-    ESP_LOGI(__tag_batt, "test: %s, divider x%d.%02d, C1=%dnF -> settle=%ums (tau_off=%uus)", battery_type_str(BATTERY_TYPE), BATTERY_DIVIDER_RATIO_X100 / 100, BATTERY_DIVIDER_RATIO_X100 % 100, BATTERY_DIVIDER_C1_NF, BATTERY_SETTLE_MS,
-             BATTERY_TAU_OFF_US);
+    ESP_LOGI(__tag_batt, "test: %s, divider x%d.%02d, C1=%dnF -> settle=%ums (tau_off=%uus)", battery_type_str(_battery_profile.type), BATTERY_DIVIDER_RATIO_X100 / 100, BATTERY_DIVIDER_RATIO_X100 % 100, BATTERY_DIVIDER_C1_NF,
+             BATTERY_SETTLE_MS, BATTERY_TAU_OFF_US);
 
     /* percentage curve: the ends clamp, the middle is monotonic */
     {
         int min_mv, max_mv;
-        battery_range_mv(BATTERY_TYPE, false, false, &min_mv, &max_mv);
+        battery_range_mv(battery_profile(), false, false, &min_mv, &max_mv);
         const int probe[] = { min_mv - 500, min_mv, (min_mv + max_mv) / 2, max_mv, max_mv + 500 };
         const uint8_t lo[] = { 0, 0, 25, 100, 100 }, hi[] = { 0, 0, 75, 100, 100 };
         for (int i = 0; i < (int)(sizeof(probe) / sizeof(probe[0])); i++) {
-            const uint8_t pct = battery_percent_of(probe[i], BATTERY_TYPE, false, false);
+            const uint8_t pct = battery_percent_of(probe[i], battery_profile(), false, false);
             if (pct < lo[i] || pct > hi[i]) {
                 ESP_LOGE(__tag_batt, "test: curve FAIL %dmV -> %u%% (wanted %u-%u)", probe[i], (unsigned)pct, (unsigned)lo[i], (unsigned)hi[i]);
                 ok = false;
@@ -475,7 +532,7 @@ static inline bool battery_test(const uint32_t duration_ms) {
         }
         uint8_t last = 0;
         for (int mv = min_mv; mv <= max_mv; mv += 10) {
-            const uint8_t pct = battery_percent_of(mv, BATTERY_TYPE, false, false);
+            const uint8_t pct = battery_percent_of(mv, battery_profile(), false, false);
             if (pct < last) {
                 ESP_LOGE(__tag_batt, "test: curve FAIL not monotonic at %dmV (%u after %u)", mv, (unsigned)pct, (unsigned)last);
                 ok = false;
@@ -484,7 +541,7 @@ static inline bool battery_test(const uint32_t duration_ms) {
             last = pct;
         }
         /* a cold pack must widen the window, not report empty */
-        if (battery_percent_of(min_mv - 100, BATTERY_TYPE, true, false) == 0) {
+        if (battery_percent_of(min_mv - 100, battery_profile(), true, false) == 0) {
             ESP_LOGE(__tag_batt, "test: cold compensation FAIL (%dmV still reads 0%%)", min_mv - 100);
             ok = false;
         }
