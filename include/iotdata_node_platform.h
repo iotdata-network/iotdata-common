@@ -258,20 +258,15 @@ static inline uint16_t idep_sequence(const idep_node_t *const n) {
 
 /* It went out. Advances past the DOWN sentinel -- a plain ++ wraps 65535 -> 0 and 65535 is the
    sentinel -- and marks the store dirty, so no call site has to remember either.
-   Separate from peek because the iotdata rule is that a sequence advances only if there WAS a
-   transmission: a frame that failed to build, or that the radio refused, must not consume one, or a
-   gap would mean "never sent" instead of "lost". */
+   ALWAYS separate from peek, and there is deliberately no combined take(): a caller packs a frame
+   and only then offers it to a queue that may refuse it, so there is always a later failure to
+   wait for. The iotdata rule is that a sequence advances only if there WAS a transmission -- a
+   frame that failed to build, or that the radio or the queue refused, must not consume one, or the
+   gap it leaves would read as "sent and lost" instead of "never sent". Peek to pack; call this
+   from inside the branch where the frame has actually been handed over. */
 static inline void idep_sequence_used(idep_node_t *const n) {
     n->sequence = iotdata_sequence_next(n->sequence);
     iotdata_state_touch(n->state);
-}
-
-/* peek + used, for a caller whose transmission IS handing the frame to a queue that owns it from
-   then on -- the mesh packers, where there is no later success to wait for. */
-static inline uint16_t idep_sequence_take(idep_node_t *const n) {
-    const uint16_t seq = idep_sequence(n);
-    idep_sequence_used(n);
-    return seq;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
