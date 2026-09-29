@@ -6,8 +6,6 @@
 
 const char *__tag_device_e22900t22 = "device-e22900t22";
 
-/* The uart controller this radio owns. A node that receives CONTINUOUSLY holds it for the life of
-   the app, so anything else wanting a uart at the same time must be given a different one. */
 #ifndef E22_UART_PORT
 #define E22_UART_PORT UART_PORT_NUM
 #endif
@@ -26,6 +24,7 @@ typedef enum {
     LORA_MODE_DEEP_SLEEP
 } lora_mode_t;
 
+#define LORA_E22_ADDRESS_MONITOR            0xFFFF
 #define LORA_E22_ADDRESS_DEFAULT            0x0008
 #define LORA_E22_NETWORK_DEFAULT            0x00
 #define LORA_CHANNEL_DEFAULT                0x0F
@@ -513,7 +512,7 @@ esp_err_t lora_setup(const lora_config_t *const config) {
         ESP_ERROR_CHECK_BOOLEAN(GPIO_IS_VALID_OUTPUT_GPIO(PIN_DEVICE_LORA_M1));
     }
 
-    ESP_LOGD(__tag_device_e22900t22, "setup: address=0x%04" PRIX16 ", network=0x%02" PRIX8 ", channel=%d, transmit_power=%d, air_data_rate=%d, packet_size=%d, LBT=%s, crypt=0x%04" PRIX16, _LORA_CONFIG(e22_address),
+    ESP_LOGI(__tag_device_e22900t22, "setup: address=0x%04" PRIX16 ", network=0x%02" PRIX8 ", channel=%d, transmit_power=%d, air_data_rate=%d, packet_size=%d, LBT=%s, crypt=0x%04" PRIX16, _LORA_CONFIG(e22_address),
              _LORA_CONFIG(e22_network), _LORA_CONFIG(channel), _LORA_CONFIG(transmit_power), _LORA_CONFIG(air_data_rate), _LORA_CONFIG(packet_size), _LORA_CONFIG(listen_before_transmit) ? "true" : "false", _LORA_CONFIG(crypt));
 
     esp_err_t ret;

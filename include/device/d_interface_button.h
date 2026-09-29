@@ -12,9 +12,6 @@
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* esp_deep_sleep_enable_gpio_wakeup() was renamed in IDF 6.1 to
-   esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(); the arguments and the wake-mode enum are
-   unchanged. Nothing here deep sleeps today, but the module is written to survive one. */
 const char *__tag_device_button = "button";
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -321,15 +318,13 @@ void button_hardware_init(void *const _handle) {
     esp_err_t ret;
 
     if ((ret = gpio_install_isr_service(0)) == ESP_OK) {
-
-        const gpio_config_t gpio_conf = {
+        ESP_ERROR_CHECK(gpio_config(&(const gpio_config_t){
             .pin_bit_mask = BIT(handle->config->pins.gpio_button),
             .mode = GPIO_MODE_INPUT,
             .pull_up_en = GPIO_PULLUP_DISABLE, // external 10k pullup handles this
             .pull_down_en = GPIO_PULLDOWN_DISABLE,
             .intr_type = GPIO_INTR_ANYEDGE,
-        };
-        ESP_ERROR_CHECK(gpio_config(&gpio_conf));
+        }));
 
         // ISR service wasn't installed - reconfigure
         ESP_ERROR_CHECK(gpio_isr_handler_add(handle->config->pins.gpio_button, button_isr_handler, NULL));
@@ -375,13 +370,12 @@ void button_hardware_term(void *const _handle) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void button_init(void *const _handle) {
-    (void)_handle;
+void button_init(__attribute__((unused)) void *const _handle) {
 }
 
-void button_term(void *const _handle) {
-    (void)_handle;
+void button_term(__attribute__((unused)) void *const _handle) {
 }
+
 // ------------------------------------------------------------------------------------------------------------------------
 //
 // NOT PORTED: button_test_poweron() and button_test_factory(). Both are written

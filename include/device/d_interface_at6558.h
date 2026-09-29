@@ -6,9 +6,6 @@
 
 const char *__tag_device_at6558 = "device-at6558";
 
-/* The uart controller this receiver uses. It DEFAULTS to the shared one, because a board driving
-   its devices in turn -- as the SDS does -- wants exactly that. A board whose radio listens
-   continuously gives the GNSS a port of its own instead. */
 #ifndef GNSS_UART_PORT
 #define GNSS_UART_PORT UART_PORT_NUM
 #endif
@@ -35,8 +32,41 @@ const char *__tag_device_at6558 = "device-at6558";
 #ifndef PIN_GNSS_UART_RX
 #define PIN_GNSS_UART_RX PIN_DEVICE_UART_RX
 #endif
+
 /* PPS is optional and the driver already treats GPIO_NUM_NC as "not wired", so a board without one
    need say nothing at all -- which is most of them, since GNSS_WAIT_FOR_PPS is off by default. */
+/* PARKING THE RADIO IS A SHARED-BUS MEASURE, and only that.
+ *
+ * On a board that drives the GNSS and the radio down ONE uart -- as the SDS does -- the radio has
+ * to be told to stop driving the line before this driver takes it, and M0/M1 is how you say that
+ * to an E22.
+ *
+ * On a board where they have separate controllers it is not merely unnecessary, it is DESTRUCTIVE:
+ * LORA_MODE_DEEP_SLEEP is M1M0=11, the E22's configuration mode, and nothing here ever puts it
+ * back while the GNSS is running. The radio goes deaf, and mute -- writes still succeed at the
+ * uart because the module reads them as commands -- for as long as the receiver is up. On a node
+ * that listens continuously, that is forever.
+ *
+ * So it is conditional on the two actually sharing a port, which is a question the ports can
+ * answer for themselves. */
+/* A RUNTIME COMPARISON, NOT #if. UART_NUM_0 and UART_NUM_1 are enum MEMBERS, not macros, so the
+   preprocessor has never heard of either: `#if (GNSS_UART_PORT == E22_UART_PORT)` reads both as 0,
+   finds them equal, and parks the radio on every board including the ones that must not. Written
+   as C the comparison is real, and the compiler folds the dead branch away just the same. */
+static inline bool _gnss_shares_radio_uart(void) {
+    return (int)GNSS_UART_PORT == (int)E22_UART_PORT;
+}
+
+static inline void _gnss_park_radio(void) {
+    if (_gnss_shares_radio_uart())
+        _hack_lora_mode_deep_sleep_start();
+}
+
+static inline void _gnss_unpark_radio(void) {
+    if (_gnss_shares_radio_uart())
+        _hack_lora_mode_deep_sleep_end();
+}
+
 #ifndef PIN_GNSS_PPS
 #ifdef PIN_DEVICE_GNSS_PPS
 #define PIN_GNSS_PPS PIN_DEVICE_GNSS_PPS
@@ -403,8 +433,6 @@ esp_err_t gnss_setup(const gnss_config_t *const config) {
 gnss_setup_failed:
     (void)gnss_sleep(true);
     hw_uart_stop(GNSS_UART_PORT);
-    // _gnss_pins_disable();
-    // _hack_lora_mode_deep_sleep_end();
     return ret;
 }
 
@@ -417,7 +445,7 @@ esp_err_t gnss_start(void) {
 
     esp_err_t ret;
 
-    _hack_lora_mode_deep_sleep_start();
+    _gnss_park_radio();
     _gnss_pins_enable();
 
     ESP_RETURN_ON_ERROR(hw_uart_start(GNSS_UART_PORT, PIN_GNSS_UART_TX, PIN_GNSS_UART_RX, UART_BAUD_DEFAULT, UART_RX_BUF_SIZE_DEFAULT, UART_TX_BUF_SIZE_MIN), __tag_device_at6558, "start: uart start");
@@ -436,7 +464,7 @@ gnss_start_failed:
     (void)gnss_sleep(true);
     hw_uart_stop(GNSS_UART_PORT);
     _gnss_pins_disable();
-    _hack_lora_mode_deep_sleep_end();
+    _gnss_unpark_radio();
     return ret;
 }
 
@@ -466,10 +494,6 @@ esp_err_t gnss_read(gnss_reading_t *const out, const gnss_read_flags_t flags, co
     int failed_count = 0;
     while ((hw_ticks_ms() - start) < read_timeout_ms) {
         char line[_NMEA_SENTENCE_LENGTH_MAX];
-        /* hw_ticks_ms(), NOT `start`: nmea_timeout_ms is the budget for ONE sentence, and the
-           outer while already bounds the whole read. Passing `start` pinned every call to the same
-           deadline, so five seconds in they all returned empty and the rest of the fix window was
-           spent asleep in the 50ms below -- a module talking perfectly normally looked mute. */
         if (_gnss_read_sentence(line, _NMEA_SENTENCE_LENGTH_MAX, st->nmea_timeout_ms, hw_ticks_ms()) > 0) {
             ESP_LOGD(__tag_device_at6558, "gnss_read: sentence=%s", line);
             out->nmea_count++;
@@ -524,26 +548,27 @@ esp_err_t gnss_read(gnss_reading_t *const out, const gnss_read_flags_t flags, co
  * The TLV TYPE is deliberately not chosen here: 0x20 upwards is application space, so the number
  * this travels under belongs to whichever application allocates it, not to the driver.
  */
-#define GNSS_QUALITY_TLV_SIZE 5
 
-int gnss_quality_tlv_pack(const gnss_reading_t *const r, uint8_t *const buf, const size_t cap) {
-    if (r == NULL || buf == NULL || cap < (size_t)GNSS_QUALITY_TLV_SIZE)
-        return 0;
-    const int hdop_x10 = (r->hdop > 0.0f) ? (int)(r->hdop * 10.0f + 0.5f) : 0;
-    const int alt_m = (int)(r->altitude + (r->altitude < 0.0f ? -0.5f : 0.5f));
-    const int16_t alt = (int16_t)(alt_m < -32768 ? -32768 : (alt_m > 32767 ? 32767 : alt_m));
-    buf[0] = r->fix_quality;
-    buf[1] = r->satellites;
-    buf[2] = (uint8_t)(hdop_x10 < 0 ? 0 : (hdop_x10 > 255 ? 255 : hdop_x10));
-    buf[3] = (uint8_t)((uint16_t)alt >> 8);
-    buf[4] = (uint8_t)((uint16_t)alt & 0xFFu);
-    return GNSS_QUALITY_TLV_SIZE;
-}
+// #define GNSS_QUALITY_TLV_SIZE 5
+
+// int gnss_quality_tlv_pack(const gnss_reading_t *const r, uint8_t *const buf, const size_t cap) {
+//     if (r == NULL || buf == NULL || cap < (size_t)GNSS_QUALITY_TLV_SIZE)
+//         return 0;
+//     const int hdop_x10 = (r->hdop > 0.0f) ? (int)(r->hdop * 10.0f + 0.5f) : 0;
+//     const int alt_m = (int)(r->altitude + (r->altitude < 0.0f ? -0.5f : 0.5f));
+//     const int16_t alt = (int16_t)(alt_m < -32768 ? -32768 : (alt_m > 32767 ? 32767 : alt_m));
+//     buf[0] = r->fix_quality;
+//     buf[1] = r->satellites;
+//     buf[2] = (uint8_t)(hdop_x10 < 0 ? 0 : (hdop_x10 > 255 ? 255 : hdop_x10));
+//     buf[3] = (uint8_t)((uint16_t)alt >> 8);
+//     buf[4] = (uint8_t)((uint16_t)alt & 0xFFu);
+//     return GNSS_QUALITY_TLV_SIZE;
+// }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
 esp_err_t gnss_attach(void) {
-    _hack_lora_mode_deep_sleep_start();
+    _gnss_park_radio();
     _gnss_pins_enable();
     ESP_RETURN_ON_ERROR(hw_uart_start(GNSS_UART_PORT, PIN_GNSS_UART_TX, PIN_GNSS_UART_RX, UART_BAUD_DEFAULT, UART_RX_BUF_SIZE_DEFAULT, UART_TX_BUF_SIZE_MIN), __tag_device_at6558, "attach: uart start");
     hw_delay_ms_yieldable(_GNSS_START_DELAY_MS);
@@ -553,7 +578,7 @@ esp_err_t gnss_attach(void) {
 void gnss_detach(void) {
     hw_uart_stop(GNSS_UART_PORT);
     _gnss_pins_disable();
-    _hack_lora_mode_deep_sleep_end();
+    _gnss_unpark_radio();
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -565,7 +590,7 @@ esp_err_t gnss_stop(void) {
             hw_delay_ms_yieldable(_GNSS_SLEEP_DELAY_MS);
     hw_uart_stop(GNSS_UART_PORT);
     _gnss_pins_disable();
-    _hack_lora_mode_deep_sleep_end();
+    _gnss_unpark_radio();
 
     ESP_LOGI(__tag_device_at6558, "stopped");
 

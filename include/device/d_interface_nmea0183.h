@@ -3,9 +3,6 @@
 // NMEA parsing (standard NMEA 0183)
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* For struct tm / timegm: an RMC carries a date and a time of day, and an epoch is what a caller
-   wants. The IDF's own time.h re-declares the POSIX clock_* trio, which trips -Wredundant-decls --
-   suppressed here the same way d_hardware_uart.h suppresses -Wpedantic for driver/uart.h. */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wredundant-decls"
 #include <time.h>
