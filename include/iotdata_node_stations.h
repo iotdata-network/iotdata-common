@@ -179,7 +179,10 @@ typedef struct {
     uint16_t station;
     station_kind_t kind;
     uint8_t variant; /* last variant seen */
-    int rssi;        /* last RSSI, dBm */
+    /* Last RSSI, in the radio driver's own convention: < 0 is a reading in dBm, 0 means the reading
+       saturated, and anything positive is NOT a dBm -- it is the driver saying it had none. Stored
+       as given rather than translated, so a caller cannot forget to; see stations_rssi_str(). */
+    int rssi;
     uint32_t last_ms;
     uint32_t rx_count;
 } station_entry_t;
@@ -223,6 +226,23 @@ static inline int stations_locate(const stations_t *const t, const uint16_t stat
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
+
+/* Never print e->rssi directly. A station heard once with no reading available stores the driver's
+   sentinel, and printing that as a number reports the weakest link in the table as the strongest
+   signal in it -- in a dataset whose whole purpose is measuring links. */
+/* Wide enough for the longest thing this can write: an int is up to 11 characters, plus "dBm" and
+   a terminator. Named rather than guessed, because guessing it is a -Wformat-truncation error. */
+#define STATIONS_RSSI_STR_MAX 16
+
+static inline const char *stations_rssi_str(const int rssi, char *const buf, const size_t size) {
+    if (rssi < 0)
+        (void)snprintf(buf, size, "%ddBm", rssi);
+    else if (rssi == 0)
+        (void)snprintf(buf, size, "sat");
+    else
+        (void)snprintf(buf, size, "n/a");
+    return buf;
+}
 
 static inline bool stations_seen(stations_t *const t, const uint16_t station, const uint8_t variant, const int rssi, const uint32_t now_ms) {
     int slot = -1, slot_oldest = 0;
