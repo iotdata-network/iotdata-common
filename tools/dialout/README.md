@@ -156,6 +156,34 @@ Then hand that public key to the server once:
 dialout-server enrol iotdata-tst-2 /path/to/its.pub     # or pipe it on stdin
 ```
 
+### Moving a server, or keeping a spare
+
+```sh
+dialout-server backup                      # -> ./dialout-backup-<host>-<stamp>.tar.gz, mode 600
+dialout-server backup /mnt/usb/dialout.tgz --no-config
+dialout-server restore dialout-backup-iotgate-20260929-065151.tar.gz
+```
+
+The thing that matters in there is the **host key**. Clients pin it (`accept-new` into their own
+`known_hosts`), so a replacement or second server that generates a fresh one is refused by every client
+that already knows the old one — and it presents as a key error, not as "wrong server". Carry
+`host_key` across and the two ends are interchangeable. The rest of the tarball is the register
+(`authorized_keys`, so enrolments *and* tags), the invite list and the liveness stamps, plus
+`dialout.cfg` and the per-host overlay unless you pass `--no-config`.
+
+`restore` refuses to run under a live service, and refuses to overwrite a state dir that already has a
+host key, unless you mean it (`--force`). It renames the per-host overlay to the new hostname, because
+that file is read *by hostname* and would otherwise be silently ignored — taking the Cloudflare token
+with it. It also tells you when the token was **not** in the backup: on a box that reaches it through
+`iotdata-conf`, it cannot be, and the restored server will come up unable to publish DNS.
+
+**A warm spare needs no new code.** Restore onto the second box and leave `cloudflare-token` empty
+there: `reconcileDns` returns early without one, so that server runs dropbear and would accept any
+tunnel, while publishing nothing. Promotion is giving it the token — it takes over the A, SRV and
+invite records within one `dns-refresh`. Do **not** leave both publishing: they would overwrite each
+other's A record and, worse, each other's invite TXT every 300s, so an invitation made on one would be
+withdrawn by the other. See the note below on doing this properly.
+
 ### Tagging a box
 
 A client is named after its MAC, which makes a fine token and a terrible label. Tag it:
