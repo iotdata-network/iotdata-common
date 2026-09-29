@@ -12,6 +12,8 @@
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+/* The DEFAULT port, for a board that drives everything down one pair in turn -- which most do. A
+   board that needs two devices listening AT ONCE passes a different port; see the note below. */
 #define UART_PORT_NUM            UART_NUM_1
 #define UART_BAUD_DEFAULT        9600
 #define UART_RX_BUF_SIZE_MIN     (UART_HW_FIFO_LEN(UART_PORT_NUM) + 1)
@@ -19,10 +21,19 @@
 #define UART_TX_BUF_SIZE_MIN     (UART_HW_FIFO_LEN(UART_PORT_NUM) + 1)
 #define UART_TX_BUF_SIZE_DEFAULT 256
 
-const uart_port_t s_uart_port = UART_PORT_NUM;
-gpio_num_t s_uart_tx, s_uart_rx;
+/* STATE PER PORT, and a port argument on every call.
+ *
+ * One controller re-pointed between devices is enough while they take turns -- a sense-and-send
+ * cycle reads its sensors and only then powers the radio. It stops being enough the moment two
+ * devices must be listening at the same time: a node that receives continuously cannot hand its
+ * uart to a GNSS for thirty seconds and call what comes back a measurement of anything.
+ *
+ * So the port is a parameter, and each driver names the one it was given. Nothing here assumes a
+ * single device any more, and a board that still multiplexes simply passes UART_PORT_NUM twice. */
+#define HW_UART_PORTS            UART_NUM_MAX
 
-bool s_uart_installed = false;
+static gpio_num_t s_uart_tx[HW_UART_PORTS], s_uart_rx[HW_UART_PORTS];
+static bool s_uart_installed[HW_UART_PORTS] = { false };
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -30,32 +41,34 @@ void _hw_uart_pins_enable(void) {
     // tx/rx enabled by uart_set_pin()
 }
 
-void _hw_uart_pins_disable(void) {
+void _hw_uart_pins_disable(const uart_port_t port) {
     // tx/rx released by uart_driver_delete() anyway
-    if (s_uart_tx != GPIO_NUM_NC && s_uart_rx != GPIO_NUM_NC)
-        hw_gpio_cfg_disable_two(s_uart_tx, s_uart_rx);
-    else if (s_uart_tx != GPIO_NUM_NC)
-        hw_gpio_cfg_disable(s_uart_tx);
-    else if (s_uart_rx != GPIO_NUM_NC)
-        hw_gpio_cfg_disable(s_uart_rx);
+    const gpio_num_t tx = s_uart_tx[port], rx = s_uart_rx[port];
+    if (tx != GPIO_NUM_NC && rx != GPIO_NUM_NC)
+        hw_gpio_cfg_disable_two(tx, rx);
+    else if (tx != GPIO_NUM_NC)
+        hw_gpio_cfg_disable(tx);
+    else if (rx != GPIO_NUM_NC)
+        hw_gpio_cfg_disable(rx);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_uart_start(const gpio_num_t tx, const gpio_num_t rx, const int baud, const int rx_buf_size, const int tx_buf_size) {
-    assert(!s_uart_installed);
+esp_err_t hw_uart_start(const uart_port_t port, const gpio_num_t tx, const gpio_num_t rx, const int baud, const int rx_buf_size, const int tx_buf_size) {
+    assert(port >= 0 && port < HW_UART_PORTS);
+    assert(!s_uart_installed[port]);
 
-    s_uart_tx = tx;
-    s_uart_rx = rx;
+    s_uart_tx[port] = tx;
+    s_uart_rx[port] = rx;
 
     esp_err_t ret = ESP_OK;
 
     _hw_uart_pins_enable();
 
-    ESP_ERROR_CHECK(uart_driver_install(s_uart_port, rx_buf_size, tx_buf_size, 0, NULL, 0));
-    s_uart_installed = true;
+    ESP_ERROR_CHECK(uart_driver_install(port, rx_buf_size, tx_buf_size, 0, NULL, 0));
+    s_uart_installed[port] = true;
 
-    ESP_GOTO_ON_ERROR(uart_param_config(s_uart_port,
+    ESP_GOTO_ON_ERROR(uart_param_config(port,
                                         &(const uart_config_t){
                                             .baud_rate = baud,
                                             .data_bits = UART_DATA_8_BITS,
@@ -73,61 +86,62 @@ esp_err_t hw_uart_start(const gpio_num_t tx, const gpio_num_t rx, const int baud
 #endif
                                         }),
                       hw_uart_start_failed, __func__, "uart_param_config");
-    ESP_GOTO_ON_ERROR(uart_set_pin(s_uart_port, tx, rx, GPIO_NUM_NC, GPIO_NUM_NC), hw_uart_start_failed, __func__, "uart_set_pin");
-    ESP_GOTO_ON_ERROR(uart_flush_input(s_uart_port), hw_uart_start_failed, __func__, "uart_flush_input");
+    ESP_GOTO_ON_ERROR(uart_set_pin(port, tx, rx, GPIO_NUM_NC, GPIO_NUM_NC), hw_uart_start_failed, __func__, "uart_set_pin");
+    ESP_GOTO_ON_ERROR(uart_flush_input(port), hw_uart_start_failed, __func__, "uart_flush_input");
 
-    ESP_LOGD("hw_uart", "started: tx=%d, rx=%d, baud=%d, rx_buf=%d, tx_buf=%d", tx, rx, baud, rx_buf_size, tx_buf_size);
+    ESP_LOGD("hw_uart", "started: port=%d, tx=%d, rx=%d, baud=%d, rx_buf=%d, tx_buf=%d", (int)port, tx, rx, baud, rx_buf_size, tx_buf_size);
 
     return ESP_OK;
 
 hw_uart_start_failed:
-    ESP_ERROR_CHECK(uart_driver_delete(s_uart_port));
-    s_uart_installed = false;
-    _hw_uart_pins_disable();
+    ESP_ERROR_CHECK(uart_driver_delete(port));
+    s_uart_installed[port] = false;
+    _hw_uart_pins_disable(port);
     return ret;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-int hw_uart_write(const uint8_t *const data, const size_t len) {
-    return uart_write_bytes(s_uart_port, data, len);
+int hw_uart_write(const uart_port_t port, const uint8_t *const data, const size_t len) {
+    return uart_write_bytes(port, data, len);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_uart_wait_tx_done(const int timeout_ms) {
-    return uart_wait_tx_done(s_uart_port, pdMS_TO_TICKS(timeout_ms));
+esp_err_t hw_uart_wait_tx_done(const uart_port_t port, const int timeout_ms) {
+    return uart_wait_tx_done(port, pdMS_TO_TICKS(timeout_ms));
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-int hw_uart_read(uint8_t *const buf, const size_t len, const int timeout_ms) {
-    return uart_read_bytes(s_uart_port, buf, len, pdMS_TO_TICKS(timeout_ms));
+int hw_uart_read(const uart_port_t port, uint8_t *const buf, const size_t len, const int timeout_ms) {
+    return uart_read_bytes(port, buf, len, pdMS_TO_TICKS(timeout_ms));
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-size_t hw_uart_available(void) {
+size_t hw_uart_available(const uart_port_t port) {
     size_t n = 0;
-    return (uart_get_buffered_data_len(s_uart_port, &n) == ESP_OK) ? n : 0;
+    return (uart_get_buffered_data_len(port, &n) == ESP_OK) ? n : 0;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_uart_flush(void) {
-    return uart_flush_input(s_uart_port);
+esp_err_t hw_uart_flush(const uart_port_t port) {
+    return uart_flush_input(port);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void hw_uart_stop(void) {
-    assert(s_uart_installed);
+void hw_uart_stop(const uart_port_t port) {
+    assert(port >= 0 && port < HW_UART_PORTS);
+    assert(s_uart_installed[port]);
 
-    ESP_ERROR_CHECK(uart_driver_delete(s_uart_port));
-    s_uart_installed = false;
-    _hw_uart_pins_disable();
+    ESP_ERROR_CHECK(uart_driver_delete(port));
+    s_uart_installed[port] = false;
+    _hw_uart_pins_disable(port);
 
-    ESP_LOGD("hw_uart", "stopped: pins released");
+    ESP_LOGD("hw_uart", "stopped: port=%d, pins released", (int)port);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------

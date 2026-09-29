@@ -304,7 +304,15 @@ static inline speed_t _hw_uart_speed(const int baud) {
     }
 }
 
-static inline esp_err_t hw_uart_start(__attribute__((unused)) const gpio_num_t tx, __attribute__((unused)) const gpio_num_t rx, const int baud, __attribute__((unused)) const int rx_buf_size, __attribute__((unused)) const int tx_buf_size) {
+/* Linux has ONE serial device, named by hw_uart_set_device(), so the port argument the esp32 side
+   uses to tell two controllers apart is nominal here -- accepted and ignored. It exists so a driver
+   compiles unchanged against either platform, which is the whole point of this seam. */
+#ifndef UART_PORT_NUM
+#define UART_PORT_NUM 0
+#endif
+
+static inline esp_err_t hw_uart_start(__attribute__((unused)) const int port, __attribute__((unused)) const gpio_num_t tx, __attribute__((unused)) const gpio_num_t rx, const int baud, __attribute__((unused)) const int rx_buf_size,
+                                      __attribute__((unused)) const int tx_buf_size) {
     if (s_hw_uart_fd >= 0)
         return ESP_ERR_INVALID_STATE;
 
@@ -339,7 +347,7 @@ static inline esp_err_t hw_uart_start(__attribute__((unused)) const gpio_num_t t
     return ESP_OK;
 }
 
-static inline int hw_uart_write(const uint8_t *const data, const size_t len) {
+static inline int hw_uart_write(__attribute__((unused)) const int port, const uint8_t *const data, const size_t len) {
     if (s_hw_uart_fd < 0)
         return -1;
     size_t off = 0;
@@ -361,13 +369,13 @@ static inline int hw_uart_write(const uint8_t *const data, const size_t len) {
     return (int)off;
 }
 
-static inline esp_err_t hw_uart_wait_tx_done(__attribute__((unused)) const int timeout_ms) {
+static inline esp_err_t hw_uart_wait_tx_done(__attribute__((unused)) const int port, __attribute__((unused)) const int timeout_ms) {
     if (s_hw_uart_fd < 0)
         return ESP_ERR_INVALID_STATE;
     return tcdrain(s_hw_uart_fd) == 0 ? ESP_OK : ESP_FAIL;
 }
 
-static inline int hw_uart_read(uint8_t *const buf, const size_t len, const int timeout_ms) {
+static inline int hw_uart_read(__attribute__((unused)) const int port, uint8_t *const buf, const size_t len, const int timeout_ms) {
     if (s_hw_uart_fd < 0)
         return -1;
     const int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
@@ -398,18 +406,18 @@ static inline int hw_uart_read(uint8_t *const buf, const size_t len, const int t
     return (int)got;
 }
 
-static inline size_t hw_uart_available(void) {
+static inline size_t hw_uart_available(__attribute__((unused)) const int port) {
     int n = 0;
     return (s_hw_uart_fd >= 0 && ioctl(s_hw_uart_fd, FIONREAD, &n) == 0 && n > 0) ? (size_t)n : 0;
 }
 
-static inline esp_err_t hw_uart_flush(void) {
+static inline esp_err_t hw_uart_flush(__attribute__((unused)) const int port) {
     if (s_hw_uart_fd < 0)
         return ESP_ERR_INVALID_STATE;
     return tcflush(s_hw_uart_fd, TCIFLUSH) == 0 ? ESP_OK : ESP_FAIL;
 }
 
-static inline void hw_uart_stop(void) {
+static inline void hw_uart_stop(__attribute__((unused)) const int port) {
     if (s_hw_uart_fd < 0)
         return;
     (void)tcdrain(s_hw_uart_fd);

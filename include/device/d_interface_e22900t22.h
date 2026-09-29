@@ -6,6 +6,12 @@
 
 const char *__tag_device_e22900t22 = "device-e22900t22";
 
+/* The uart controller this radio owns. A node that receives CONTINUOUSLY holds it for the life of
+   the app, so anything else wanting a uart at the same time must be given a different one. */
+#ifndef E22_UART_PORT
+#define E22_UART_PORT UART_PORT_NUM
+#endif
+
 // ------------------------------------------------------------------------------------------------------------------------
 
 typedef enum {
@@ -278,9 +284,9 @@ static bool _lora_cmd_send(const uint8_t *const cmd, const size_t cmd_len) {
     _lora_settle();
     if (!lora_wait_ready(_lora_transmit_wait_ms()))
         return false;
-    if (hw_uart_flush() != ESP_OK)
+    if (hw_uart_flush(E22_UART_PORT) != ESP_OK)
         return false;
-    if (hw_uart_write(cmd, cmd_len) != (int)cmd_len)
+    if (hw_uart_write(E22_UART_PORT, cmd, cmd_len) != (int)cmd_len)
         return false;
     _lora_settle();
     return true;
@@ -291,7 +297,7 @@ static int _lora_cmd_xfer_to(const uint8_t *const cmd, const size_t cmd_len, uin
         return -1;
     if (!lora_wait_ready(_lora_transmit_wait_ms()))
         return -1;
-    return hw_uart_read(res, res_len, timeout_ms);
+    return hw_uart_read(E22_UART_PORT, res, res_len, timeout_ms);
 }
 
 static int _lora_cmd_xfer(const uint8_t *const cmd, const size_t cmd_len, uint8_t *const res, const size_t res_len) {
@@ -514,7 +520,7 @@ esp_err_t lora_setup(const lora_config_t *const config) {
 
     _lora_pins_enable();
 
-    ESP_RETURN_ON_ERROR(hw_uart_start(PIN_DEVICE_UART_TX, PIN_DEVICE_UART_RX, UART_BAUD_DEFAULT, UART_RX_BUF_SIZE_MIN, UART_TX_BUF_SIZE_DEFAULT), __tag_device_e22900t22, "setup: uart start");
+    ESP_RETURN_ON_ERROR(hw_uart_start(E22_UART_PORT, PIN_DEVICE_UART_TX, PIN_DEVICE_UART_RX, UART_BAUD_DEFAULT, UART_RX_BUF_SIZE_MIN, UART_TX_BUF_SIZE_DEFAULT), __tag_device_e22900t22, "setup: uart start");
 
     ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_CONFIG), lora_setup_exit, __tag_device_e22900t22, "setup: config mode");
 
@@ -524,7 +530,7 @@ esp_err_t lora_setup(const lora_config_t *const config) {
     ESP_GOTO_ON_ERROR(_lora_read_and_update_config(), lora_setup_exit, __tag_device_e22900t22, "setup: config");
 
     ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_DEEP_SLEEP), lora_setup_exit, __tag_device_e22900t22, "setup: mode deep sleep");
-    hw_uart_stop();
+    hw_uart_stop(E22_UART_PORT);
     _lora_pins_disable();
 
     ESP_LOGI(__tag_device_e22900t22, "setup: name=0x%04" PRIX16 ", version=%d, power=%ddBm", (uint16_t)((_lora_rtc.product[0] << 8) | _lora_rtc.product[1]), _lora_rtc.product[2], _lora_rtc.product[3]);
@@ -533,7 +539,7 @@ esp_err_t lora_setup(const lora_config_t *const config) {
 
 lora_setup_exit:
     (void)lora_sleep();
-    hw_uart_stop();
+    hw_uart_stop(E22_UART_PORT);
     _lora_pins_disable();
     return ret;
 }
@@ -550,7 +556,7 @@ esp_err_t lora_start(void) {
 
     _lora_pins_enable();
 
-    ESP_RETURN_ON_ERROR(hw_uart_start(PIN_DEVICE_UART_TX, PIN_DEVICE_UART_RX, UART_BAUD_DEFAULT, UART_RX_BUF_SIZE_MIN, UART_TX_BUF_SIZE_DEFAULT), __tag_device_e22900t22, "start: uart start");
+    ESP_RETURN_ON_ERROR(hw_uart_start(E22_UART_PORT, PIN_DEVICE_UART_TX, PIN_DEVICE_UART_RX, UART_BAUD_DEFAULT, UART_RX_BUF_SIZE_MIN, UART_TX_BUF_SIZE_DEFAULT), __tag_device_e22900t22, "start: uart start");
 
     ESP_GOTO_ON_ERROR(_lora_mode_set(LORA_MODE_NORMAL), lora_start_failed, __tag_device_e22900t22, "start: mode normal");
 
@@ -560,7 +566,7 @@ esp_err_t lora_start(void) {
 
 lora_start_failed:
     (void)_lora_mode_set(LORA_MODE_NORMAL);
-    hw_uart_stop();
+    hw_uart_stop(E22_UART_PORT);
     _lora_pins_disable();
     return ret;
 }
@@ -687,7 +693,7 @@ static uint32_t _lora_rx_reads = 0, _lora_rx_bytes = 0, _lora_rx_last_ms = 0, _l
 static void _lora_rx_forensic(const char *const why, const uint32_t started_ms, const uint32_t prev_rx_ms) {
     const uint32_t now = hw_time_ms();
     ESP_LOGW(__tag_device_e22900t22, "rx-forensic: %s | read=#%" PRIu32 " bytes=%" PRIu32 " since_rx=%" PRIu32 "ms since_tx=%" PRIu32 "ms took=%" PRIu32 "ms buffered=%u", why, _lora_rx_reads, _lora_rx_bytes,
-             prev_rx_ms ? started_ms - prev_rx_ms : 0, _lora_tx_last_ms ? now - _lora_tx_last_ms : 0, now - started_ms, (unsigned)hw_uart_available());
+             prev_rx_ms ? started_ms - prev_rx_ms : 0, _lora_tx_last_ms ? now - _lora_tx_last_ms : 0, now - started_ms, (unsigned)hw_uart_available(E22_UART_PORT));
 }
 #endif
 
@@ -710,10 +716,10 @@ esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, in
 #if LORA_RX_FORENSICS
     const uint32_t forensic_started_ms = hw_time_ms(); /* BEFORE the first byte: `took` is the whole read */
 #endif
-    if (hw_uart_read(buf, 1, first_byte_timeout_ms) <= 0)
+    if (hw_uart_read(E22_UART_PORT, buf, 1, first_byte_timeout_ms) <= 0)
         return ESP_OK;
     size_t total = 1;
-    while (total < max && hw_uart_read(buf + total, 1, _LORA_RX_GAP_MS) > 0)
+    while (total < max && hw_uart_read(E22_UART_PORT, buf + total, 1, _LORA_RX_GAP_MS) > 0)
         total++;
 #if LORA_RX_FORENSICS
     _lora_rx_reads++;
@@ -775,9 +781,9 @@ esp_err_t lora_write(const uint8_t *const data, const size_t len) {
 
     // Wait for AUX ready before transmit
     ESP_RETURN_ON_FALSE(lora_wait_ready(_lora_transmit_wait_ms()), DEV_ERR_TIMEOUT, __tag_device_e22900t22, "write: wait ready (%" PRIu32 "ms at %ubps -- module still busy)", _lora_transmit_wait_ms(), (unsigned)_LORA_CONFIG(air_data_rate));
-    ESP_RETURN_ON_FALSE(hw_uart_write(data, len) == (int)len, ESP_FAIL, __tag_device_e22900t22, "write: uart write (len=%d)", (int)len);
+    ESP_RETURN_ON_FALSE(hw_uart_write(E22_UART_PORT, data, len) == (int)len, ESP_FAIL, __tag_device_e22900t22, "write: uart write (len=%d)", (int)len);
     // Block until the UART has physically clocked every byte out to the module
-    ESP_RETURN_ON_ERROR(hw_uart_wait_tx_done(_LORA_CMD_TIMEOUT_MS), __tag_device_e22900t22, "write: tx drain");
+    ESP_RETURN_ON_ERROR(hw_uart_wait_tx_done(E22_UART_PORT, _LORA_CMD_TIMEOUT_MS), __tag_device_e22900t22, "write: tx drain");
     if (_LORA_IS_USB())
         _lora_tx_guard_until_ms = hw_time_ms() + _LORA_TX_GUARD_USB_MS;
 #if LORA_RX_FORENSICS
@@ -809,7 +815,7 @@ esp_err_t lora_stop(void) {
     if (lora_sleep() == ESP_OK)
         if (_LORA_SLEEP_DELAY_MS > 0)
             hw_delay_ms_yieldable(_LORA_SLEEP_DELAY_MS);
-    hw_uart_stop();
+    hw_uart_stop(E22_UART_PORT);
     _lora_pins_disable();
 
     ESP_LOGI(__tag_device_e22900t22, "stopped");

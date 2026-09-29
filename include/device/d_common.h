@@ -136,7 +136,13 @@ void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size)
  *
  * Keep the stamp FIRST in the struct, so the guard itself is always read from a fixed offset.
  */
-#define _RTC_DATA_STRUCT RTC_NOINIT_ATTR
+#define _RTC_DATA_STRUCT     RTC_NOINIT_ATTR
+/* The same placement, named separately because the REQUIREMENT is different: this one is touched
+   from an ISR as well as from the app, so it must live where an interrupt can reach it. On the
+   parts used here RTC_NOINIT_ATTR already lands in RTC fast memory and satisfies both; naming it
+   apart means a part that puts it somewhere an ISR cannot reach breaks loudly at the definition
+   rather than quietly at three in the morning. */
+#define _RTC_DATA_STRUCT_ISR RTC_NOINIT_ATTR
 #define _RTC_DATA_STAMP_ENTRY \
     uint32_t magic; \
     uint32_t size
@@ -147,6 +153,8 @@ void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size)
         (s)->magic = m; \
         (s)->size = (uint32_t)sizeof(*(s)); \
     } while (0)
+/* Companion to _RTC_DATA_STRUCT_ISR: same initialisation, named apart for the same reason. */
+#define _RTC_DATA_INIT_ISR(s, m) _RTC_DATA_INIT(s, m)
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
