@@ -156,6 +156,35 @@ Then hand that public key to the server once:
 dialout-server enrol iotdata-tst-2 /path/to/its.pub     # or pipe it on stdin
 ```
 
+### Tagging a box
+
+A client is named after its MAC, which makes a fine token and a terrible label. Tag it:
+
+```sh
+dialout-server tag iotdata-rem-50411c64b8fc solar shed, Brannan
+dialout-server tag 2878c0 bench pi zero + simcom modem     # a fragment of the name will do
+dialout-server tag "solar shed"                            # no text clears it
+```
+
+The tag then shows as a column in `dialout-server clients`, appears in the `tunnel UP`/`DOWN` log
+lines, and — the useful part — stands in for the name anywhere a client is named:
+
+```sh
+dialout-server wait --for "solar shed"
+dialout-server invite modem
+dialout-server revoke iotdata-rem-50411c64b8fc
+```
+
+Resolution accepts the exact name, the exact tag, or any unambiguous fragment of either; two matches
+is an error that lists them rather than a guess. A string that matches nothing enrolled is passed
+through unchanged, so you can still invite a box before enrolling it. `enrol --tag "..."` sets it at
+the same time.
+
+It is stored in the comment field of the client's `authorized_keys` line, since that file is already
+the register of who is enrolled and a second list would only drift from it — which also means a
+`revoke` takes the tag with it. Tokens and ports still derive from the real name, so tags are operator
+sugar: rename or drop one whenever you like and no client notices.
+
 ### Is it still alive?
 
 `dialout-server clients` has a LAST SEEN column. A client fills it in with a **ping**: on a round that
