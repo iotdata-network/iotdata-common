@@ -69,10 +69,11 @@ typedef struct {
 } bme280_reading_t;
 
 typedef struct {
+    uint8_t i2c_addr;
     reading_strategy_t strategy_temp, strategy_pres, strategy_humi;
 } bme280_config_t;
 
-const bme280_config_t bme280_config_default = { .strategy_temp = STRAT_BME280_TEMP_DEFAULT, .strategy_pres = STRAT_BME280_PRES_DEFAULT, .strategy_humi = STRAT_BME280_HUMI_DEFAULT };
+const bme280_config_t bme280_config_default = { .i2c_addr = BME280_I2C_ADDR, .strategy_temp = STRAT_BME280_TEMP_DEFAULT, .strategy_pres = STRAT_BME280_PRES_DEFAULT, .strategy_humi = STRAT_BME280_HUMI_DEFAULT };
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -286,6 +287,7 @@ static const char *_bme280_chip_name(const uint8_t id) {
 }
 
 void bme280_diagnose(void) {
+    const uint8_t expect = _BME280_RTC_VALID() ? _BME280_CONFIG(i2c_addr) : (uint8_t)BME280_I2C_ADDR;
     if (hw_i2c_bus_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT) != ESP_OK) {
         ESP_LOGE(__tag_device_bme280, "diag: cannot open the i2c bus on gpio%d/%d", PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL);
         return;
@@ -301,9 +303,9 @@ void bme280_diagnose(void) {
                 uint8_t id = 0;
                 if (hw_i2c_dev_reg_read(dev, _BME280_REG_CHIP_ID, &id, 1) != ESP_OK)
                     ESP_LOGW(__tag_device_bme280, "diag: 0x%02" PRIX8 " answers, but register 0x%02X would not read", addr[i], _BME280_REG_CHIP_ID);
-                else if (_BME280_CHIP_ID_VALID(id) && addr[i] != BME280_I2C_ADDR)
-                    ESP_LOGW(__tag_device_bme280, "diag: 0x%02" PRIX8 " chip-id=0x%02" PRIX8 " %s <-- THE SENSOR IS HERE, not at 0x%02X, rebuild with -DUSE_BME280_I2C_ADDR=0x%02X, or strap SDO the other way", addr[i], id,
-                             _bme280_chip_name(id), BME280_I2C_ADDR, addr[i]);
+                else if (_BME280_CHIP_ID_VALID(id) && addr[i] != expect)
+                    ESP_LOGW(__tag_device_bme280, "diag: 0x%02" PRIX8 " chip-id=0x%02" PRIX8 " %s <-- THE SENSOR IS HERE, not at 0x%02" PRIX8 ". Set .i2c_addr = 0x%02" PRIX8 " in this board's bme280_config_t, or strap SDO the other way",
+                             addr[i], id, _bme280_chip_name(id), expect, addr[i]);
                 else
                     ESP_LOGW(__tag_device_bme280, "diag: 0x%02" PRIX8 " chip-id=0x%02" PRIX8 " %s", addr[i], id, _bme280_chip_name(id));
                 (void)hw_i2c_dev_del(dev);
@@ -322,6 +324,8 @@ esp_err_t bme280_setup(const bme280_config_t *const config) {
 
     _BME280_RTC_INIT();
     memcpy(&_bme280_rtc.config, config, sizeof(_bme280_rtc.config));
+    if (_bme280_rtc.config.i2c_addr == 0u)
+        _bme280_rtc.config.i2c_addr = BME280_I2C_ADDR;
 
     char sb1[STRATEGY_STR_MAX], sb2[STRATEGY_STR_MAX], sb3[STRATEGY_STR_MAX];
     ESP_LOGD(__tag_device_bme280, "setup: strategy_temp=%s, strategy_pres=%s, strategy_humi=%s", reading_strategy_to_str(&_BME280_CONFIG(strategy_temp), sb1, sizeof(sb1)),
@@ -329,7 +333,7 @@ esp_err_t bme280_setup(const bme280_config_t *const config) {
 
     esp_err_t ret;
 
-    ESP_RETURN_ON_ERROR(hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, BME280_I2C_ADDR, BME280_I2C_MAX_PAYLOAD), __tag_device_bme280, "start: i2c start");
+    ESP_RETURN_ON_ERROR(hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, _BME280_CONFIG(i2c_addr), BME280_I2C_MAX_PAYLOAD), __tag_device_bme280, "start: i2c start");
 
     ESP_GOTO_ON_ERROR(hw_i2c_read_byte(_BME280_REG_CHIP_ID, &_bme280_rtc.chip_id), bme280_setup_failed, __tag_device_bme280, "start: i2c read (chip-id)");
     ESP_LOGD(__tag_device_bme280, "product: chip-id=0x%02" PRIX8, _bme280_rtc.chip_id);
@@ -364,7 +368,7 @@ esp_err_t bme280_start(void) {
 
     esp_err_t ret;
 
-    ESP_RETURN_ON_ERROR(hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, BME280_I2C_ADDR, BME280_I2C_MAX_PAYLOAD), __tag_device_bme280, "start: i2c start");
+    ESP_RETURN_ON_ERROR(hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, _BME280_CONFIG(i2c_addr), BME280_I2C_MAX_PAYLOAD), __tag_device_bme280, "start: i2c start");
     if (BME280_DO_RESET_ON_STARTUP) {
         ESP_GOTO_ON_ERROR(hw_i2c_write_byte(_BME280_REG_RESET, _BME280_RESET_VAL), bme280_start_failed, __tag_device_bme280, "start: i2c write (soft reset)");
         hw_delay_ms_yieldable(_BME280_START_DELAY_MS); // datasheet says 2ms, but sometimes even up to 20ms
@@ -444,7 +448,9 @@ esp_err_t bme280_test(device_test_result_t *const result, const uint32_t duratio
     esp_err_t rc;
     bme280_reading_t reading;
 
-    if ((rc = bme280_setup(&bme280_config_default)) != ESP_OK) {
+    const bme280_config_t config = _BME280_RTC_VALID() ? _bme280_rtc.config : bme280_config_default;
+
+    if ((rc = bme280_setup(&config)) != ESP_OK) {
         snprintf(result->detail, sizeof(result->detail), "setup failed: %s", esp_err_to_name(rc));
         return rc;
     }

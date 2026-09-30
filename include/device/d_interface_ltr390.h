@@ -13,12 +13,12 @@ const char *__tag_device_ltr390 = "device-ltr390";
 // GAIN: 3x (good balance for outdoor)
 #define LTR390_GAIN_VAL_CONFIG      0x01 // 3x
 
-#define _LTR390_I2C_ADDR_DEFAULT    0x53
-#ifdef USE__LTR390_I2C_ADDR
-#define _LTR390_I2C_ADDR USE__LTR390_I2C_ADDR
+#define LTR390_I2C_ADDR_DEFAULT     0x53
+#ifdef USE_LTR390_I2C_ADDR
+#define LTR390_I2C_ADDR USE_LTR390_I2C_ADDR
 #endif
-#ifndef _LTR390_I2C_ADDR
-#define _LTR390_I2C_ADDR _LTR390_I2C_ADDR_DEFAULT
+#ifndef LTR390_I2C_ADDR
+#define LTR390_I2C_ADDR LTR390_I2C_ADDR_DEFAULT
 #endif
 
 #define LTR390_LUX_MIN (0.0f)
@@ -55,10 +55,11 @@ typedef struct {
 } ltr390_reading_t;
 
 typedef struct {
+    uint8_t i2c_addr;
     reading_strategy_t strategy_lux, strategy_uvi;
 } ltr390_config_t;
 
-const ltr390_config_t ltr390_config_default = { .strategy_lux = STRAT_LTR390_LUX_DEFAULT, .strategy_uvi = STRAT_LTR390_UVI_DEFAULT };
+const ltr390_config_t ltr390_config_default = { .i2c_addr = LTR390_I2C_ADDR, .strategy_lux = STRAT_LTR390_LUX_DEFAULT, .strategy_uvi = STRAT_LTR390_UVI_DEFAULT };
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -179,6 +180,7 @@ static const char *_ltr390_part_name(const uint8_t id) {
 }
 
 void ltr390_diagnose(void) {
+    const uint8_t expect = _LTR390_RTC_VALID() ? _LTR390_CONFIG(i2c_addr) : (uint8_t)LTR390_I2C_ADDR;
     if (hw_i2c_bus_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT) != ESP_OK) {
         ESP_LOGE(__tag_device_ltr390, "diag: cannot open the i2c bus on gpio%d/%d", PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL);
         return;
@@ -194,9 +196,9 @@ void ltr390_diagnose(void) {
                 uint8_t id = 0;
                 if (hw_i2c_dev_reg_read(dev, _LTR390_REG_PART_ID, &id, 1) != ESP_OK)
                     ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " answers, but register 0x%02X would not read", addr[i], _LTR390_REG_PART_ID);
-                else if ((id >> 4) == (_LTR390_PART_ID_VAL >> 4) && addr[i] != _LTR390_I2C_ADDR)
-                    ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " part-id=0x%02" PRIX8 " %s <-- THE SENSOR IS HERE, not at 0x%02X, rebuild with -DUSE__LTR390_I2C_ADDR=0x%02X", addr[i], id, _ltr390_part_name(id), _LTR390_I2C_ADDR,
-                             addr[i]);
+                else if ((id >> 4) == (_LTR390_PART_ID_VAL >> 4) && addr[i] != expect)
+                    ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " part-id=0x%02" PRIX8 " %s <-- THE SENSOR IS HERE, not at 0x%02" PRIX8 ". Set .i2c_addr = 0x%02" PRIX8 " in this board's ltr390_config_t", addr[i], id,
+                             _ltr390_part_name(id), expect, addr[i]);
                 else
                     ESP_LOGW(__tag_device_ltr390, "diag: 0x%02" PRIX8 " part-id=0x%02" PRIX8 " %s", addr[i], id, _ltr390_part_name(id));
                 (void)hw_i2c_dev_del(dev);
@@ -215,13 +217,15 @@ esp_err_t ltr390_setup(const ltr390_config_t *const config) {
 
     _LTR390_RTC_INIT();
     memcpy(&_ltr390_rtc.config, config, sizeof(_ltr390_rtc.config));
+    if (_ltr390_rtc.config.i2c_addr == 0u)
+        _ltr390_rtc.config.i2c_addr = LTR390_I2C_ADDR;
 
     char sb1[STRATEGY_STR_MAX], sb2[STRATEGY_STR_MAX];
     ESP_LOGD(__tag_device_ltr390, "setup: strategy_lux=%s, strategy_uvi=%s", reading_strategy_to_str(&_LTR390_CONFIG(strategy_lux), sb1, sizeof(sb1)), reading_strategy_to_str(&_LTR390_CONFIG(strategy_uvi), sb2, sizeof(sb2)));
 
     esp_err_t ret;
 
-    ESP_RETURN_ON_ERROR(hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, _LTR390_I2C_ADDR, _LTR390_I2C_MAX_PAYLOAD), __tag_device_ltr390, "start: i2c start");
+    ESP_RETURN_ON_ERROR(hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, _LTR390_CONFIG(i2c_addr), _LTR390_I2C_MAX_PAYLOAD), __tag_device_ltr390, "start: i2c start");
 
     ESP_GOTO_ON_ERROR(hw_i2c_read_byte(_LTR390_REG_PART_ID, &_ltr390_rtc.part_id), ltr390_setup_failed, __tag_device_ltr390, "start: i2c read (part-id)");
     ESP_LOGD(__tag_device_ltr390, "product: part-id=0x%02" PRIX8, _ltr390_rtc.part_id);
@@ -248,7 +252,7 @@ esp_err_t ltr390_start(void) {
 
     esp_err_t ret;
 
-    ESP_RETURN_ON_ERROR(hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, _LTR390_I2C_ADDR, _LTR390_I2C_MAX_PAYLOAD), __tag_device_ltr390, "start: i2c start");
+    ESP_RETURN_ON_ERROR(hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, _LTR390_CONFIG(i2c_addr), _LTR390_I2C_MAX_PAYLOAD), __tag_device_ltr390, "start: i2c start");
 
     if (LTR390_MEAS_RATE_VAL_CONFIG != _LTR390_MEAS_RATE_VAL_DEFAULT)
         ESP_GOTO_ON_ERROR(hw_i2c_write_byte(_LTR390_REG_MEAS_RATE, LTR390_MEAS_RATE_VAL_CONFIG), ltr390_start_failed, __tag_device_ltr390, "start: i2c write (meas rate)");
@@ -346,7 +350,9 @@ esp_err_t ltr390_test(device_test_result_t *const result, const uint32_t duratio
     esp_err_t rc;
     ltr390_reading_t reading;
 
-    if ((rc = ltr390_setup(&ltr390_config_default)) != ESP_OK) {
+    const ltr390_config_t config = _LTR390_RTC_VALID() ? _ltr390_rtc.config : ltr390_config_default;
+
+    if ((rc = ltr390_setup(&config)) != ESP_OK) {
         snprintf(result->detail, sizeof(result->detail), "setup failed: %s", esp_err_to_name(rc));
         return rc;
     }
