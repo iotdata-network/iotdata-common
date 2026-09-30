@@ -20,7 +20,7 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #ifndef IOTDATA_CONFIG_MESH_REPORT_PEERS_MS
-#define IOTDATA_CONFIG_MESH_REPORT_PEERS_MS 120000u
+#define IOTDATA_CONFIG_MESH_REPORT_PEERS_MS 900000u
 #endif
 #ifndef IOTDATA_CONFIG_MESH_PARENT_MISS_ROUNDS
 #define IOTDATA_CONFIG_MESH_PARENT_MISS_ROUNDS 3u

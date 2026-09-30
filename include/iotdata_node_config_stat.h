@@ -44,6 +44,7 @@
 #define IOTDATA_CFGID_STAT_PUBLISH_INTERVAL      0x0C1
 #define IOTDATA_CFGID_STAT_PUBLISH_MQTT_TOPIC    0x0C2
 #define IOTDATA_CFGID_STAT_DISPLAY_MESH_INTERVAL 0x0C3
+#define IOTDATA_CFGID_STAT_PUBLISH_MESH_INTERVAL 0x0C4
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -58,6 +59,9 @@
 #endif
 #ifndef IOTDATA_CONFIG_STAT_DISPLAY_MESH_INTERVAL
 #define IOTDATA_CONFIG_STAT_DISPLAY_MESH_INTERVAL IOTDATA_CONFIG_STAT_INTERVAL
+#endif
+#ifndef IOTDATA_CONFIG_STAT_PUBLISH_MESH_INTERVAL
+#define IOTDATA_CONFIG_STAT_PUBLISH_MESH_INTERVAL 900u
 #endif
 #ifndef IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC
 #define IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC "iotdata/stats"
@@ -107,6 +111,11 @@ static inline bool iotdata_config_stat_changed(__attribute__((unused)) const iot
 #define IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY_MESH(X) \
     X(STAT_DISPLAY_MESH_INTERVAL, IOTDATA_CFGID_STAT_DISPLAY_MESH_INTERVAL, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_MESH_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
       "how often to show the stations this node knows about, in seconds (0 = never)")
+/* Only a node that can both hold that table and send it somewhere. Separate from the display for
+   the same reason PUBLISH is separate from DISPLAY above: one is for watching, one is for keeping. */
+#define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_MESH(X) \
+    X(STAT_PUBLISH_MESH_INTERVAL, IOTDATA_CFGID_STAT_PUBLISH_MESH_INTERVAL, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_PUBLISH_MESH_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
+      "how often to publish the network table, in seconds (0 = never)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
