@@ -112,8 +112,9 @@ here instead, because its jitter, restart limit and per-wake logging are built f
 **On the server** (needs `dropbear-bin`, `miniupnpc` if you want the hole punched, `curl`, `node`):
 
 ```sh
-dialout-server install                 # dialoutd account, host key, state dir, systemd unit
+cp dialout.cfg dialout.$(hostname).cfg # the template becomes this box's whole config
 $EDITOR dialout.$(hostname).cfg        # dns-domain, cloudflare-token, cloudflare-zone
+dialout-server install                 # dialoutd account, host key, state dir, systemd unit
 dialout-server run                     # in a terminal -- or: systemctl enable --now dialout-server
 ```
 
@@ -126,13 +127,14 @@ wants a `link-script` — copy `dialout-link.example`):
 
 ```sh
 dialout-client keygen                  # prints the public key
+cp dialout.cfg dialout.$(hostname).cfg # the template becomes this box's whole config
 $EDITOR dialout.$(hostname).cfg        # dns-domain at minimum
 dialout-client install                 # service + timer, every 12h (--interval to change)
 #   or, on an always-on link:
 dialout-client install --watch         # stays running, dials whenever invited (--every to change)
 ```
 
-`install` copies the client, `dialout.cfg`, `dialout.<hostname>.cfg` and the unit templates to
+`install` copies the client, `dialout.<hostname>.cfg` and the unit templates to
 `install-dir` (default `/usr/local/lib/dialout`) and runs the service from there — never from the
 checkout, which on a dev box may be a network share that is not mounted at boot. To update a box,
 re-run `install` from the checkout; `status` says whether the installed copy differs.
@@ -148,10 +150,14 @@ entirely while testing with `dialout-client dial --endpoint host:port --force`.
 
 ## Configuration
 
-`dialout.cfg` is the committed, documented baseline. `dialout.<hostname>.cfg` is read after it and
-overrides key by key, is **not** committed, and is where the domain and the Cloudflare token go.
-Same file, same rules, both programs — a box can be either end. Read `dialout.cfg` itself; every
-key is explained there rather than duplicated here.
+A box's configuration is **one file**: `dialout.<hostname>.cfg` beside the program (or `--config`).
+`dialout.cfg` is the committed, documented **template** you copy it from, and is never read at run
+time — nothing is merged, so everything a box does can be read off its own file. The host file is
+**not** committed, and is where the domain and the Cloudflare token go. With no host file a program
+runs on built-in defaults, and anything that needs a domain or token says which file to create;
+`status` / `check` print the file in use on their first line. Same file, same rules, both programs —
+a box can be either end. Read `dialout.cfg` itself; every key is explained there rather than
+duplicated here. When the template gains a key, add it to each host's file.
 
 Cloudflare credentials fall back to `network-dns-cloudflare-key` / `-zone` in `iotdata.conf` if the
 dialout config leaves them empty, purely as a convenience on a box that already has one. Set

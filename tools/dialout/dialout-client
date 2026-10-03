@@ -60,7 +60,10 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # config
 # ------------------------------------------------------------------------------------------------
 
-# key=value, # comments. dialout.cfg then dialout.<hostname>.cfg, the latter overriding. Keys reach
+# key=value, # comments. ONE file is the whole configuration: dialout.<hostname>.cfg beside the
+# script, or --config. dialout.cfg is the documented template it is copied from and is never read
+# here, so a box's behaviour can be read off a single file. No host file means the built-in
+# defaults; whatever needs a domain then says which file to create. Keys reach
 # the shell as CFG_<key with - turned to _>; anything else in the key is dropped rather than
 # eval'd, because this walks into an eval and a config file should not be able to run code.
 cfg_load() {
@@ -79,12 +82,16 @@ cfg_load() {
     done
 }
 
-# cfg <key> [default] -- empty counts as unset, so a key can be blanked in the base file and
-# filled in by the host overlay.
+# cfg <key> [default] -- empty counts as unset, so a blank key takes the built-in default.
 cfg() {
     _n=$(printf '%s' "$1" | tr '-' '_')
     eval "_v=\${CFG_$_n:-}"
     [ -n "$_v" ] && printf '%s' "$_v" || printf '%s' "${2:-}"
+}
+
+# where to put a missing setting: the file in use, or the one to create
+cfg_hint() {
+    if [ -n "${CFG_FILE:-}" ]; then printf 'set it in %s' "$CFG_FILE"; else printf 'no %s: copy dialout.cfg to it and fill it in' "$HERE/dialout.$(hostname).cfg"; fi
 }
 
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
@@ -310,7 +317,7 @@ dial() {
     # 1. invited? Cheapest question, asked first, and the usual answer is no.
     _watch_invite=0
     if [ "$_force" = 0 ] && [ "$(cfg require-invite 1)" = 1 ]; then
-        [ -n "$(cfg dns-domain)" ] || die "dns-domain not set (and require-invite=1)"
+        [ -n "$(cfg dns-domain)" ] || die "dns-domain not set (and require-invite=1) -- $(cfg_hint)"
         invited "$_tok" || {
             say_once not-invited "not invited ($_name/$_tok) -- nothing to do"
             exit 0
@@ -321,7 +328,7 @@ dial() {
 
     # 2. where?
     if [ -z "$_ep" ]; then
-        [ -n "$(cfg dns-domain)" ] || die "dns-domain not set and no --endpoint given"
+        [ -n "$(cfg dns-domain)" ] || die "dns-domain not set and no --endpoint given -- $(cfg_hint)"
         _r=$(endpoint) || {
             log "no SRV record at $(srv_name) -- giving up until next run"
             exit 0
@@ -436,6 +443,7 @@ dial() {
 # ------------------------------------------------------------------------------------------------
 
 check() {
+    printf 'config        %s\n' "${CFG_FILE:-(none -- built-in defaults; copy dialout.cfg to $HERE/dialout.$(hostname).cfg)}"
     _name=$(cfg name "$(hostname)")
     _tok=$(token_of "$_name")
     printf 'name          %s\n' "$_name"
@@ -575,19 +583,45 @@ install_copy() {
     done
     mkdir -p "$_dst/systemd"
     if [ "$(realpath "$HERE")" = "$(realpath "$_dst")" ]; then
-        log "install: running from $_dst already -- nothing to copy"
+        log "install: running from $_dst already -- nothing to copy; config is ${CFG_FILE:-(none -- built-in defaults)}"
         return 0
     fi
     cp "$HERE/$SELF" "$_dst/dialout-client.tmp" && chmod 755 "$_dst/dialout-client.tmp"
     mv "$_dst/dialout-client.tmp" "$_dst/dialout-client"
-    for _f in dialout.cfg "dialout.$(hostname).cfg" systemd/dialout-client.service systemd/dialout-client.timer systemd/dialout-client-watch.service; do
-        [ -f "$HERE/$_f" ] || continue
-        cp "$HERE/$_f" "$_dst/$_f.tmp"
-        # the host overlay can hold a server's Cloudflare token on a box that is both ends
-        case "$_f" in dialout.*.cfg) chmod 600 "$_dst/$_f.tmp" ;; *) chmod 644 "$_dst/$_f.tmp" ;; esac
+    for _f in systemd/dialout-client.service systemd/dialout-client.timer systemd/dialout-client-watch.service; do
+        cp "$HERE/$_f" "$_dst/$_f.tmp" && chmod 644 "$_dst/$_f.tmp"
         mv "$_dst/$_f.tmp" "$_dst/$_f"
     done
     log "install: copied the client to $_dst"
+    install_cfg "$_dst"
+}
+
+# install_cfg <dir> -- the config is its own step and says exactly what it did: it is the one file
+# whose absence stops nothing, so a box could otherwise install cleanly onto the wrong settings.
+install_cfg() {
+    _src=$HERE/dialout.$(hostname).cfg
+    _to=$1/dialout.$(hostname).cfg
+    if [ -f "$_src" ]; then
+        if [ -f "$_to" ] && cmp -s "$_src" "$_to"; then
+            _how='(unchanged)'
+        else
+            if [ -f "$_to" ]; then _how='(REPLACED: it differed)'; else _how='(new)'; fi
+            # 600: on a box that is both ends this can hold a server's Cloudflare token
+            cp "$_src" "$_to.tmp" && chmod 600 "$_to.tmp"
+            mv "$_to.tmp" "$_to"
+        fi
+        log "install: config $_src -> $_to $_how"
+    elif [ -f "$_to" ]; then
+        log "install: WARNING no $_src -- KEEPING the installed $_to, which is not from this checkout"
+    else
+        log "install: WARNING no $_src and none installed -- the client will run on built-in defaults"
+    fi
+    # an install from before the template stopped being read left a copy here; nothing reads it now
+    if [ -f "$1/dialout.cfg" ]; then
+        rm -f "$1/dialout.cfg"
+        log "install: removed $1/dialout.cfg (the template, no longer read)"
+    fi
+    if [ -f "$_to" ]; then log "install: the client reads $_to and nothing else"; else log "install: the client reads no config -- built-in defaults"; fi
 }
 
 # unit_write <template> <unit> <sed args...> -- fill in a unit template. Written beside the unit and
@@ -625,8 +659,8 @@ install_units() {
     [ "$(id -u)" = 0 ] || die "install: needs root"
     [ "$_watch" = 0 ] || [ -z "$_interval" ] || die "install: --watch and --interval are different modes -- pick one"
     [ "$_watch" = 1 ] || [ -z "$_every" ] || die "install: --every goes with --watch; the timer takes --interval"
-    [ -z "$CFG" ] || die "install: --config is for testing -- install uses dialout.cfg and dialout.$(hostname).cfg beside the script"
-    [ -n "$(cfg dns-domain)" ] || die "install: dns-domain not set -- create dialout.$(hostname).cfg first"
+    [ -z "$CFG" ] || die "install: --config is for testing -- install uses dialout.$(hostname).cfg beside the script"
+    [ -n "$(cfg dns-domain)" ] || die "install: dns-domain not set -- $(cfg_hint)"
     [ -f "$(key_file)" ] || log "install: no key at $(key_file) yet -- run keygen and enrol it, or invited rounds will fail"
     _prefix=${_prefix:-$(cfg install-dir /usr/local/lib/dialout)}
     _bin=$_prefix/dialout-client
@@ -695,7 +729,9 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-if [ -n "$CFG" ]; then cfg_load "$CFG"; else cfg_load "$HERE/dialout.cfg" "$HERE/dialout.$(hostname).cfg"; fi
+CFG_FILE=${CFG:-$HERE/dialout.$(hostname).cfg}
+[ -n "$CFG" ] || [ -f "$CFG_FILE" ] || CFG_FILE=
+[ -z "$CFG_FILE" ] || cfg_load "$CFG_FILE"
 
 case "${1:-dial}" in
 dial)

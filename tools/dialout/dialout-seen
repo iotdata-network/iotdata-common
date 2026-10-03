@@ -1,0 +1,33 @@
+#!/bin/sh
+#
+# dialout-seen -- the forced command behind every enrolled client key.
+#
+# dropbear runs this, as the dialout account, whenever a client opens a SESSION -- which is what a
+# client's liveness ping is (see `ping-every` in dialout.cfg). A client holding a tunnel open uses
+# ssh -N and opens no session at all, so this does not run on that path; the server stamps those
+# itself when it notices the tunnel appear.
+#
+# It replaces the older command="/bin/false", and is just as inert from the client's point of view:
+# the name comes from the authorized_keys line, so the client cannot choose it, and whatever the
+# client asked to run arrives in SSH_ORIGINAL_COMMAND and is deliberately ignored.
+#
+# It exits 0 whatever happens. A server that cannot write its own stamp is a monitoring problem, not
+# a reason to fail a client that did everything right.
+#
+#   dialout-seen <seen-dir> <name>
+
+set -eu
+
+_dir=${1:-}
+_name=${2:-}
+[ -n "$_dir" ] && [ -n "$_name" ] || exit 0
+# The name is ours, not the client's -- but never build a path out of anything unexpected.
+case $_name in *[!A-Za-z0-9._-]*) exit 0 ;; esac
+
+_ip=${SSH_CONNECTION%% *}
+mkdir -p "$_dir" 2>/dev/null || true
+_tmp="$_dir/.$_name.$$"
+if printf '%s %s %s\n' "$(date -u +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${_ip:--}" >"$_tmp" 2>/dev/null; then
+    mv "$_tmp" "$_dir/$_name" 2>/dev/null || rm -f "$_tmp" 2>/dev/null || true
+fi
+exit 0

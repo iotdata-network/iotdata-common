@@ -27,6 +27,23 @@
 // which invites that client, waits for its tunnel to appear, rings the terminal bell, tells you
 // the ssh line to paste, and withdraws the invitation when you Ctrl-C out.
 //
+// Clients are named after their MAC, which is exactly what you want for a token and exactly what you
+// do not want to read or type. So give a box a tag and use that instead -- anywhere a client is
+// named, including `wait --for`, an unambiguous fragment of the tag or of the name will do:
+//
+//   dialout-server tag iotdata-rem-50411c64b8fc solar shed, Brannan
+//   dialout-server wait --for "solar shed"
+//   dialout-server clients                      # the tag is a column
+//
+// The tag is stored in the comment field of the client's authorized_keys line, because that file is
+// already the register of who is enrolled and a second list would only drift from it. It is operator
+// sugar and nothing more: tokens and ports still derive from the real name, so a tag can be changed
+// or dropped at any time without a client noticing.
+//
+// Moving it, or standing up a second one: `backup` tars the state (host key, the authorized_keys
+// register with its tags, invites, liveness stamps) and the config, and `restore` puts it back on
+// another box. The host key is the point -- clients pin it, so both ends must present the same one.
+//
 // Node with no dependencies: it shells out to curl, upnpc, dropbear, ss and dig, the same way
 // iotdata's own lib/iotdata-network.js does. Nothing here imports iotdata -- dialout stands alone,
 // and only reads iotdata.conf as a convenience if you point it at one.
@@ -58,13 +75,19 @@ function cfgParse(file, into) {
     return into;
 }
 
+// One file is the whole configuration: dialout.<hostname>.cfg beside the script, or --config. The
+// committed dialout.cfg is the documented template that file is copied from, and is never read at
+// run time -- so what a box does can be read off a single file, with nothing inherited from a
+// baseline that may have moved on since. No host file means the built-in defaults and nothing else;
+// whatever needs a domain or a token then says which file to create.
+const hostCfg = () => path.join(HERE, `dialout.${os.hostname()}.cfg`);
+let CFG_FILE = null;
+const cfgHint = () => (CFG_FILE ? `in ${CFG_FILE}` : `-- there is no ${hostCfg()}: copy dialout.cfg to it and fill it in`);
+
 function cfgLoad(explicit) {
     const c = {};
-    if (explicit) cfgParse(explicit, c);
-    else {
-        cfgParse(path.join(HERE, 'dialout.cfg'), c);
-        cfgParse(path.join(HERE, `dialout.${os.hostname()}.cfg`), c);
-    }
+    CFG_FILE = explicit || (fs.existsSync(hostCfg()) ? hostCfg() : null);
+    if (CFG_FILE) cfgParse(CFG_FILE, c);
     // Cloudflare credentials may live in an iotdata.conf on a box that already has one. Convenience
     // only -- dialout works with no iotdata present, and blanking iotdata-conf severs the link.
     if (!c['cloudflare-token'] && c['iotdata-conf'] && fs.existsSync(c['iotdata-conf'])) {
@@ -115,7 +138,7 @@ const have = (bin) => {
 const tokenOf = (name) => crypto.createHash('md5').update(name).digest('hex').slice(0, 6);
 const portOf = (name) => cfgN('tunnel-port-base', 47100) + (parseInt(tokenOf(name), 16) % cfgN('tunnel-port-span', 400));
 
-const dnsDomain = () => cfg('dns-domain', '') || die('dns-domain is not set');
+const dnsDomain = () => cfg('dns-domain', '') || die(`dns-domain is not set ${cfgHint()}`);
 const dnsTarget = () => cfg('dns-target', '') || `${cfg('dns-service', 'dialout')}.${dnsDomain()}`;
 const srvName = () => `_${cfg('dns-service', 'dialout')}._tcp.${dnsDomain()}`;
 const inviteName = () => cfg('dns-invite', '') || `_${cfg('dns-service', 'dialout')}-invite._tcp.${dnsDomain()}`;
@@ -127,6 +150,38 @@ const inviteName = () => cfg('dns-invite', '') || `_${cfg('dns-service', 'dialou
 const stateDir = () => cfg('state-dir', '/var/lib/dialout');
 const homeDir = () => path.join(stateDir(), 'home');
 const authKeys = () => path.join(homeDir(), '.ssh', 'authorized_keys');
+// One file per client, last-write-wins, no locking: a stamp is worth exactly its timestamp, and two
+// pings racing means the box is alive twice over.
+const seenDir = () => path.join(stateDir(), 'seen');
+const seenPath = (name) => path.join(seenDir(), name);
+const seenCmd = (dst) => `${path.join(dst, 'dialout-seen')} ${seenDir()}`;
+
+function seenStamp(name) {
+    try {
+        fs.mkdirSync(seenDir(), { recursive: true, mode: 0o700 });
+        const now = Math.floor(Date.now() / 1000);
+        const tmp = path.join(seenDir(), `.${name}.${process.pid}`);
+        fs.writeFileSync(tmp, `${now} ${ts()} -\n`);
+        fs.renameSync(tmp, seenPath(name));
+    } catch {
+        /* monitoring is not worth failing a tunnel over */
+    }
+}
+function seenAt(name) {
+    try {
+        return parseInt(fs.readFileSync(seenPath(name), 'utf8').split(/\s+/)[0], 10) || 0;
+    } catch {
+        return 0;
+    }
+}
+const ago = (t) => {
+    if (!t) return '-';
+    const d = Math.max(0, Math.floor(Date.now() / 1000) - t);
+    if (d < 60) return `${d}s`;
+    if (d < 3600) return `${Math.floor(d / 60)}m`;
+    if (d < 86400) return `${Math.floor(d / 3600)}h${String(Math.floor((d % 3600) / 60)).padStart(2, '0')}m`;
+    return `${Math.floor(d / 86400)}d${String(Math.floor((d % 86400) / 3600)).padStart(2, '0')}h`;
+};
 const hostKey = () => path.join(stateDir(), 'host_key');
 const inviteFile = () => path.join(stateDir(), 'invites.json');
 
@@ -139,7 +194,9 @@ const readInvites = () => {
 };
 const writeInvites = (v) => {
     fs.mkdirSync(stateDir(), { recursive: true });
-    fs.writeFileSync(inviteFile(), JSON.stringify(v, null, 2) + '\n');
+    const tmp = `${inviteFile()}.tmp`; // rename, so a backup or a power cut cannot catch it half-written
+    fs.writeFileSync(tmp, JSON.stringify(v, null, 2) + '\n');
+    fs.renameSync(tmp, inviteFile());
 };
 
 // enrolled clients, read back out of authorized_keys -- the keys file IS the register, so there is
@@ -154,8 +211,52 @@ function clients() {
         .map((l) => {
             const m = /dialout:(\S+)\s*$/.exec(l);
             const name = m ? m[1] : '(unnamed)';
-            return { name, token: tokenOf(name), port: portOf(name), line: l };
+            // The tag sits in the comment field BEFORE dialout:<name>, so the name regex above is
+            // unaffected and an older keys file simply has no tag. Same register, no second file.
+            const t = /\btag="([^"]*)"/.exec(l);
+            return { name, tag: t ? t[1] : '', token: tokenOf(name), port: portOf(name), line: l };
         });
+}
+
+// Rewrite one client's tag in place. The keys file is the register, so the tag lives there too and a
+// revoke takes it away for free -- but it is also the file that decides who may log in, so this only
+// ever touches the comment field of the one line, and writes through a rename.
+function setTag(name, tag) {
+    const cs = clients();
+    if (!cs.some((c) => c.name === name)) die(`tag: '${name}' is not enrolled`);
+    const clean = tag.replace(/["\r\n]/g, '').trim(); // it is stored in a quoted field
+    const out = cs.map((c) => {
+        if (c.name !== name) return c.line;
+        const bare = c.line.replace(/\s*\btag="[^"]*"/, '');
+        return clean ? bare.replace(/(\s*dialout:\S+\s*)$/, ` tag="${clean}"$1`) : bare;
+    });
+    const tmp = `${authKeys()}.tmp`;
+    fs.writeFileSync(tmp, out.join('\n') + '\n', { mode: 0o600 });
+    fs.renameSync(tmp, authKeys());
+    chownState();
+    return clean;
+}
+
+// A box called iotdata-rem-50411c64b8fc is not something anyone wants to type, or recognise in a
+// list. So every command that names a client also takes its tag, or any unambiguous fragment of
+// either. Resolution happens HERE and nowhere else: downstream code only ever sees a real name, and
+// the token is still derived from that name, so an alias stays an operator convenience and never
+// becomes part of the protocol.
+function resolveName(arg, verb) {
+    if (!arg || arg === '*') return arg;
+    const cs = clients();
+    if (cs.some((c) => c.name === arg)) return arg;
+    const lc = arg.toLowerCase();
+    let hits = cs.filter((c) => c.tag && c.tag.toLowerCase() === lc);
+    if (!hits.length) hits = cs.filter((c) => c.name.toLowerCase().includes(lc) || (c.tag && c.tag.toLowerCase().includes(lc)));
+    if (hits.length === 1) {
+        log(`${verb}: '${arg}' -> ${hits[0].name}${hits[0].tag ? ` (${hits[0].tag})` : ''}`);
+        return hits[0].name;
+    }
+    if (hits.length > 1) die(`${verb}: '${arg}' matches ${hits.map((c) => c.name).join(', ')} -- be more specific`);
+    // Not enrolled and not a tag: pass it through. Inviting a box before enrolling it is legitimate,
+    // and a token derives from any string, so this must not become an error.
+    return arg;
 }
 
 // which of those tunnels are up right now: dropbear binds a forwarded port on loopback, so the
@@ -179,7 +280,7 @@ function listening() {
 // ------------------------------------------------------------------------------------------------
 
 function cfApi(method, pathPart, body) {
-    const token = cfg('cloudflare-token', '') || die('cloudflare-token is not set (put it in dialout.<hostname>.cfg)');
+    const token = cfg('cloudflare-token', '') || die(`cloudflare-token is not set ${cfgHint()}`);
     const args = ['-s', '--max-time', '25', '-X', method, '-H', `Authorization: Bearer ${token}`, '-H', 'Content-Type: application/json', `${CF_API}${pathPart}`];
     if (body) args.push('--data', JSON.stringify(body));
     let json;
@@ -333,8 +434,14 @@ function spawnDropbear() {
 // ------------------------------------------------------------------------------------------------
 
 function actionEnrol(argv) {
-    const name = argv[0] || die('enrol: need a client name');
-    const src = argv[1] || '-';
+    let tag = '';
+    const pos = [];
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === '--tag') tag = argv[++i] || die('enrol: --tag needs some text');
+        else pos.push(argv[i]);
+    }
+    const name = pos[0] || die('enrol: need a client name');
+    const src = pos[1] || '-';
     const key = (src === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(src, 'utf8')).trim();
     if (!/^(ssh-ed25519|ssh-rsa|ecdsa-)/.test(key)) die('enrol: that does not look like an ssh public key');
     fs.mkdirSync(path.dirname(authKeys()), { recursive: true, mode: 0o700 });
@@ -343,22 +450,34 @@ function actionEnrol(argv) {
     const clash = existing.find((c) => c.port === portOf(name));
     if (clash) warn(`'${name}' derives the same port ${portOf(name)} as '${clash.name}' -- pin one with tunnel-port=`);
     // Options, not `restrict`: dropbear does not implement the OpenSSH 7.2 keyword. With -N the
-    // client asks for no session at all, so command= is belt to -w's braces.
-    const opts = 'no-pty,no-agent-forwarding,no-X11-forwarding,command="/bin/false"';
+    // client asks for no session at all, so command= is belt to -w's braces -- and on the one path
+    // that DOES open a session, the client's liveness ping, the forced command records it.
+    const opts = `no-pty,no-agent-forwarding,no-X11-forwarding,command="${seenCmd(cfg('install-dir', '/usr/local/lib/dialout'))} ${name}"`;
     fs.appendFileSync(authKeys(), `${opts} ${key.split(/\s+/).slice(0, 2).join(' ')} dialout:${name}\n`, { mode: 0o600 });
     fs.chmodSync(authKeys(), 0o600);
     chownState();
     log(`enrolled ${name}: token ${tokenOf(name)}, tunnel port ${portOf(name)}`);
+    if (tag) log(`tagged ${name}: ${setTag(name, tag)}`);
+}
+
+function actionTag(argv) {
+    const who = argv[0] || die('tag: need a client (name, tag or fragment), then the text -- or no text to clear it');
+    const name = resolveName(who, 'tag');
+    const text = argv.slice(1).join(' ');
+    const clean = setTag(name, text);
+    log(clean ? `tagged ${name}: ${clean}` : `cleared the tag on ${name}`);
 }
 
 function actionRevoke(argv) {
-    const name = argv[0] || die('revoke: need a client name');
+    // (the stamp for this name is removed at the end, once the key is actually gone)
+    const name = resolveName(argv[0] || die('revoke: need a client (name, tag or fragment)'), 'revoke');
     const kept = clients().filter((c) => c.name !== name);
     if (kept.length === clients().length) die(`revoke: '${name}' is not enrolled`);
     fs.writeFileSync(authKeys(), kept.map((c) => c.line).join('\n') + (kept.length ? '\n' : ''), { mode: 0o600 });
     const inv = readInvites();
     delete inv[tokenOf(name)];
     writeInvites(inv);
+    fs.rmSync(seenPath(name), { force: true }); // no stale "last seen" for a client that is gone
     log(`revoked ${name}`);
 }
 
@@ -368,11 +487,16 @@ function actionClients() {
     if (!cs.length) return console.log('(none enrolled)');
     const inv = readInvites();
     const now = Math.floor(Date.now() / 1000);
-    console.log('NAME                 TOKEN   PORT   INVITED  TUNNEL');
+    // the names are 24 characters of MAC address, so measure the column instead of guessing at it
+    const w = Math.max(4, ...cs.map((c) => c.name.length));
+    console.log(`${'NAME'.padEnd(w)}  TOKEN   PORT   INVITED  TUNNEL  LAST SEEN  TAG`);
     for (const c of cs) {
         const e = inv[c.token] || inv['*'];
         const invited = e && (!e.expires || e.expires > now) ? (e.expires ? `${e.expires - now}s` : 'yes') : 'no';
-        console.log(`${c.name.padEnd(20)} ${c.token}  ${String(c.port).padEnd(6)} ${invited.padEnd(8)} ${up.has(c.port) ? 'UP' : '-'}`);
+        const t = up.has(c.port) ? 'UP' : '-';
+        console.log(
+            `${c.name.padEnd(w)}  ${c.token}  ${String(c.port).padEnd(6)} ${invited.padEnd(8)} ${t.padEnd(7)} ${ago(seenAt(c.name)).padEnd(10)} ${c.tag}`
+        );
     }
     const seen = new Map();
     for (const c of cs) {
@@ -382,7 +506,7 @@ function actionClients() {
 }
 
 function actionInvite(argv) {
-    const who = argv[0] || die('invite: need a client name, or * for everyone');
+    const who = resolveName(argv[0] || die('invite: need a client (name, tag or fragment), or * for everyone'), 'invite');
     let ttl = 0;
     for (let i = 1; i < argv.length; i++) if (argv[i] === '--ttl') ttl = parseInt(argv[++i], 10);
     const tok = who === '*' ? '*' : tokenOf(who);
@@ -394,7 +518,7 @@ function actionInvite(argv) {
 }
 
 function actionUninvite(argv) {
-    const who = argv[0] || die('uninvite: need a client name, or * ');
+    const who = resolveName(argv[0] || die('uninvite: need a client (name, tag or fragment), or * '), 'uninvite');
     const tok = who === '*' ? '*' : tokenOf(who);
     const inv = readInvites();
     if (!(tok in inv)) log(`${who} was not invited`);
@@ -415,7 +539,8 @@ function actionWait(argv) {
         else if (argv[i] === '--keep') keep = true;
         else if (!name) name = argv[i];
     }
-    if (!name) die('wait: need --for <client>');
+    if (!name) die('wait: need --for <client> (a name, tag or fragment of either)');
+    name = resolveName(name, 'wait');
     const port = portOf(name);
     actionInvite(ttl ? [name, '--ttl', String(ttl)] : [name]);
 
@@ -459,6 +584,7 @@ function actionWait(argv) {
 
 function actionStatus() {
     const up = listening();
+    console.log(`config        ${CFG_FILE || `(none -- built-in defaults; copy dialout.cfg to ${hostCfg()})`}`);
     console.log(`state dir     ${stateDir()}`);
     console.log(`host key      ${fs.existsSync(hostKey()) ? hostKeyFingerprint() || hostKey() : '(none -- run keygen)'}`);
     console.log(`listen        ${cfg('bind', '0.0.0.0')}:${cfg('port-internal', 47022)}  (external ${cfg('port-external', 47022)})`);
@@ -469,6 +595,7 @@ function actionStatus() {
         console.log(`invites       ${inviteName()}  ->  ${renderInvites(readInvites())}`);
     } else console.log('dns           (dns-domain not set)');
     const pub = publicIp();
+    console.log(`seen dir      ${seenDir()}`);
     console.log(`public ip     ${pub || '(unknown)'}`);
     console.log('');
     actionClients();
@@ -493,13 +620,268 @@ function chownState() {
         // fails the read silently -- the log says only "Exit before auth ... 0 fails", which looks
         // exactly like a wrong key. Cost an hour once; hence the explicit chmod.
         run('chmod', ['755', stateDir()]);
+        // the liveness ping runs as this account (see dialout-seen), so the stamps are its to write
+        fs.mkdirSync(seenDir(), { recursive: true, mode: 0o700 });
+        run('chown', ['-R', `${user}:${user}`, seenDir()]);
+        run('chmod', ['700', seenDir()]);
     } catch {
         /* not installed yet, or not root -- enrol still works, install fixes ownership */
     }
 }
 
-function actionInstall() {
+// Copy the server next to where the unit will point, exactly as the client's install_copy does, and
+// for the same reason: a unit whose ExecStart lives on a mounted path is a box that fails to start
+// the service at boot with 203/EXEC, because systemd gets there long before the share is mounted.
+// iotgate happens to keep /opt on local disk, but tst-2 has it on CIFS, and the failure is silent
+// until a reboot. Default target is install-dir from the host's cfg (/usr/local/lib/dialout).
+// Only the host's own cfg goes with it: the template is never read there, so it is not copied.
+function installCopy(dst) {
+    // checked before anything is written, so a partial checkout cannot leave a box with no unit
+    for (const need of [path.join('systemd', 'dialout-server.service'), 'dialout-seen']) {
+        if (!fs.existsSync(path.join(HERE, need)))
+            die(`install: ${path.join(HERE, need)} is missing -- install from a full checkout`);
+    }
+    fs.mkdirSync(path.join(dst, 'systemd'), { recursive: true });
+    if (fs.realpathSync(HERE) === fs.realpathSync(dst)) {
+        log(`install: running from ${dst} already -- nothing to copy; config is ${CFG_FILE || '(none -- built-in defaults)'}`);
+        return;
+    }
+    const put = (rel, mode) => {
+        const src = path.join(HERE, rel);
+        if (!fs.existsSync(src)) return;
+        const tmp = path.join(dst, `${rel}.tmp`);
+        fs.copyFileSync(src, tmp);
+        fs.chmodSync(tmp, mode);
+        fs.renameSync(tmp, path.join(dst, rel)); // rename so a reader never sees a half-written file
+    };
+    put(SELF, 0o755);
+    put('dialout-seen', 0o755); // the forced command behind every key; must be local, not on a share
+    put(path.join('systemd', 'dialout-server.service'), 0o644);
+    log(`install: copied the server to ${dst}`);
+    installCfg(dst);
+}
+
+// The config gets its own step, and says exactly what it did, because it is the one file whose
+// absence does not stop anything: a missing host cfg just means built-in defaults, which on a server
+// means no DNS -- a box that installs cleanly and then quietly publishes nothing.
+function installCfg(dst) {
+    const name = `dialout.${os.hostname()}.cfg`;
+    const src = path.join(HERE, name);
+    const to = path.join(dst, name);
+    const had = fs.existsSync(to);
+    if (fs.existsSync(src)) {
+        const same = had && fs.readFileSync(src).equals(fs.readFileSync(to));
+        if (!same) {
+            const tmp = `${to}.tmp`;
+            fs.copyFileSync(src, tmp);
+            fs.chmodSync(tmp, 0o600); // the whole config, which can hold a Cloudflare token
+            fs.renameSync(tmp, to);
+        }
+        log(`install: config ${src} -> ${to} ${same ? '(unchanged)' : had ? '(REPLACED: it differed)' : '(new)'}`);
+    } else if (had) warn(`install: no ${src} -- KEEPING the installed ${to}, which is not from this checkout`);
+    else warn(`install: no ${src} and none installed -- the service will run on built-in defaults (no DNS); copy dialout.cfg to ${src}, fill it in, and install again`);
+    // An install from before the template stopped being read left a copy here. Take it away so
+    // nothing in the install dir looks as if it mattered when it does not.
+    const stale = path.join(dst, 'dialout.cfg');
+    if (fs.existsSync(stale)) {
+        fs.unlinkSync(stale);
+        log(`install: removed ${stale} (the template, no longer read)`);
+    }
+    log(`install: the service reads ${fs.existsSync(to) ? to : '(no config -- built-in defaults)'} and nothing else`);
+}
+
+// Existing enrolments carry command="/bin/false" from before there was anything to record, and an
+// install after a move carries the old install-dir. Rewrite just the command, never the key: the
+// name comes from the line's own `dialout:<name>` comment, so an operator's hand-edited line with a
+// different comment is left alone rather than silently repointed.
+function migrateAuthKeys(dst) {
+    if (!fs.existsSync(authKeys())) return;
+    const want = seenCmd(dst);
+    let n = 0;
+    const out = fs
+        .readFileSync(authKeys(), 'utf8')
+        .split('\n')
+        .map((line) => {
+            const m = line.match(/dialout:([A-Za-z0-9._-]+)\s*$/);
+            if (!m || !line.includes('command="')) return line;
+            const fixed = line.replace(/command="[^"]*"/, `command="${want} ${m[1]}"`);
+            if (fixed !== line) n++;
+            return fixed;
+        });
+    if (!n) return;
+    const tmp = `${authKeys()}.tmp`;
+    fs.writeFileSync(tmp, out.join('\n'), { mode: 0o600 });
+    fs.renameSync(tmp, authKeys());
+    log(`install: pointed ${n} enrolled key(s) at ${want}`);
+}
+
+// ------------------------------------------------------------------------------------------------
+// backup / restore -- moving a server, or standing up a second one
+// ------------------------------------------------------------------------------------------------
+//
+// What actually matters here is the HOST KEY. Clients pin it (accept-new into their own known_hosts),
+// so a replacement or second server that generates a fresh one is rejected by every client that
+// already knows the old one -- a failure that looks like a broken key rather than the wrong server.
+// Carry host_key across and both ends are interchangeable. The rest is the register (authorized_keys,
+// which holds the enrolments and their tags), the invite list, and the liveness stamps.
+
+const backupParts = () => [
+    { from: hostKey(), to: 'state/host_key' },
+    { from: `${hostKey()}.pub`, to: 'state/host_key.pub' },
+    { from: authKeys(), to: 'state/home/.ssh/authorized_keys' },
+    { from: inviteFile(), to: 'state/invites.json' },
+    { from: seenDir(), to: 'state/seen' },
+];
+
+function actionBackup(argv = []) {
+    let out = '';
+    let withConfig = true;
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === '--no-config') withConfig = false;
+        else if (!out) out = argv[i];
+    }
+    const stamp = ts().replace(/[-:]/g, '').replace('T', '-').replace('Z', '');
+    if (!out) out = path.resolve(`dialout-backup-${os.hostname()}-${stamp}.tar.gz`);
+    const dst = cfg('install-dir', '/usr/local/lib/dialout');
+    const stage = fs.mkdtempSync('/tmp/dialout-backup.');
+    try {
+        let n = 0;
+        for (const part of backupParts()) {
+            if (!fs.existsSync(part.from)) continue;
+            const to = path.join(stage, part.to);
+            fs.mkdirSync(path.dirname(to), { recursive: true });
+            fs.cpSync(part.from, to, { recursive: true, preserveTimestamps: true });
+            n++;
+        }
+        const cfgs = [];
+        if (withConfig)
+            for (const f of [`dialout.${os.hostname()}.cfg`]) {
+                const from = path.join(dst, f);
+                if (!fs.existsSync(from)) continue;
+                fs.mkdirSync(path.join(stage, 'config'), { recursive: true });
+                fs.cpSync(from, path.join(stage, 'config', f));
+                cfgs.push(f);
+            }
+        // Say plainly whether the Cloudflare token travels with this or not. On a box that reaches it
+        // through iotdata-conf it does NOT: that file is not dialout's to copy, and a restored server
+        // without it comes up unable to publish anything, which looks like a DNS fault.
+        let tokenInCfg = false;
+        for (const f of cfgs) {
+            // [ \t] not \s: \s matches the newline, so an EMPTY setting would happily match the
+            // first word of the following line and report a token that is not there.
+            const t = /^[ \t]*cloudflare-token[ \t]*=[ \t]*(\S+)[ \t]*$/m.exec(fs.readFileSync(path.join(stage, 'config', f), 'utf8'));
+            if (t) tokenInCfg = true;
+        }
+        const tokenNote = tokenInCfg
+            ? 'INCLUDED in the config above -- treat this tarball as a secret'
+            : cfg('cloudflare-token', '')
+              ? `NOT included: this host reads it from ${cfg('iotdata-conf', '(iotdata-conf)')}, which is not dialout's to copy. The restored host needs its own, or cloudflare-token= in its per-host cfg`
+              : 'not set on this host (this server publishes no DNS)';
+        fs.writeFileSync(
+            path.join(stage, 'MANIFEST'),
+            [
+                'dialout-server backup',
+                `host          ${os.hostname()}`,
+                `date          ${ts()}`,
+                `state-dir     ${stateDir()}`,
+                `install-dir   ${dst}`,
+                `clients       ${clients().length}`,
+                `host key      ${hostKeyFingerprint() || '(none)'}`,
+                `config        ${cfgs.length ? cfgs.join(' ') : '(not included)'}`,
+                `cf token      ${tokenNote}`,
+                '',
+                'Restore with: dialout-server restore <this file>',
+                'The host key in here is what makes a second server interchangeable with the first:',
+                'clients pin it, so both ends must present the same one.',
+                '',
+            ].join('\n')
+        );
+        run('tar', ['-czf', out, '-C', stage, '.']);
+        fs.chmodSync(out, 0o600); // it holds the host key, and usually a Cloudflare token as well
+        log(`backup: ${out} (${n} state item(s), ${clients().length} clients${cfgs.length ? `, config: ${cfgs.join(' ')}` : ', no config'})`);
+        if (tokenInCfg) warn('that tarball contains your Cloudflare token -- it is mode 600, keep it that way');
+        else if (cfg('cloudflare-token', '')) log(`backup: the Cloudflare token is NOT in it -- this host reads it from ${cfg('iotdata-conf', '?')}`);
+    } finally {
+        fs.rmSync(stage, { recursive: true, force: true });
+    }
+}
+
+function actionRestore(argv = []) {
+    if (process.getuid() !== 0) die('restore: needs root');
+    let src = '';
+    let force = false;
+    for (const a of argv) {
+        if (a === '--force') force = true;
+        else if (!src) src = a;
+    }
+    if (!src) die('restore: need the backup file (dialout-server restore dialout-backup-....tar.gz)');
+    if (!fs.existsSync(src)) die(`restore: ${src} does not exist`);
+    // Restoring under a running server would swap its host key and register beneath it.
+    let active = false;
+    try {
+        active = run('systemctl', ['is-active', 'dialout-server']) === 'active';
+    } catch {
+        /* not installed, or not running */
+    }
+    if (active && !force) die('restore: the dialout-server service is running -- stop it first (or --force)');
+
+    const stage = fs.mkdtempSync('/tmp/dialout-restore.');
+    try {
+        run('tar', ['-xzf', path.resolve(src), '-C', stage]);
+        const man = path.join(stage, 'MANIFEST');
+        if (!fs.existsSync(path.join(stage, 'state', 'host_key'))) die('restore: that does not look like a dialout backup (no state/host_key)');
+        if (fs.existsSync(man)) for (const l of fs.readFileSync(man, 'utf8').split('\n').slice(1, 8)) if (l.trim()) log(`restore: ${l}`);
+
+        // Say what is about to be replaced, in the terms that matter: whose key, and whose clients.
+        if (fs.existsSync(hostKey()) && !force) {
+            log(`restore: ${stateDir()} already has a host key ${hostKeyFingerprint() || ''} and ${clients().length} client(s)`);
+            die('restore: refusing to overwrite an existing server -- move it aside, or --force if that is what you mean');
+        }
+        fs.mkdirSync(stateDir(), { recursive: true });
+        fs.cpSync(path.join(stage, 'state'), stateDir(), { recursive: true, preserveTimestamps: true });
+        fs.chmodSync(hostKey(), 0o600);
+        if (fs.existsSync(authKeys())) fs.chmodSync(authKeys(), 0o600);
+        chownState();
+        log(`restore: state into ${stateDir()} -- host key ${hostKeyFingerprint() || '?'}, ${clients().length} client(s)`);
+
+        // Config, if it came along. The per-host overlay is READ BY HOSTNAME, so on a different box it
+        // has to be renamed or it is silently ignored -- which would lose the Cloudflare token and
+        // leave the server unable to publish anything.
+        const dst = cfg('install-dir', '/usr/local/lib/dialout');
+        const cdir = path.join(stage, 'config');
+        if (fs.existsSync(cdir)) {
+            fs.mkdirSync(dst, { recursive: true });
+            for (const f of fs.readdirSync(cdir)) {
+                // Older backups carried the template too. It is not read any more, so restoring it
+                // would only leave a file beside the real config that looks as if it mattered.
+                if (f === 'dialout.cfg') {
+                    log(`restore: config ${f} skipped (the template is not read; the host's own cfg is the config)`);
+                    continue;
+                }
+                const m = /^dialout\.(.+)\.cfg$/.exec(f);
+                const here = m && m[1] !== 'cfg' ? `dialout.${os.hostname()}.cfg` : f;
+                const to = path.join(dst, here);
+                if (fs.existsSync(to)) {
+                    warn(`restore: ${to} exists already -- left alone; the backup's copy is in ${cdir} if you want to merge it`);
+                    continue;
+                }
+                fs.cpSync(path.join(cdir, f), to);
+                fs.chmodSync(to, here.startsWith('dialout.') && here !== 'dialout.cfg' ? 0o600 : 0o644);
+                log(`restore: config ${f}${here !== f ? ` -> ${here} (renamed for this host)` : ''}`);
+            }
+        }
+        log(`restore: done. Next: ${SELF} install, then systemctl enable --now dialout-server`);
+        warn('two servers must not both publish DNS for the same names -- leave cloudflare-token empty on the spare, or they will overwrite each other every dns-refresh');
+    } finally {
+        fs.rmSync(stage, { recursive: true, force: true });
+    }
+}
+
+function actionInstall(argv = []) {
     if (process.getuid() !== 0) die('install: needs root');
+    let prefix = '';
+    for (let i = 0; i < argv.length; i++) if (argv[i] === '--prefix') prefix = argv[++i] || die('--prefix needs a directory');
+    const dst = prefix || cfg('install-dir', '/usr/local/lib/dialout');
     const user = cfg('ssh-user', 'dialoutd');
     try {
         run('id', [user]);
@@ -521,14 +903,26 @@ function actionInstall() {
     if (!fs.existsSync(authKeys())) fs.writeFileSync(authKeys(), '', { mode: 0o600 });
     ensureHostKey();
     chownState();
+    installCopy(dst);
+    migrateAuthKeys(dst);
+    chownState(); // again: the seen dir exists now, and the ping writes it as the dialout account
+    const bin = path.join(dst, SELF);
     const unit = fs
         .readFileSync(path.join(HERE, 'systemd', 'dialout-server.service'), 'utf8')
         .replace(/@NODE@/g, process.execPath)
-        .replace(/@BIN@/g, path.join(HERE, SELF));
+        .replace(/@BIN@/g, bin);
     fs.writeFileSync('/etc/systemd/system/dialout-server.service', unit);
     run('systemctl', ['daemon-reload']);
-    log('installed /etc/systemd/system/dialout-server.service');
-    log(`enable it with: systemctl enable --now dialout-server   (or just run '${SELF} run' in a terminal)`);
+    log(`installed /etc/systemd/system/dialout-server.service running ${bin}`);
+    let active = false;
+    try {
+        active = run('systemctl', ['is-active', 'dialout-server']) === 'active';
+    } catch {
+        // is-active exits non-zero when it is not running, which is not an error here
+    }
+    // The config is read once, at startup, so this applies to a config edit as much as to new code.
+    if (active) log('the running service still has the old code and config -- pick them up with: systemctl restart dialout-server');
+    else log(`enable it with: systemctl enable --now dialout-server   (or just run '${SELF} run' in a terminal)`);
 }
 
 function actionUninstall() {
@@ -622,8 +1016,12 @@ function actionRun(argv) {
     setInterval(() => {
         const up = listening();
         for (const c of clients()) {
-            if (up.has(c.port) && !seen.has(c.port)) log(`tunnel UP   ${c.name} -> 127.0.0.1:${c.port}`);
-            if (!up.has(c.port) && seen.has(c.port)) log(`tunnel DOWN ${c.name}`);
+            const label = c.tag ? `${c.name} (${c.tag})` : c.name;
+            if (up.has(c.port) && !seen.has(c.port)) {
+                log(`tunnel UP   ${label} -> 127.0.0.1:${c.port}`);
+                seenStamp(c.name); // a live tunnel is the strongest liveness there is
+            }
+            if (!up.has(c.port) && seen.has(c.port)) log(`tunnel DOWN ${label}`);
         }
         seen = up;
     }, 5000);
@@ -661,8 +1059,11 @@ const actions = {
     enroll: actionEnrol,
     revoke: actionRevoke,
     clients: actionClients,
+    tag: actionTag,
     status: actionStatus,
     install: actionInstall,
+    backup: actionBackup,
+    restore: actionRestore,
     uninstall: actionUninstall,
     keygen: () => {
         ensureHostKey();
