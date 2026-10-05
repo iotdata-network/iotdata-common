@@ -130,7 +130,6 @@ typedef struct {
     uint16_t packet_max;
 } idep_config_t;
 
-
 /* Per station. On a deep-sleeping sensor this must live in RTC memory to survive the sleep. */
 typedef struct {
     uint16_t station;

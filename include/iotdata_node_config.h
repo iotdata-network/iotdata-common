@@ -50,11 +50,7 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// THE RECORD
-//
-// id(12) | type(4), one 16-bit word, and it is the SAME shape in the datastore and on the wire. One
-// encoder serves NVS, a file and a TLV, and a read is self-describing: a manager that has never
-// heard of an id still knows how wide it is and how to print it.
+// RECORD -- id(12) | type(4), one 16-bit word, and it is the SAME shape in the datastore and on the wire.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_CONFIG_TYPE_BOOL      0x0
@@ -112,28 +108,14 @@ static inline bool iotdata_config_type_is_signed(const uint8_t type) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// THE TABLE
+// TABLE
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_CONFIG_FLAG_NONE     0x00u
 #define IOTDATA_CONFIG_FLAG_REBOOT   0x01u /* takes effect only after a restart                       */
 #define IOTDATA_CONFIG_FLAG_READONLY 0x02u /* reportable, not writable: a fact rather than a setting  */
-/* Settable, but only from where a person already is: the console, the config file, the command
-   line. A write that arrived OVER THE AIR is refused. Not a security boundary -- the radio has no
-   authentication and this does not pretend to give it one -- but a statement about what belongs in
-   band. A serial port's baud rate, an MQTT password, a debug interval: things whose value is either
-   meaningless to a remote manager or has no business travelling. The row is still REPORTED, because
-   a manager that cannot read it cannot tell you what the node is doing. */
-#define IOTDATA_CONFIG_FLAG_LOCAL    0x04u
-
-/* Read BEFORE the configuration is, and so not part of it: where the config file is, where the
-   store lives. A setting by every other measure -- it has a default, a description and an operator
-   who sets it -- but one whose value has to be known before anything can be loaded, which has two
-   consequences worth declaring once rather than special-casing at each of them.
-   It cannot be set from INSIDE the configuration: by the time that line is read the file is already
-   open, so honouring it would be a lie and ignoring it quietly is worse.
-   And it is never written back: a file recording where it itself lives is a circular answer. */
-#define IOTDATA_CONFIG_FLAG_STARTUP  0x08u
+#define IOTDATA_CONFIG_FLAG_LOCAL    0x04u /* settable, but only from a local console/command line */
+#define IOTDATA_CONFIG_FLAG_STARTUP  0x08u /* read before the configuration, e.g. config file itself */
 
 typedef union {
     bool b;
@@ -156,7 +138,6 @@ typedef struct {
 
 /* Check one proposed value. NULL means "the standard check", which is the bounds. Runs on BOTH
    paths -- a value arriving typed over the air never parses, and must still be validated.
-
    It is handed the whole UPDATE, not just its own row, and that is what staging buys: "the minimum
    must not exceed the maximum" can only be checked once both proposed values are in hand. Use
    iotdata_config_update_peek() to read another entry as it WILL BE, which is its staged value if
@@ -177,19 +158,14 @@ typedef struct iotdata_config_row {
     iotdata_config_value_t min, max, dflt;
     iotdata_config_validate_fn validate;
     iotdata_config_notify_fn notify;
-    /* One line saying what this setting IS, for `--help` and for the console. In the table because
-       that is where the rest of the truth about a row lives: a description kept in a parallel list
-       is one that goes stale the first time a row is added without it. */
     const char *help;
-    /* Which slot, for a STRING row. Meaningless and zero for every other type -- a row finds its
-       storage through this rather than the table walking itself to count the strings before it. */
-    uint16_t sidx;
+    uint16_t sidx; /* slot for STRING row */
 } iotdata_config_row_t;
 
 #endif /* IOTDATA_NODE_CONFIG_TYPES_H */
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// THE EXPANSION
+// EXPANSION
 //
 // One X-macro list becomes four things: the ids, a TYPE sibling per id, an index per id, and the
 // table itself. The TYPE sibling is the whole point -- it is what a typed accessor can assert on.
@@ -249,8 +225,6 @@ typedef struct iotdata_config_row {
 
 #define _CFG_ID(n, id, t, mn, mx, df, fl, va, no, hp)   IOTDATA_CFG_##n = (id),
 #define _CFG_TYPE(n, id, t, mn, mx, df, fl, va, no, hp) IOTDATA_CFG_##n##__TYPE = IOTDATA_CONFIG_TYPE_##t,
-/* Everything below expands for STRING rows and to NOTHING for the rest, so a table with no strings
-   declares no storage, no slot table and no capacities. */
 #define _CFG_S_BOOL(a, b)
 #define _CFG_S_U8(a, b)
 #define _CFG_S_U16(a, b)
@@ -305,7 +279,6 @@ typedef struct iotdata_config_row {
 #define _CFG_SPT_BLOB                                   _CFG_S_BLOB
 #define _CFG_SPT(n, id, t, mn, mx, df, fl, va, no, hp)  _CFG_SPT_##t(n, mx)
 
-/* The row's own slot index: the enumerator for a string, 0 for anything else. */
 #define _CFG_SI_STRING(n)                               IOTDATA_CFG_SIX_##n
 #define _CFG_SI_BOOL(n)                                 0
 #define _CFG_SI_U8(n)                                   0
@@ -369,10 +342,6 @@ static inline uint16_t _iotdata_config_slot_cap(const iotdata_config_row_t *cons
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // TEXT
-//
-// A value as a person writes it. Out here rather than with the console because a config FILE and a
-// command line are text too, and all three should read and write a value the same way -- a bool
-// that is "on" at a console and "true" in a file would be two dialects of one table.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline const char *_iotdata_config_type_name(const uint8_t t) {
@@ -450,7 +419,7 @@ static inline bool _iotdata_config_parse(const iotdata_config_row_t *const row, 
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// THE STORE
+// STORE
 //
 // Fixed-size in RAM so a read is an array index, self-describing on disk so adding or removing an
 // entry does not wipe the rest: the image is a sequence of the same [id|type][value] records the
@@ -500,10 +469,6 @@ static inline int iotdata_config_index(const uint16_t id) {
     return -1;
 }
 
-/* A row BY NAME, case-insensitively and with '-' reading as '_', or by id as 0x... or decimal.
-   Names first: an operator types a name and reaches for a number only when the build is newer than
-   the documentation they have. Out here rather than with the console because a host that keeps its
-   configuration in a text file resolves names too, and there should be one rule for it. */
 static inline int iotdata_config_index_by_name(const char *const what) {
     for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
         const char *a = iotdata_config_table[i].name, *b = what;
@@ -512,9 +477,7 @@ static inline int iotdata_config_index_by_name(const char *const what) {
         if (*a == '\0' && *b == '\0')
             return i;
     }
-    /* Then as an id: 0x-prefixed hex, or decimal. Parsed here rather than with strtoul so that this
-       header stays free of <stdlib.h> -- a node that only wants a config table should not acquire a
-       libc dependency to have one. */
+    /* Then as an id: 0x-prefixed hex, or decimal. */
     const char *d = what;
     unsigned long id = 0;
     unsigned digits = 0;
@@ -536,8 +499,6 @@ static inline int iotdata_config_index_by_name(const char *const what) {
     return (digits > 0) ? iotdata_config_index((uint16_t)id) : -1;
 }
 
-/* Pin a row for this run. Called AFTER the value has been applied -- pinning first would make the
-   command line refuse its own argument. */
 static inline bool iotdata_config_pin(const uint16_t id) {
     const int i = iotdata_config_index(id);
     if (i < 0)
@@ -551,9 +512,6 @@ static inline bool iotdata_config_is_pinned(const uint16_t id) {
     return (i >= 0) && _iotdata_config_pinned[i];
 }
 
-/* Whether a write would be refused, and WHY -- so a console can say "pinned on the command line"
-   rather than the catch-all "out of range, or read-only" that sends someone hunting for a bound
-   that is not the problem. NULL when the write is allowed. */
 static inline const char *iotdata_config_refusal(const uint16_t id, const bool remote) {
     const int i = iotdata_config_index(id);
     if (i < 0)
@@ -572,7 +530,6 @@ static inline const iotdata_config_row_t *iotdata_config_row(const uint16_t id) 
     return (i < 0) ? NULL : &iotdata_config_table[i];
 }
 
-/* Copy a string into its own slot, clamped to that row's declared max, and point the value at it. */
 static inline void _iotdata_config_string_set(const int i, const char *const src, const size_t len) {
     const iotdata_config_row_t *const row = &iotdata_config_table[i];
     char *const slot = _iotdata_config_slot(row);
@@ -590,8 +547,6 @@ static inline void _iotdata_config_string_set(const int i, const char *const src
 static inline void iotdata_config_defaults(void) {
     for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
         _iotdata_config_value[i] = iotdata_config_table[i].dflt;
-        /* A string's default is a pointer to a literal. Copy it into the slot so that every later
-           read goes through the same place a write would, and the two cannot diverge. */
         if (iotdata_config_table[i].type == IOTDATA_CONFIG_TYPE_STRING) {
             const char *const d = iotdata_config_table[i].dflt.s.p;
             _iotdata_config_string_set(i, d, (d != NULL) ? strlen(d) : 0u);
@@ -599,8 +554,6 @@ static inline void iotdata_config_defaults(void) {
     }
 }
 
-/* The standard check: within bounds. A row's own validate REPLACES this, because a row that needs
-   more than bounds usually needs something bounds cannot express. */
 static inline bool iotdata_config_validate(const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
     if (row == NULL || v == NULL)
         return false;
@@ -638,7 +591,6 @@ static inline bool iotdata_config_validate(const iotdata_config_row_t *const row
    default, and one that has points at its slot. */
 #define iotdata_config_string(n)    (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_STRING), (const char *)_iotdata_config_value[IOTDATA_CFG_IX_##n].s.p)
 
-/* Untyped, for the wire and the console, which meet an id rather than a name. */
 static inline bool iotdata_config_get(const uint16_t id, iotdata_config_value_t *const out) {
     const int i = iotdata_config_index(id);
     if (i < 0 || out == NULL)
@@ -696,16 +648,10 @@ typedef struct iotdata_config_update {
     iotdata_config_value_t staged[IOTDATA_CFG_COUNT];
     bool touched[IOTDATA_CFG_COUNT];
     bool rejected;
-    /* Where this update CAME FROM, because FLAG_LOCAL is a fact about the path and not about the
-       value. The same id written from the console and written off the radio are not the same event,
-       so the provenance travels with the update rather than being re-derived at each row. */
     bool remote;
     uint8_t count;
 } iotdata_config_update_t;
 
-/* An entry as it WILL BE: the staged value if this update touches it, the current one otherwise.
-   What a cross-entry validate reads, so it judges the world the commit is about to create rather
-   than the one it is replacing. */
 static inline bool iotdata_config_update_peek(const struct iotdata_config_update *const u, const uint16_t id, iotdata_config_value_t *const out) {
     const int i = iotdata_config_index(id);
     if (i < 0 || out == NULL)
@@ -714,22 +660,13 @@ static inline bool iotdata_config_update_peek(const struct iotdata_config_update
     return true;
 }
 
-/* A LOCAL update: the console, the config file, the command line. Anything a person is standing in
-   front of, literally or otherwise. */
-static inline void iotdata_config_update_begin(iotdata_config_update_t *const u) {
+static inline void iotdata_config_update_begin(iotdata_config_update_t *const u, bool remote) {
     if (u != NULL)
         *u = (iotdata_config_update_t){ 0 };
-}
-
-/* A REMOTE one, off the air. Identical except that FLAG_LOCAL rows refuse it. */
-static inline void iotdata_config_update_begin_remote(iotdata_config_update_t *const u) {
-    iotdata_config_update_begin(u);
-    if (u != NULL)
+    if (remote && u != NULL)
         u->remote = true;
 }
 
-/* Propose one value. Returns false and poisons the whole update if it is not acceptable -- the
-   caller need not check every call, only the commit. */
 static inline bool iotdata_config_update_stage(iotdata_config_update_t *const u, const uint16_t id, const iotdata_config_value_t *const v) {
     if (u == NULL || v == NULL)
         return false;
@@ -817,43 +754,6 @@ static inline bool iotdata_config_update_commit(iotdata_config_update_t *const u
 // THE IMAGE: one encoder for the datastore and the wire
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Append one entry as [id|type][value], big-endian, the same shape the TLV carries. Returns the
-   bytes written, or 0 if it does not fit. */
-static inline size_t iotdata_config_encode(const int i, uint8_t *const buf, const size_t size) {
-    if (i < 0 || i >= (int)IOTDATA_CFG_COUNT || buf == NULL)
-        return 0;
-    const iotdata_config_row_t *const row = &iotdata_config_table[i];
-    const uint16_t rec = iotdata_config_rec(row->id, row->type);
-    /* A STRING carries its own length, because it has to: [id|type][len][bytes]. A fixed-width type
-       does not, because the type already said. The 255 ceiling is the length byte's, which is also
-       why a row may not declare a max above it. */
-    if (row->type == IOTDATA_CONFIG_TYPE_STRING) {
-        const uint16_t n = _iotdata_config_value[i].s.len;
-        if (n > 255u || (size_t)(3u + n) > size)
-            return 0;
-        buf[0] = (uint8_t)(rec >> 8);
-        buf[1] = (uint8_t)rec;
-        buf[2] = (uint8_t)n;
-        if (n > 0 && _iotdata_config_value[i].s.p != NULL)
-            memcpy(&buf[3], _iotdata_config_value[i].s.p, n);
-        return (size_t)(3u + n);
-    }
-    const uint8_t w = iotdata_config_type_size(row->type);
-    if (w == 0 || (size_t)(2u + w) > size)
-        return 0; /* a type with neither a width nor a length: nothing sensible to write */
-    buf[0] = (uint8_t)(rec >> 8);
-    buf[1] = (uint8_t)rec;
-    uint64_t raw = iotdata_config_type_is_signed(row->type) ? (uint64_t)_iotdata_config_value[i].i : _iotdata_config_value[i].u;
-    if (row->type == IOTDATA_CONFIG_TYPE_FLOAT) {
-        uint32_t bits;
-        memcpy(&bits, &_iotdata_config_value[i].f, sizeof(bits));
-        raw = bits;
-    }
-    for (uint8_t b = 0; b < w; b++)
-        buf[2u + b] = (uint8_t)(raw >> (8u * (w - 1u - b)));
-    return (size_t)(2u + w);
-}
-
 static inline size_t iotdata_config_record_read(const uint8_t *const buf, const size_t len, uint16_t *const id_out, int *const index_out, iotdata_config_value_t *const val_out) {
     if (index_out != NULL)
         *index_out = -1;
@@ -904,6 +804,8 @@ static inline size_t iotdata_config_record_read(const uint8_t *const buf, const 
     return (size_t)(2u + w);
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline size_t iotdata_config_decode(const uint8_t *const buf, const size_t len) {
     uint16_t id = 0;
     int i = -1;
@@ -912,6 +814,43 @@ static inline size_t iotdata_config_decode(const uint8_t *const buf, const size_
     if (n > 0 && i >= 0)
         _iotdata_config_value[i] = v;
     return n;
+}
+
+/* Append one entry as [id|type][value], big-endian, the same shape the TLV carries. Returns the
+   bytes written, or 0 if it does not fit. */
+static inline size_t iotdata_config_encode(const int i, uint8_t *const buf, const size_t size) {
+    if (i < 0 || i >= (int)IOTDATA_CFG_COUNT || buf == NULL)
+        return 0;
+    const iotdata_config_row_t *const row = &iotdata_config_table[i];
+    const uint16_t rec = iotdata_config_rec(row->id, row->type);
+    /* A STRING carries its own length, because it has to: [id|type][len][bytes]. A fixed-width type
+       does not, because the type already said. The 255 ceiling is the length byte's, which is also
+       why a row may not declare a max above it. */
+    if (row->type == IOTDATA_CONFIG_TYPE_STRING) {
+        const uint16_t n = _iotdata_config_value[i].s.len;
+        if (n > 255u || (size_t)(3u + n) > size)
+            return 0;
+        buf[0] = (uint8_t)(rec >> 8);
+        buf[1] = (uint8_t)rec;
+        buf[2] = (uint8_t)n;
+        if (n > 0 && _iotdata_config_value[i].s.p != NULL)
+            memcpy(&buf[3], _iotdata_config_value[i].s.p, n);
+        return (size_t)(3u + n);
+    }
+    const uint8_t w = iotdata_config_type_size(row->type);
+    if (w == 0 || (size_t)(2u + w) > size)
+        return 0; /* a type with neither a width nor a length: nothing sensible to write */
+    buf[0] = (uint8_t)(rec >> 8);
+    buf[1] = (uint8_t)rec;
+    uint64_t raw = iotdata_config_type_is_signed(row->type) ? (uint64_t)_iotdata_config_value[i].i : _iotdata_config_value[i].u;
+    if (row->type == IOTDATA_CONFIG_TYPE_FLOAT) {
+        uint32_t bits;
+        memcpy(&bits, &_iotdata_config_value[i].f, sizeof(bits));
+        raw = bits;
+    }
+    for (uint8_t b = 0; b < w; b++)
+        buf[2u + b] = (uint8_t)(raw >> (8u * (w - 1u - b)));
+    return (size_t)(2u + w);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -943,13 +882,15 @@ static inline int iotdata_config_pack(uint8_t *const buf, const size_t size, iot
     return (int)at;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Apply a record stream that arrived over the air. All or nothing: one unacceptable value rejects
    the whole update, because applying half of a radio reconfiguration is how a remote node is lost.
    An UNKNOWN id is skipped rather than rejected -- it is the ignore-unknown rule, and the reply
    says what actually took. Returns whether the update committed. */
 static inline bool iotdata_config_apply(const uint8_t *const buf, const size_t len, datastore_t *const ds, bool *const reboot_out) {
     iotdata_config_update_t u;
-    iotdata_config_update_begin_remote(&u); /* this one came off the air, and FLAG_LOCAL rows know it */
+    iotdata_config_update_begin(&u, true);
     for (size_t at = 0; at < len;) {
         uint16_t id = 0;
         int i = -1;
@@ -964,7 +905,12 @@ static inline bool iotdata_config_apply(const uint8_t *const buf, const size_t l
     return iotdata_config_update_commit(&u, ds, reboot_out);
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static uint8_t _iotdata_config_buffer[IOTDATA_CONFIG_IMAGE_MAX]; // XXX
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_config_save(datastore_t *const ds) {
     if (ds == NULL)
@@ -975,22 +921,23 @@ static inline bool iotdata_config_save(datastore_t *const ds) {
     return datastore_write(ds, IOTDATA_CONFIG_STORE_KEY, _iotdata_config_buffer, at);
 }
 
-/* Defaults first, then whatever the image says: an entry the image does not mention keeps its
-   default rather than becoming zero, which is the same rule an unreadable record follows. */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline bool iotdata_config_load(datastore_t *const ds) {
-    iotdata_config_defaults();
+    iotdata_config_defaults(); // defaults first
     if (ds == NULL)
         return false;
     size_t len = 0;
-    if (!datastore_read(ds, IOTDATA_CONFIG_STORE_KEY, _iotdata_config_buffer, sizeof(_iotdata_config_buffer), &len))
-        return false;
-    for (size_t at = 0; at < len;) {
-        const size_t n = iotdata_config_decode(_iotdata_config_buffer + at, len - at);
-        if (n == 0)
-            break;
-        at += n;
+    if (datastore_read(ds, IOTDATA_CONFIG_STORE_KEY, _iotdata_config_buffer, sizeof(_iotdata_config_buffer), &len)) {
+        for (size_t at = 0; at < len;) {
+            const size_t n = iotdata_config_decode(_iotdata_config_buffer + at, len - at);
+            if (n == 0)
+                break;
+            at += n;
+        }
+        return true;
     }
-    return true;
+    return false;
 }
 
 #ifdef IOTDATA_NODE_CONSOLE_H
@@ -1071,10 +1018,8 @@ static void iotdata_config_console(const iotdata_console_emit_fn emit, const int
         emit("%s: '%s' is not a %s\n", iotdata_config_table[i].name, argv[2], _iotdata_config_type_name(iotdata_config_table[i].type));
         return;
     }
-    /* LOCAL, not remote: this is a person at a console, which is the distinction the flag draws.
-       A read-only row is still refused -- that one is about the value, not about the path. */
     iotdata_config_update_t u;
-    iotdata_config_update_begin(&u);
+    iotdata_config_update_begin(&u, false);
     bool reboot = false;
     if (!iotdata_config_update_stage(&u, iotdata_config_table[i].id, &v) || !iotdata_config_update_commit(&u, _iotdata_config_console_ds, &reboot)) {
         const char *const why = iotdata_config_refusal(iotdata_config_table[i].id, false);

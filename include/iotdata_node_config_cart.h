@@ -39,17 +39,6 @@
 // more place to be wrong.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_CFGID_CART_ENABLE       0x0D0
-#define IOTDATA_CFGID_CART_INTERVAL_MIN 0x0D1
-#define IOTDATA_CFGID_CART_BOOT_S       0x0D2
-#define IOTDATA_CFGID_CART_SILENT_S     0x0D3
-#define IOTDATA_CFGID_CART_SETTLE_S     0x0D4
-#define IOTDATA_CFGID_CART_LIMIT_MIN    0x0D5
-#define IOTDATA_CFGID_CART_RETRY_MIN    0x0D6
-#define IOTDATA_CFGID_CART_RETRY_MAX    0x0D7
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_CONFIG_CART_ENABLE
 #define IOTDATA_CONFIG_CART_ENABLE false
 #endif
@@ -91,15 +80,14 @@ static inline bool iotdata_config_cart_changed(__attribute__((unused)) const iot
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_CONFIG_ENTRIES_CART(X) \
-    X(CART_ENABLE, IOTDATA_CFGID_CART_ENABLE, BOOL, 0, 1, IOTDATA_CONFIG_CART_ENABLE, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "power a companion board on a schedule at all") \
-    X(CART_INTERVAL_MIN, IOTDATA_CFGID_CART_INTERVAL_MIN, U16, 1, 10080, IOTDATA_CONFIG_CART_INTERVAL_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "minutes between windows, measured from the last cut") \
-    X(CART_BOOT_S, IOTDATA_CFGID_CART_BOOT_S, U16, 5, 3600, IOTDATA_CONFIG_CART_BOOT_S, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_cart_boot_ok, IOTDATA_CONFIG_CART_NOTIFY, "seconds to hear the first cartbeat before giving up on the boot") \
-    X(CART_SILENT_S, IOTDATA_CFGID_CART_SILENT_S, U16, 1, 3600, IOTDATA_CONFIG_CART_SILENT_S, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "seconds without a cartbeat before believing it has stopped") \
-    X(CART_SETTLE_S, IOTDATA_CFGID_CART_SETTLE_S, U16, 0, 3600, IOTDATA_CONFIG_CART_SETTLE_S, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "seconds the shutdown gets after that, before the rail goes down") \
-    X(CART_LIMIT_MIN, IOTDATA_CFGID_CART_LIMIT_MIN, U16, 1, 1440, IOTDATA_CONFIG_CART_LIMIT_MIN, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_cart_limit_ok, IOTDATA_CONFIG_CART_NOTIFY, \
-      "minutes before a still-beating cart is cut anyway; a backstop, not a schedule") \
-    X(CART_RETRY_MIN, IOTDATA_CFGID_CART_RETRY_MIN, U16, 0, 10080, IOTDATA_CONFIG_CART_RETRY_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "minutes added to the interval per consecutive failed window") \
-    X(CART_RETRY_MAX, IOTDATA_CFGID_CART_RETRY_MAX, U8, 0, 60, IOTDATA_CONFIG_CART_RETRY_MAX, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "how many failures that back-off keeps stretching for")
+    X(CART_ENABLE, 0x0D0, BOOL, 0, 1, IOTDATA_CONFIG_CART_ENABLE, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "enabled") \
+    X(CART_INTERVAL_MIN, 0x0D1, U16, 1, 10080, IOTDATA_CONFIG_CART_INTERVAL_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "period between windows, measured from the last cut") \
+    X(CART_BOOT_S, 0x0D2, U16, 5, 3600, IOTDATA_CONFIG_CART_BOOT_S, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_cart_boot_ok, IOTDATA_CONFIG_CART_NOTIFY, "time to hear the first cartbeat before giving up on the boot") \
+    X(CART_SILENT_S, 0x0D3, U16, 1, 3600, IOTDATA_CONFIG_CART_SILENT_S, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "time without a cartbeat before believing it has stopped") \
+    X(CART_SETTLE_S, 0x0D4, U16, 0, 3600, IOTDATA_CONFIG_CART_SETTLE_S, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "time the shutdown gets after that, before the rail goes down") \
+    X(CART_LIMIT_MIN, 0x0D5, U16, 1, 1440, IOTDATA_CONFIG_CART_LIMIT_MIN, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_cart_limit_ok, IOTDATA_CONFIG_CART_NOTIFY, "time until a still-beating cart is cut anyway, safety backstop") \
+    X(CART_RETRY_MIN, 0x0D6, U16, 0, 10080, IOTDATA_CONFIG_CART_RETRY_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "time added to the interval per consecutive failed window") \
+    X(CART_RETRY_MAX, 0x0D7, U8, 0, 60, IOTDATA_CONFIG_CART_RETRY_MAX, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "failures that back-off keeps stretching for")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -117,11 +105,11 @@ static inline bool iotdata_config_cart_changed(__attribute__((unused)) const iot
 
 static bool iotdata_config_cart_boot_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
     iotdata_config_value_t limit;
-    return iotdata_config_update_peek(u, IOTDATA_CFGID_CART_LIMIT_MIN, &limit) && v->u < limit.u * 60u;
+    return iotdata_config_update_peek(u, 0x0D5, &limit) && v->u < limit.u * 60u;
 }
 static bool iotdata_config_cart_limit_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
     iotdata_config_value_t boot;
-    return iotdata_config_update_peek(u, IOTDATA_CFGID_CART_BOOT_S, &boot) && v->u * 60u > boot.u;
+    return iotdata_config_update_peek(u, 0x0D2, &boot) && v->u * 60u > boot.u;
 }
 
 static inline void iotdata_config_cart_apply(cart_config_t *const c, const gpio_num_t pin_power, const gpio_num_t pin_live) {

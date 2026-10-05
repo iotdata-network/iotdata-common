@@ -49,6 +49,9 @@
 #define IOTDATA_MQTT_MANAGE_TOPIC_REQ  "/manage/req"
 #define IOTDATA_MQTT_MANAGE_TOPIC_RESP "/manage/resp"
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* What a command does with the request's arguments. The kind is a property of the COMMAND, not of
    the medium, which is what lets one table serve all of them. */
 typedef enum {

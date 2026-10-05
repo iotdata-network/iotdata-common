@@ -36,16 +36,6 @@
 // not a longer string.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_CFGID_DDUP_ENABLE                  0x090
-#define IOTDATA_CFGID_DDUP_PORT                    0x091
-#define IOTDATA_CFGID_DDUP_PEERS                   0x092
-#define IOTDATA_CFGID_DDUP_DELAY                   0x093
-#define IOTDATA_CFGID_DDUP_HOLD_MS                 0x094
-#define IOTDATA_CFGID_DDUP_DEBUG                   0x095
-#define IOTDATA_CFGID_DDUP_DEBUG_INJECT_LATENCY_MS 0x096
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_CONFIG_DDUP_ENABLE
 #define IOTDATA_CONFIG_DDUP_ENABLE false
 #endif
@@ -55,18 +45,9 @@
 #ifndef IOTDATA_CONFIG_DDUP_PEERS
 #define IOTDATA_CONFIG_DDUP_PEERS ""
 #endif
-/* Milliseconds a gateway waits before announcing what it heard, so that two that heard the same
-   packet do not both announce it in the same instant. Short: it is a batching window, and every
-   millisecond of it is added to the latency of everything that passes through. */
 #ifndef IOTDATA_CONFIG_DDUP_DELAY
-#define IOTDATA_CONFIG_DDUP_DELAY 20u
+#define IOTDATA_CONFIG_DDUP_DELAY 20u /* ms until gateway announces a batch. */
 #endif
-/* THE HOLD CEILING, and the difference between the two kinds of duplicate. A duplicate that arrives
-   LATER is killed by the shared ring -- whoever saw it first wins, no waiting. A duplicate that
-   arrives at the SAME INSTANT (two receivers hearing one broadcast) cannot be: both are first. So a
-   reading is held while the receivers tell each other, and the lowest id publishes. This is the
-   ceiling on that wait; the implementation tunes the actual hold down toward the measured
-   peer-claim latency, so the ceiling is a safety limit rather than a cost paid every time. */
 #ifndef IOTDATA_CONFIG_DDUP_HOLD_MS
 #define IOTDATA_CONFIG_DDUP_HOLD_MS 1000u
 #endif
@@ -96,15 +77,13 @@ static inline bool iotdata_config_ddup_changed(__attribute__((unused)) const iot
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_CONFIG_ENTRIES_DDUP(X) \
-    X(DDUP_ENABLE, IOTDATA_CFGID_DDUP_ENABLE, BOOL, 0, 1, IOTDATA_CONFIG_DDUP_ENABLE, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "dedup against other gateways at all") \
-    X(DDUP_PORT, IOTDATA_CFGID_DDUP_PORT, U16, 1, 65535, IOTDATA_CONFIG_DDUP_PORT, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "the UDP port peers talk to each other on") \
-    X(DDUP_PEERS, IOTDATA_CFGID_DDUP_PEERS, STRING, 0, IOTDATA_CONFIG_DDUP_PEERS_MAX, IOTDATA_CONFIG_DDUP_PEERS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "the other gateways, comma-separated host:port") \
-    X(DDUP_DELAY, IOTDATA_CFGID_DDUP_DELAY, U16, 0, 10000, IOTDATA_CONFIG_DDUP_DELAY, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "how long to batch before announcing, in milliseconds; every one is added latency") \
-    X(DDUP_HOLD_MS, IOTDATA_CFGID_DDUP_HOLD_MS, U32, 0, 60000, IOTDATA_CONFIG_DDUP_HOLD_MS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, \
-      "ceiling on how long a reading waits for peers to contest it, in milliseconds (0 = publish at once, no election)") \
-    X(DDUP_DEBUG, IOTDATA_CFGID_DDUP_DEBUG, BOOL, 0, 1, IOTDATA_CONFIG_DDUP_DEBUG, IOTDATA_CONFIG_FLAG_LOCAL, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "debug: log every dedup decision") \
-    X(DDUP_DEBUG_INJECT_LATENCY_MS, IOTDATA_CFGID_DDUP_DEBUG_INJECT_LATENCY_MS, U32, 0, 10000, IOTDATA_CONFIG_DDUP_DEBUG_INJECT_LATENCY_MS, IOTDATA_CONFIG_FLAG_LOCAL, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, \
-      "debug: fake peer-claim latency, to exercise the election on a desk (0 everywhere real)")
+    X(DDUP_ENABLE, 0x090, BOOL, 0, 1, IOTDATA_CONFIG_DDUP_ENABLE, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "enabled") \
+    X(DDUP_PORT, 0x091, U16, 1, 65535, IOTDATA_CONFIG_DDUP_PORT, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "default UDP port") \
+    X(DDUP_PEERS, 0x092, STRING, 0, IOTDATA_CONFIG_DDUP_PEERS_MAX, IOTDATA_CONFIG_DDUP_PEERS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "peers, comma-separated host:port (or 'mqtt' for discovery)") \
+    X(DDUP_DELAY_MS, 0x093, U16, 0, 10000, IOTDATA_CONFIG_DDUP_DELAY, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "batching period, until announcement") \
+    X(DDUP_HOLD_MS, 0x094, U32, 0, 60000, IOTDATA_CONFIG_DDUP_HOLD_MS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "ceiling period, until peers can contest (0 = publish at once, no election)") \
+    X(DDUP_DEBUG, 0x095, BOOL, 0, 1, IOTDATA_CONFIG_DDUP_DEBUG, IOTDATA_CONFIG_FLAG_LOCAL, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "debug: log every dedup decision") \
+    X(DDUP_DEBUG_INJECT_LATENCY_MS, 0x096, U32, 0, 10000, IOTDATA_CONFIG_DDUP_DEBUG_INJECT_LATENCY_MS, IOTDATA_CONFIG_FLAG_LOCAL, NULL, IOTDATA_CONFIG_DDUP_NOTIFY, "debug: fake peer-claim latency, for election exercise (0 = none)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

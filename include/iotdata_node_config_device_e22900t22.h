@@ -89,15 +89,15 @@ static inline bool iotdata_config_lora_changed(__attribute__((unused)) const iot
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_CONFIG_ENTRIES_LORA(X) \
-    X(LORA_ADDRESS, 0x030, U16, 0, 0xFFFF, IOTDATA_CONFIG_LORA_ADDRESS, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 module address") \
-    X(LORA_NETWORK, 0x031, U8, 0, 0xFF, IOTDATA_CONFIG_LORA_NETWORK, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 network id, which separates co-located networks") \
-    X(LORA_CHANNEL, 0x032, U8, 0, 83, IOTDATA_CONFIG_LORA_CHANNEL, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "the radio channel") \
+    X(LORA_ADDRESS, 0x030, U16, 0, 0xFFFF, IOTDATA_CONFIG_LORA_ADDRESS, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "E22 address") \
+    X(LORA_NETWORK, 0x031, U8, 0, 0xFF, IOTDATA_CONFIG_LORA_NETWORK, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "E22 network, to separate co-located networks") \
+    X(LORA_CHANNEL, 0x032, U8, 0, 83, IOTDATA_CONFIG_LORA_CHANNEL, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "lora radio channel") \
     X(LORA_TX_POWER, 0x033, U8, 10, 22, IOTDATA_CONFIG_LORA_TX_POWER, IOTDATA_CONFIG_FLAG_REBOOT, iotdata_config_lora_tx_power_ok, IOTDATA_CONFIG_LORA_NOTIFY, "transmit power in dBm") \
-    X(LORA_AIR_RATE, 0x034, U16, 300, 62500, IOTDATA_CONFIG_LORA_AIR_RATE, IOTDATA_CONFIG_FLAG_REBOOT, iotdata_config_lora_air_rate_ok, IOTDATA_CONFIG_LORA_NOTIFY, "on-air bit rate; lower reaches further and takes longer") \
-    X(LORA_PACKET_SIZE, 0x035, U8, 32, 240, IOTDATA_CONFIG_LORA_PACKET_SIZE, IOTDATA_CONFIG_FLAG_REBOOT, iotdata_config_lora_packet_size_ok, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 sub-packet size in bytes") \
+    X(LORA_AIR_RATE, 0x034, U16, 300, 62500, IOTDATA_CONFIG_LORA_AIR_RATE, IOTDATA_CONFIG_FLAG_REBOOT, iotdata_config_lora_air_rate_ok, IOTDATA_CONFIG_LORA_NOTIFY, "on-air bit rate, lower reaches further and takes longer") \
+    X(LORA_PACKET_SIZE, 0x035, U8, 32, 240, IOTDATA_CONFIG_LORA_PACKET_SIZE, IOTDATA_CONFIG_FLAG_REBOOT, iotdata_config_lora_packet_size_ok, IOTDATA_CONFIG_LORA_NOTIFY, "sub-packet size in bytes") \
     X(LORA_LBT, 0x036, BOOL, 0, 1, IOTDATA_CONFIG_LORA_LBT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "listen before transmitting, so two radios do not talk over each other") \
-    X(LORA_CRYPT, 0x037, U16, 0, 0xFFFF, IOTDATA_CONFIG_LORA_CRYPT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "the E22 scrambling key (0 = off); obfuscation, not encryption") \
-    X(LORA_DEBUG, 0x038, BOOL, 0, 1, IOTDATA_CONFIG_LORA_DEBUG, IOTDATA_CONFIG_FLAG_LOCAL, NULL, NULL, "log what the radio is doing")
+    X(LORA_CRYPT, 0x037, U16, 0, 0xFFFF, IOTDATA_CONFIG_LORA_CRYPT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_LORA_NOTIFY, "E22 crypt key (0 = off), obfuscation, not encryption") \
+    X(LORA_DEBUG, 0x038, BOOL, 0, 1, IOTDATA_CONFIG_LORA_DEBUG, IOTDATA_CONFIG_FLAG_LOCAL, NULL, NULL, "debug: log driver activity")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

@@ -40,28 +40,14 @@
 // with a disk, and it needs to be expressible without a second flag beside each number.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_CFGID_BBOX_ENABLED          0x0A0
-#define IOTDATA_CFGID_BBOX_MAX_RECORDS      0x0A1
-#define IOTDATA_CFGID_BBOX_MAX_SECONDS      0x0A2
-#define IOTDATA_CFGID_BBOX_MAX_BYTES        0x0A3
-
-#define IOTDATA_CFGID_BBOX_FILE_DIRECTORY   0x0B0
-#define IOTDATA_CFGID_BBOX_FILE_GENERATIONS 0x0B1
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_CONFIG_BBOX_ENABLED
 #define IOTDATA_CONFIG_BBOX_ENABLED false
 #endif
 #ifndef IOTDATA_CONFIG_BBOX_MAX_RECORDS
 #define IOTDATA_CONFIG_BBOX_MAX_RECORDS 0u
 #endif
-/* 0 = WRITE-THROUGH: every record is persisted as it is made. Slower and more wear, and the right
-   default -- a recorder whose last seconds are still in RAM has nothing to say about the crash you
-   are investigating, which is the one crash you needed it for. Above 0 it batches, and the number
-   is how much you are willing to lose. */
 #ifndef IOTDATA_CONFIG_BBOX_MAX_SECONDS
-#define IOTDATA_CONFIG_BBOX_MAX_SECONDS 0u
+#define IOTDATA_CONFIG_BBOX_MAX_SECONDS 0u /* 0 = WRITE-THROUGH: every record is persisted as it is made. */
 #endif
 #ifndef IOTDATA_CONFIG_BBOX_MAX_BYTES
 #define IOTDATA_CONFIG_BBOX_MAX_BYTES 0u
@@ -91,18 +77,16 @@ static inline bool iotdata_config_bbox_changed(__attribute__((unused)) const iot
 
 /* 0x0A0-0x0AF -- every recorder, whatever backend it writes to */
 #define IOTDATA_CONFIG_ENTRIES_BBOX(X) \
-    X(BLACKBOX_ENABLED, IOTDATA_CFGID_BBOX_ENABLED, BOOL, 0, 1, IOTDATA_CONFIG_BBOX_ENABLED, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "record diagnostics at all") \
-    X(BLACKBOX_MAX_RECORDS, IOTDATA_CFGID_BBOX_MAX_RECORDS, U32, 0, 1000000, IOTDATA_CONFIG_BBOX_MAX_RECORDS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records to keep before the oldest goes (0 = unbounded)") \
-    X(BLACKBOX_MAX_SECONDS, IOTDATA_CFGID_BBOX_MAX_SECONDS, U32, 0, 31536000, IOTDATA_CONFIG_BBOX_MAX_SECONDS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, \
-      "how long a record may sit in RAM before it is written down (0 = write through, losing nothing)") \
-    X(BLACKBOX_MAX_BYTES, IOTDATA_CFGID_BBOX_MAX_BYTES, U32, 0, 0xFFFFFFFF, IOTDATA_CONFIG_BBOX_MAX_BYTES, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "bytes to keep before the store rotates or evicts (0 = unbounded)")
+    X(BLACKBOX_ENABLED, 0x0A0, BOOL, 0, 1, IOTDATA_CONFIG_BBOX_ENABLED, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "enabled") \
+    X(BLACKBOX_MAX_RECORDS, 0x0A1, U32, 0, 1000000, IOTDATA_CONFIG_BBOX_MAX_RECORDS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records to keep before the oldest goes (0 = unbounded)") \
+    X(BLACKBOX_MAX_SECONDS, 0x0A2, U32, 0, 31536000, IOTDATA_CONFIG_BBOX_MAX_SECONDS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records time to keep in RAM until flush/evict (0 = write through)") \
+    X(BLACKBOX_MAX_BYTES, 0x0A3, U32, 0, 0xFFFFFFFF, IOTDATA_CONFIG_BBOX_MAX_BYTES, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records bytes to keep in RAM before flush/evict (0 = unbounded)")
 
 /* 0x0B0-0x0BF -- only when the backend is a filesystem */
 #define IOTDATA_CONFIG_ENTRIES_BBOX_FILE(X) \
-    X(BLACKBOX_FILE_DIRECTORY, IOTDATA_CFGID_BBOX_FILE_DIRECTORY, STRING, 1, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY_MAX, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY, IOTDATA_CONFIG_FLAG_LOCAL | IOTDATA_CONFIG_FLAG_REBOOT, NULL, \
-      IOTDATA_CONFIG_BBOX_NOTIFY, "the directory the record file is written in") \
-    X(BLACKBOX_FILE_GENERATIONS, IOTDATA_CFGID_BBOX_FILE_GENERATIONS, U8, 0, 255, IOTDATA_CONFIG_BBOX_FILE_GENERATIONS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, \
-      "rotated files to keep behind the active one (0 = overwrite, keeping nothing)")
+    X(BLACKBOX_FILE_DIRECTORY, 0x0B0, STRING, 1, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY_MAX, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY, IOTDATA_CONFIG_FLAG_LOCAL | IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, \
+      "records file directory") \
+    X(BLACKBOX_FILE_GENERATIONS, 0x0B1, U8, 0, 255, IOTDATA_CONFIG_BBOX_FILE_GENERATIONS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records file generations (behind active) (0 = overwrite)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

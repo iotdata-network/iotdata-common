@@ -27,15 +27,9 @@
 // Requires iotdata_node_down.h, for iotdata_down_t and the defaults below.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* 0x020-0x02F. The defaults are the down store's own, so a node that configures nothing behaves
-   exactly as iotdata_down_init() left it. Minutes on the wire, not milliseconds: these are DAYS in
-   practice, and a u32 of milliseconds is a number no operator should have to type. */
-#define IOTDATA_CFGID_DOWN_TTL_MIN       0x020
-#define IOTDATA_CFGID_DOWN_TTL_BCAST_MIN 0x021
-#define IOTDATA_CFGID_DOWN_REPEAT_MIN    0x022
-
-#define IOTDATA_CONFIG_DOWN_MIN_MAX      (IOTDATA_DOWN_TTL_MS_MAX / 60000UL)
-
+#ifndef IOTDATA_CONFIG_DOWN_MIN_MAX
+#define IOTDATA_CONFIG_DOWN_MIN_MAX (IOTDATA_DOWN_TTL_MS_MAX / 60000UL)
+#endif
 #ifndef IOTDATA_CONFIG_DOWN_TTL_MIN
 #define IOTDATA_CONFIG_DOWN_TTL_MIN (IOTDATA_DOWN_TTL_MS_DEFAULT / 60000UL)
 #endif
@@ -61,12 +55,9 @@ static inline bool iotdata_config_down_changed(__attribute__((unused)) const iot
 /* 0 is a real value and means "never expire", which the store already understands -- so the floor is
    0 and not 1, and an operator who wants a command to wait indefinitely can say so. */
 #define IOTDATA_CONFIG_ENTRIES_DOWN(X) \
-    X(DOWN_TTL_MIN, IOTDATA_CFGID_DOWN_TTL_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, \
-      "how long a held command waits for its node, in minutes (0 = forever)") \
-    X(DOWN_TTL_BCAST_MIN, IOTDATA_CFGID_DOWN_TTL_BCAST_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_BCAST_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, \
-      "the same for a broadcast, which is held for everyone at once") \
-    X(DOWN_REPEAT_MIN, IOTDATA_CFGID_DOWN_REPEAT_MIN, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_REPEAT_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, \
-      "how long before a delivered command may be sent to a node again")
+    X(DOWN_TTL_MIN, 0x020, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "time to hold a unicast frame waiting for a node (0 = indefinite)") \
+    X(DOWN_TTL_BCAST_MIN, 0x021, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_BCAST_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "time to hold a broadcast frame") \
+    X(DOWN_REPEAT_MIN, 0x022, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_REPEAT_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "period to repeat a frame to a node")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -82,9 +73,6 @@ static inline bool iotdata_config_down_changed(__attribute__((unused)) const iot
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Minutes out of the table, milliseconds into the store, which is what it counts in. The setters
-   clamp to IOTDATA_DOWN_TTL_MS_MAX themselves, so the row bounds and the store agree by
-   construction rather than by two people remembering the same number. */
 static inline void iotdata_config_down_apply(iotdata_down_t *const ds) {
     if (ds == NULL)
         return;

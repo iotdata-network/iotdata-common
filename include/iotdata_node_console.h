@@ -294,8 +294,7 @@ void iotdata_console_init(const iotdata_console_t *cons, size_t count) {
     iotdata_con_app_n = count;
     iotdata_con_len = 0;
 #if defined(ESP_PLATFORM)
-    usb_serial_jtag_driver_config_t cfg = { .tx_buffer_size = 256, .rx_buffer_size = 256 };
-    if (usb_serial_jtag_driver_install(&cfg) == ESP_OK)
+    if (usb_serial_jtag_driver_install(&(usb_serial_jtag_driver_config_t){ .tx_buffer_size = 256, .rx_buffer_size = 256 }) == ESP_OK)
         usb_serial_jtag_vfs_use_driver(); /* route stdio through the driver so reads + printf agree */
 #else
     /* Nothing to set up: the poll in getc() asks before it reads, so stdin is left exactly as the

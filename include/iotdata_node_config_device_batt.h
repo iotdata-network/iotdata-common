@@ -88,14 +88,12 @@ static bool iotdata_config_batt_mv_max_ok(const iotdata_config_row_t *row, const
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* No REBOOT on any of them: every one changes only what the NEXT reading is measured against, and a
-   gauge that needs a restart to believe its own calibration is a gauge nobody will recalibrate. */
 #define IOTDATA_CONFIG_ENTRIES_BATT(X) \
-    X(BATT_TYPE, 0x0E0, U8, 0, 2, IOTDATA_CONFIG_BATT_TYPE, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_batt_type_ok, IOTDATA_CONFIG_BATT_NOTIFY, "cell chemistry: 0 li-ion (incl. IMR/INR/ICR), 1 lipo, 2 lifepo4") \
-    X(BATT_CAPACITY_MAH, 0x0E1, U16, 0, 60000, IOTDATA_CONFIG_BATT_CAPACITY_MAH, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BATT_NOTIFY, "the PACK's capacity in mAh (0 = not stated); inventory only, never the gauge") \
-    X(BATT_MV_MIN, 0x0E2, I16, 1500, 4500, IOTDATA_CONFIG_BATT_MV_MIN, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_batt_mv_min_ok, IOTDATA_CONFIG_BATT_NOTIFY, "0%: where THIS node stops being useful, not the cell's cutoff") \
-    X(BATT_MV_MAX, 0x0E3, I16, 1500, 4500, IOTDATA_CONFIG_BATT_MV_MAX, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_batt_mv_max_ok, IOTDATA_CONFIG_BATT_NOTIFY, "100%: what YOUR charger leaves a full cell RESTING at") \
-    X(BATT_OFFSET_MV, 0x0E4, I16, -500, 500, IOTDATA_CONFIG_BATT_OFFSET_MV, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BATT_NOTIFY, "calibration trim against a meter, in mV")
+    X(BATT_TYPE, 0x0E0, U8, 0, 2, IOTDATA_CONFIG_BATT_TYPE, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_batt_type_ok, IOTDATA_CONFIG_BATT_NOTIFY, "cell chemistry (0 = li-ion, 1 = lipo, 2 = lifepo4)") \
+    X(BATT_CAPACITY_MAH, 0x0E1, U16, 0, 60000, IOTDATA_CONFIG_BATT_CAPACITY_MAH, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BATT_NOTIFY, "the PACK's capacity (0 = not stated)") \
+    X(BATT_MV_MIN, 0x0E2, I16, 1500, 4500, IOTDATA_CONFIG_BATT_MV_MIN, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_batt_mv_min_ok, IOTDATA_CONFIG_BATT_NOTIFY, "0%: node's useful floor, not the cell's cutoff") \
+    X(BATT_MV_MAX, 0x0E3, I16, 1500, 4500, IOTDATA_CONFIG_BATT_MV_MAX, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_batt_mv_max_ok, IOTDATA_CONFIG_BATT_NOTIFY, "100%: node's charged maximum, not the cell's topout") \
+    X(BATT_OFFSET_MV, 0x0E4, I16, -500, 500, IOTDATA_CONFIG_BATT_OFFSET_MV, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BATT_NOTIFY, "calibration trim against a meter")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -126,14 +124,13 @@ static bool iotdata_config_batt_mv_max_ok(__attribute__((unused)) const iotdata_
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_config_batt_apply(void) {
-    const battery_profile_t p = {
+    return battery_profile_set(&(const battery_profile_t){
         .type = (battery_type_t)iotdata_config_u8(BATT_TYPE),
         .capacity_mah = iotdata_config_u16(BATT_CAPACITY_MAH),
         .mv_min = iotdata_config_i16(BATT_MV_MIN),
         .mv_max = iotdata_config_i16(BATT_MV_MAX),
         .offset_mv = iotdata_config_i16(BATT_OFFSET_MV),
-    };
-    return battery_profile_set(&p);
+    });
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
