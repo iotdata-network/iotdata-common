@@ -286,22 +286,20 @@ esp_err_t ltr390_read(ltr390_reading_t *const out, const int opts, const reading
         ESP_LOGW(__tag_device_ltr390, "ALS mode set failed, skipping lux readings");
     else
         for (int i = 0; i < MIN_INT(st_lux->num_total, READINGS_MAX); i++) {
-            if (_ltr390_read_raw(false, &raw) != ESP_OK) {
+            if (_ltr390_read_raw(false, &raw) == ESP_OK)
+                lux_arr[lux_count++] = (float)raw * _LTR390_LUX_FACTOR;
+            else
                 ESP_LOGW(__tag_device_ltr390, "reading %d (lux) failed, skipping", i);
-                continue;
-            }
-            lux_arr[lux_count++] = (float)raw * _LTR390_LUX_FACTOR;
         }
 
     if (_ltr390_set_mode(true) != ESP_OK)
         ESP_LOGW(__tag_device_ltr390, "UVS mode set failed, skipping uvi readings");
     else
         for (int i = 0; i < MIN_INT(st_uvi->num_total, READINGS_MAX); i++) {
-            if (_ltr390_read_raw(true, &raw) != ESP_OK) {
+            if (_ltr390_read_raw(true, &raw) == ESP_OK)
+                uvi_arr[uvi_count++] = (float)raw / _LTR390_UVI_SENSITIVITY;
+            else
                 ESP_LOGW(__tag_device_ltr390, "reading %d (uvi) failed, skipping", i);
-                continue;
-            }
-            uvi_arr[uvi_count++] = (float)raw / _LTR390_UVI_SENSITIVITY;
         }
 
     ESP_RETURN_ON_FALSE(lux_count > 0 || uvi_count > 0, DEV_ERR_BAD_READING, __tag_device_ltr390, "ltr390_read");

@@ -141,43 +141,37 @@ static inline void buffer_pool_init(buffer_pool_t *const p, uint8_t *const data,
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/*
- * Acquire a buffer, reference count 1.
- *
- * The free map is a bitmap rather than a list because allocation must not be a walk: the first
- * non-zero word gives the first free buffer in one count-trailing-zeros, whatever the pool size.
- */
 static inline buffer_handle_t buffer_acquire(buffer_pool_t *const p) {
     BUFFER_LOCK_ACQUIRE(&p->lock);
     const uint16_t words = (uint16_t)BUFFER_POOL_MAP_WORDS(p->count);
-    for (uint16_t w = 0; w < words; w++) {
-        if (p->free_map[w] == 0u)
-            continue;
-        const uint16_t bit = (uint16_t)__builtin_ctz(p->free_map[w]);
-        const uint16_t i = (uint16_t)(w * 32u + bit);
-        if (i >= p->count)
-            break; /* the tail of the last word is padding, not buffers */
-        p->free_map[w] &= ~(1u << bit);
-        p->meta[i].refs = 1;
-        p->meta[i].at = p->offset; /* a receive lands past the reserved prefix */
-        p->meta[i].len = 0;
-        p->used++;
-        p->acquires++;
-        if (p->used > p->high_water)
-            p->high_water = p->used;
-        BUFFER_LOCK_RELEASE(&p->lock);
-        return (buffer_handle_t)i;
-    }
+    for (uint16_t w = 0; w < words; w++)
+        if (p->free_map[w] != 0u) {
+            const uint16_t bit = (uint16_t)__builtin_ctz(p->free_map[w]);
+            const uint16_t i = (uint16_t)(w * 32u + bit);
+            if (i >= p->count)
+                break; /* the tail of the last word is padding, not buffers */
+            p->free_map[w] &= ~(1u << bit);
+            p->meta[i].refs = 1;
+            p->meta[i].at = p->offset; /* a receive lands past the reserved prefix */
+            p->meta[i].len = 0;
+            p->used++;
+            p->acquires++;
+            if (p->used > p->high_water)
+                p->high_water = p->used;
+            BUFFER_LOCK_RELEASE(&p->lock);
+            return (buffer_handle_t)i;
+        }
     p->fails++;
     BUFFER_LOCK_RELEASE(&p->lock);
-    return (buffer_handle_t)BUFFER_NONE;
+    return BUFFER_NONE;
 }
 
 static inline bool buffer_valid(const buffer_pool_t *const p, const buffer_handle_t h) {
-    return h != (buffer_handle_t)BUFFER_NONE && h < p->count && p->meta[h].refs > 0;
+    return h != BUFFER_NONE && h < p->count && p->meta[h].refs > 0;
 }
 
-/* Take another reference. Returns the handle, so a holder can write `q = buffer_ref(p, h)`. */
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline buffer_handle_t buffer_ref(buffer_pool_t *const p, const buffer_handle_t h) {
     BUFFER_LOCK_ACQUIRE(&p->lock);
     if (buffer_valid(p, h) && p->meta[h].refs < 0xFFu)
@@ -186,7 +180,6 @@ static inline buffer_handle_t buffer_ref(buffer_pool_t *const p, const buffer_ha
     return h;
 }
 
-/* Drop a reference; the buffer returns to the pool when the last one goes. */
 static inline void buffer_unref(buffer_pool_t *const p, const buffer_handle_t h) {
     BUFFER_LOCK_ACQUIRE(&p->lock);
     /* the decrement and the return-to-pool are one step: a reader between them would see a
@@ -204,22 +197,21 @@ static inline uint8_t buffer_refs(const buffer_pool_t *const p, const buffer_han
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* The data, and how much of it there is. */
 static inline uint8_t *buffer_data(buffer_pool_t *const p, const buffer_handle_t h) {
     return buffer_valid(p, h) ? &p->data[(size_t)h * p->stride + p->meta[h].at] : NULL;
 }
 static inline uint16_t buffer_len(const buffer_pool_t *const p, const buffer_handle_t h) {
     return buffer_valid(p, h) ? p->meta[h].len : 0u;
 }
-/* How many bytes can be written at buffer_data(): the stride less the prefix still reserved. */
 static inline uint16_t buffer_room(const buffer_pool_t *const p, const buffer_handle_t h) {
     return buffer_valid(p, h) ? (uint16_t)(p->stride - p->meta[h].at) : 0u;
 }
-
 static inline void buffer_set_len(buffer_pool_t *const p, const buffer_handle_t h, const uint16_t len) {
     if (buffer_valid(p, h))
         p->meta[h].len = (len > buffer_room(p, h)) ? buffer_room(p, h) : len;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 /*
  * Write `n` bytes in FRONT of the data, consuming reserved prefix.
@@ -257,8 +249,6 @@ static inline bool buffer_prepend(buffer_pool_t *const p, const buffer_handle_t 
     return true;
 }
 
-/* Copy bytes into a buffer at its data start, setting the length. For a frame that was built
-   elsewhere; a receive should read straight into buffer_data() instead. */
 static inline bool buffer_write(buffer_pool_t *const p, const buffer_handle_t h, const void *const src, const uint16_t n) {
     if (!buffer_valid(p, h) || n > buffer_room(p, h))
         return false;
@@ -269,8 +259,6 @@ static inline bool buffer_write(buffer_pool_t *const p, const buffer_handle_t h,
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* Stats, for the periodic report: in use of total, the worst it has ever been, and how often an
-   acquire found nothing -- which is the number that says the pool is too small. */
 static inline uint16_t buffer_pool_total(const buffer_pool_t *const p) {
     return p->count;
 }
@@ -337,6 +325,8 @@ typedef struct {
 
 #define BUFFER_QUEUE_INIT(name, capacity, pool) buffer_queue_init(&(name), name##_slot_, (capacity), (pool))
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline void buffer_queue_init(buffer_queue_t *const q, buffer_queue_entry_t *const slot, const uint16_t size, buffer_pool_t *const pool) {
     q->slot = slot;
     q->pool = pool;
@@ -351,13 +341,12 @@ static inline void buffer_queue_init(buffer_queue_t *const q, buffer_queue_entry
     memset(slot, 0, sizeof(buffer_queue_entry_t) * size);
 }
 
-/* Optional, and deliberately separate from init: a queue works without it. */
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline void buffer_queue_set_tag_name(buffer_queue_t *const q, const buffer_tag_name_fn fn) {
     q->tag_name = fn;
 }
 
-/* Never NULL, so a format string can use it without a guard. Falls back to the number, which is
-   still more use than nothing when a caller has not named its tags. */
 static inline const char *buffer_queue_tag_name(const buffer_queue_t *const q, const uint8_t tag) {
     static char fallback[8];
     if (q->tag_name != NULL) {
@@ -365,13 +354,14 @@ static inline const char *buffer_queue_tag_name(const buffer_queue_t *const q, c
         if (n != NULL)
             return n;
     }
-    (void)snprintf(fallback, sizeof(fallback), "tag%u", (unsigned)tag);
-    return fallback;
+    return snprintf_inline(fallback, sizeof(fallback), "tag%u", (unsigned)tag);
 }
 
 static inline uint16_t buffer_queue_count(const buffer_queue_t *const q) {
     return q->used;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 /*
  * Queue a frame, taking a reference to it.
@@ -389,49 +379,45 @@ static inline bool buffer_queue_add(buffer_queue_t *const q, const buffer_handle
     }
     BUFFER_LOCK_ACQUIRE(&q->lock);
     for (uint16_t i = 0; i < q->size; i++) {
-        if (q->slot[i].valid)
-            continue;
-        q->slot[i].buf = buffer_ref(q->pool, h);
-        q->slot[i].valid = true;
-        q->slot[i].tag = tag;
-        q->slot[i].key = key;
-        q->slot[i].due_ms = due_ms;
-        q->slot[i].expiry_ms = expiry_ms;
-        q->used++;
-        q->st_added++;
-        if (q->used > q->high_water)
-            q->high_water = q->used;
-        BUFFER_LOCK_RELEASE(&q->lock);
-        return true;
+        if (!q->slot[i].valid) {
+            q->slot[i].buf = buffer_ref(q->pool, h);
+            q->slot[i].valid = true;
+            q->slot[i].tag = tag;
+            q->slot[i].key = key;
+            q->slot[i].due_ms = due_ms;
+            q->slot[i].expiry_ms = expiry_ms;
+            q->used++;
+            q->st_added++;
+            if (q->used > q->high_water)
+                q->high_water = q->used;
+            BUFFER_LOCK_RELEASE(&q->lock);
+            return true;
+        }
     }
     q->st_rejected++;
     BUFFER_LOCK_RELEASE(&q->lock);
     return false;
 }
 
-/*
- * Reap whatever has run out of time. Returns how many.
- *
- * Called on every cycle, including cycles where the radio is busy: a frame too stale to be worth
- * sending must be dropped then, not sent late when the radio frees up.
- */
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline uint16_t buffer_queue_expire(buffer_queue_t *const q, const uint32_t now_ms) {
     uint16_t expired = 0;
     BUFFER_LOCK_ACQUIRE(&q->lock);
-    for (uint16_t i = 0; i < q->size; i++) {
-        if (!q->slot[i].valid || q->slot[i].expiry_ms == 0)
-            continue;
-        if ((int32_t)(now_ms - q->slot[i].expiry_ms) < 0)
-            continue;
-        buffer_unref(q->pool, q->slot[i].buf);
-        q->slot[i].valid = false;
-        q->used--;
-        q->st_expired++;
-        expired++;
-    }
+    for (uint16_t i = 0; i < q->size; i++)
+        if (q->slot[i].valid && q->slot[i].expiry_ms != 0)
+            if ((int32_t)(now_ms - q->slot[i].expiry_ms) >= 0) {
+                buffer_unref(q->pool, q->slot[i].buf);
+                q->slot[i].valid = false;
+                q->used--;
+                q->st_expired++;
+                expired++;
+            }
     BUFFER_LOCK_RELEASE(&q->lock);
     return expired;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 /*
  * Take the earliest-due frame, HANDING OVER the queue's reference.
@@ -445,14 +431,12 @@ static inline uint16_t buffer_queue_expire(buffer_queue_t *const q, const uint32
    is worth asking the radio at all, and for a test that wants to look at what is queued. */
 static inline buffer_handle_t buffer_queue_peek(const buffer_queue_t *const q, const uint32_t now_ms, uint8_t *const out_tag, uint32_t *const out_key) {
     int best = -1;
-    for (uint16_t i = 0; i < q->size; i++) {
-        if (!q->slot[i].valid || (int32_t)(now_ms - q->slot[i].due_ms) < 0)
-            continue;
-        if (best < 0 || (int32_t)(q->slot[i].due_ms - q->slot[best].due_ms) < 0)
-            best = (int)i;
-    }
+    for (uint16_t i = 0; i < q->size; i++)
+        if (q->slot[i].valid && (int32_t)(now_ms - q->slot[i].due_ms) >= 0)
+            if (best < 0 || (int32_t)(q->slot[i].due_ms - q->slot[best].due_ms) < 0)
+                best = (int)i;
     if (best < 0)
-        return (buffer_handle_t)BUFFER_NONE;
+        return BUFFER_NONE;
     if (out_tag != NULL)
         *out_tag = q->slot[best].tag;
     if (out_key != NULL)
@@ -460,18 +444,18 @@ static inline buffer_handle_t buffer_queue_peek(const buffer_queue_t *const q, c
     return q->slot[best].buf;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline buffer_handle_t buffer_queue_take(buffer_queue_t *const q, const uint32_t now_ms, uint8_t *const out_tag, uint32_t *const out_key) {
     int best = -1;
     BUFFER_LOCK_ACQUIRE(&q->lock);
-    for (uint16_t i = 0; i < q->size; i++) {
-        if (!q->slot[i].valid || (int32_t)(now_ms - q->slot[i].due_ms) < 0)
-            continue;
-        if (best < 0 || (int32_t)(q->slot[i].due_ms - q->slot[best].due_ms) < 0)
-            best = (int)i;
-    }
+    for (uint16_t i = 0; i < q->size; i++)
+        if (q->slot[i].valid && (int32_t)(now_ms - q->slot[i].due_ms) >= 0)
+            if (best < 0 || (int32_t)(q->slot[i].due_ms - q->slot[best].due_ms) < 0)
+                best = (int)i;
     if (best < 0) {
         BUFFER_LOCK_RELEASE(&q->lock);
-        return (buffer_handle_t)BUFFER_NONE;
+        return BUFFER_NONE;
     }
     const buffer_handle_t h = q->slot[best].buf;
     if (out_tag != NULL)
@@ -484,54 +468,53 @@ static inline buffer_handle_t buffer_queue_take(buffer_queue_t *const q, const u
     return h; /* the reference travels with it: no ref/unref pair here on purpose */
 }
 
-/* Drop a queued frame by tag+key, e.g. on an ACK arriving for it. Returns whether one was found. */
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline bool buffer_queue_remove_key(buffer_queue_t *const q, const uint8_t tag, const uint32_t key) {
     BUFFER_LOCK_ACQUIRE(&q->lock);
-    for (uint16_t i = 0; i < q->size; i++) {
-        if (!q->slot[i].valid || q->slot[i].tag != tag || q->slot[i].key != key)
-            continue;
-        buffer_unref(q->pool, q->slot[i].buf);
-        q->slot[i].valid = false;
-        q->used--;
-        BUFFER_LOCK_RELEASE(&q->lock);
-        return true;
-    }
+    for (uint16_t i = 0; i < q->size; i++)
+        if (q->slot[i].valid && q->slot[i].tag == tag && q->slot[i].key == key) {
+            buffer_unref(q->pool, q->slot[i].buf);
+            q->slot[i].valid = false;
+            q->used--;
+            BUFFER_LOCK_RELEASE(&q->lock);
+            return true;
+        }
     BUFFER_LOCK_RELEASE(&q->lock);
     return false;
 }
 
-/* Drop every queued frame of a tag, e.g. a stale beacon superseded by a newer one. */
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline uint16_t buffer_queue_remove_tag(buffer_queue_t *const q, const uint8_t tag) {
     uint16_t n = 0;
     BUFFER_LOCK_ACQUIRE(&q->lock);
-    for (uint16_t i = 0; i < q->size; i++) {
-        if (!q->slot[i].valid || q->slot[i].tag != tag)
-            continue;
-        buffer_unref(q->pool, q->slot[i].buf);
-        q->slot[i].valid = false;
-        q->used--;
-        n++;
-    }
+    for (uint16_t i = 0; i < q->size; i++)
+        if (q->slot[i].valid && q->slot[i].tag == tag) {
+            buffer_unref(q->pool, q->slot[i].buf);
+            q->slot[i].valid = false;
+            q->used--;
+            n++;
+        }
     BUFFER_LOCK_RELEASE(&q->lock);
     return n;
 }
 
-/* Release everything. A queue going away must not leak the frames it was holding. */
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline void buffer_queue_clear(buffer_queue_t *const q) {
     BUFFER_LOCK_ACQUIRE(&q->lock);
-    for (uint16_t i = 0; i < q->size; i++) {
-        if (!q->slot[i].valid)
-            continue;
-        buffer_unref(q->pool, q->slot[i].buf);
-        q->slot[i].valid = false;
-    }
+    for (uint16_t i = 0; i < q->size; i++)
+        if (q->slot[i].valid) {
+            buffer_unref(q->pool, q->slot[i].buf);
+            q->slot[i].valid = false;
+        }
     q->used = 0;
     BUFFER_LOCK_RELEASE(&q->lock);
 }
 
-/* The depth it has reached, and how often an add found no room. Inferable from the pool's own
-   high-water only if nothing else holds buffers, which is exactly when it stops being true -- so
-   the queue reports its own. */
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline uint16_t buffer_queue_high_water(const buffer_queue_t *const q) {
     return q->high_water;
 }
@@ -545,5 +528,8 @@ static inline uint32_t buffer_queue_expired(const buffer_queue_t *const q) {
 static inline uint32_t buffer_queue_rejected(const buffer_queue_t *const q) {
     return q->st_rejected;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
 #endif /* D_MODULE_BUFFERS_H */

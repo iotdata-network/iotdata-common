@@ -12,8 +12,6 @@
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* The DEFAULT port, for a board that drives everything down one pair in turn -- which most do. A
-   board that needs two devices listening AT ONCE passes a different port; see the note below. */
 #define UART_PORT_NUM            UART_NUM_1
 #define UART_BAUD_DEFAULT        9600
 #define UART_RX_BUF_SIZE_MIN     (UART_HW_FIFO_LEN(UART_PORT_NUM) + 1)
@@ -32,6 +30,8 @@
  * single device any more, and a board that still multiplexes simply passes UART_PORT_NUM twice. */
 #define HW_UART_PORTS            UART_NUM_MAX
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static gpio_num_t s_uart_tx[HW_UART_PORTS], s_uart_rx[HW_UART_PORTS];
 static bool s_uart_installed[HW_UART_PORTS] = { false };
 
@@ -40,6 +40,8 @@ static bool s_uart_installed[HW_UART_PORTS] = { false };
 void _hw_uart_pins_enable(void) {
     // tx/rx enabled by uart_set_pin()
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 void _hw_uart_pins_disable(const uart_port_t port) {
     // tx/rx released by uart_driver_delete() anyway

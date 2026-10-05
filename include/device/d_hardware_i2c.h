@@ -20,6 +20,8 @@
 #define I2C_MAX_TRANSFER_SIZE         64
 #define I2C_MAX_TRANSFER_SIZE_DEFAULT 32
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 const i2c_port_t s_i2c_port = I2C_PORT_NUM;
 gpio_num_t s_i2c_sda, s_i2c_scl;
 int s_i2c_max_transfer_size;
@@ -128,6 +130,8 @@ void hw_i2c_stop(void) {
 #define I2C_SCAN_TIMEOUT_MS 20
 #define I2C_SCAN_ADDR_FIRST 0x08 /* below is reserved: general call, CBUS, 10-bit prefixes */
 #define I2C_SCAN_ADDR_LAST  0x77
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 int hw_i2c_bus_scan(uint8_t *const out, const int out_max) {
     ESP_LOGW("hw_i2c", "scan: sda=%d (%d) scl=%d (%d) (both should be 1)", s_i2c_sda, hw_gpio_get(s_i2c_sda) ? 1 : 0, s_i2c_scl, hw_gpio_get(s_i2c_scl) ? 1 : 0);

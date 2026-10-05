@@ -11,6 +11,8 @@
 #pragma GCC diagnostic pop
 #endif
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 #ifndef GPIO_IS_VALID_INPUT_GPIO
 #define GPIO_IS_VALID_INPUT_GPIO(n) GPIO_IS_VALID_GPIO(n)
 #endif

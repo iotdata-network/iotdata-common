@@ -10,29 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef PLATFORM_ESP32
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpedantic"
-#pragma GCC diagnostic ignored "-Wnested-externs"
-#pragma GCC diagnostic ignored "-Wredundant-decls"
-
-#include "esp_check.h"
-#include "esp_log.h"
-#include "esp_mac.h"
-#include "esp_rom_sys.h"
-#include "esp_sleep.h"
-#include "esp_system.h"
-#include "rom/ets_sys.h"
-#include "esp_task_wdt.h"
-#include "esp_timer.h"
-#include "esp_cpu.h"
-#include "esp_random.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
-#pragma GCC diagnostic pop
-#endif
-
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -113,35 +90,7 @@ void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size)
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-/*
- * RTC_NOINIT memory that survives a reset, with a guard that survives a REFLASH.
- *
- * The magic alone is not enough, and the way it fails is nasty. RTC_NOINIT survives everything
- * short of a power cycle -- a USB reset, a watchdog, esp_restart -- so new firmware routinely
- * starts up on top of the old firmware's RTC image. If the struct's LAYOUT changed in between,
- * a matching magic says "valid" and every field is then read at the wrong offset. Nothing
- * crashes; the values are simply wrong, and they look like real values.
- *
- * Found the hard way (2026-09-15): a sensor whose state_operating_t had lost a member came up
- * announcing station 2 instead of its MAC-derived 4003, with an empty capability set, and
- * transmitted under that identity until it was power-cycled. The only tell in the log was the
- * ABSENCE of the line that derives the station -- because the init block had been skipped.
- *
- * So the stamp carries sizeof too, and a layout change invalidates by itself. Four bytes per
- * struct, and it turns a silent wrong-identity into a clean re-initialisation.
- *
- * What this still does NOT catch is a same-size change of MEANING -- two fields swapped, or a
- * unit changed. Add the build stamp to the entry if that ever matters; the cost is that every
- * OTA then discards RTC state, which is why it is not here by default.
- *
- * Keep the stamp FIRST in the struct, so the guard itself is always read from a fixed offset.
- */
 #define _RTC_DATA_STRUCT     RTC_NOINIT_ATTR
-/* The same placement, named separately because the REQUIREMENT is different: this one is touched
-   from an ISR as well as from the app, so it must live where an interrupt can reach it. On the
-   parts used here RTC_NOINIT_ATTR already lands in RTC fast memory and satisfies both; naming it
-   apart means a part that puts it somewhere an ISR cannot reach breaks loudly at the definition
-   rather than quietly at three in the morning. */
 #define _RTC_DATA_STRUCT_ISR RTC_NOINIT_ATTR
 #define _RTC_DATA_STAMP_ENTRY \
     uint32_t magic; \
@@ -153,7 +102,6 @@ void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size)
         (s)->magic = m; \
         (s)->size = (uint32_t)sizeof(*(s)); \
     } while (0)
-/* Companion to _RTC_DATA_STRUCT_ISR: same initialisation, named apart for the same reason. */
 #define _RTC_DATA_INIT_ISR(s, m) _RTC_DATA_INIT(s, m)
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -231,42 +179,6 @@ static inline uint32_t __JITTER(void) {
 }
 
 #define __RANDOM() (__JITTER() ^ (uint32_t)esp_timer_get_time() ^ (uint32_t)esp_random())
-
-// ------------------------------------------------------------------------------------------------------------------------
-// ------------------------------------------------------------------------------------------------------------------------
-
-#ifndef PLATFORM_LINUX
-static inline const char *reset_reason_str(esp_reset_reason_t r) {
-    switch (r) {
-    case ESP_RST_POWERON:
-        return "POWERON (cold boot / power cycle)";
-    case ESP_RST_EXT:
-        return "EXT (external reset pin)";
-    case ESP_RST_SW:
-        return "SW (esp_restart / software)";
-    case ESP_RST_PANIC:
-        return "PANIC (exception/abort crash)";
-    case ESP_RST_INT_WDT:
-        return "INT_WDT (interrupt watchdog)";
-    case ESP_RST_TASK_WDT:
-        return "TASK_WDT (task watchdog)";
-    case ESP_RST_WDT:
-        return "WDT (other watchdog)";
-    case ESP_RST_DEEPSLEEP:
-        return "DEEPSLEEP (wake from deep sleep)";
-    case ESP_RST_BROWNOUT:
-        return "BROWNOUT (power dip — check USB/cable/supply)";
-    case ESP_RST_SDIO:
-        return "SDIO";
-    case ESP_RST_USB:
-        return "USB (reset over USB peripheral)";
-    case ESP_RST_JTAG:
-        return "JTAG";
-    default:
-        return "UNKNOWN";
-    }
-}
-#endif
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------

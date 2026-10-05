@@ -400,14 +400,13 @@ esp_err_t bme280_read(bme280_reading_t *const out, const int opts, const reading
 
     for (int i = 0; i < MIN_INT(MAX_INT(st_temp->num_total, MAX_INT(st_pres->num_total, st_humi->num_total)), READINGS_MAX); i++) {
         int32_t adc_T, adc_P, adc_H;
-        if (_bme280_trigger_and_read_raw(&adc_T, &adc_P, &adc_H) != ESP_OK) {
+        if (_bme280_trigger_and_read_raw(&adc_T, &adc_P, &adc_H) == ESP_OK) {
+            temps[count] = _bme280_compensate_temperature(&_bme280_rtc.calib, adc_T);
+            press[count] = _bme280_compensate_pressure(&_bme280_rtc.calib, adc_P);
+            humid[count] = _bme280_compensate_humidity(&_bme280_rtc.calib, adc_H);
+            count++;
+        } else
             ESP_LOGW(__tag_device_bme280, "reading %d failed, skipping", i);
-            continue;
-        }
-        temps[count] = _bme280_compensate_temperature(&_bme280_rtc.calib, adc_T);
-        press[count] = _bme280_compensate_pressure(&_bme280_rtc.calib, adc_P);
-        humid[count] = _bme280_compensate_humidity(&_bme280_rtc.calib, adc_H);
-        count++;
     }
     ESP_RETURN_ON_FALSE(count > 0, DEV_ERR_BAD_READING, __tag_device_bme280, "bme280_read");
 

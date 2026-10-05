@@ -16,6 +16,8 @@
 #define SPI_CLK_FREQ_HZ    4000000 // 4 MHz (safe for SSD1680, up to 20)
 #define _SPI_BUSY_DELAY_MS 25
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 const spi_host_device_t s_spi_port = SPI_PORT_NUM;
 gpio_num_t s_spi_mosi, s_spi_clk, s_spi_dc, s_spi_busy, s_spi_cs;
 
@@ -31,6 +33,8 @@ void _hw_spi_pins_enable(void) {
     // BUSY pin: input, no pull
     hw_gpio_cfg_enable_input(s_spi_busy, false);
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 void _hw_spi_pins_disable(void) {
     hw_gpio_cfg_disable_four(s_spi_mosi, s_spi_clk, s_spi_dc, s_spi_busy);

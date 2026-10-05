@@ -24,6 +24,8 @@ typedef struct {
 
 static _hw_adc_state_t s_hw_adc;
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline int _hw_adc_fullscale_mv(const adc_atten_t atten) {
     switch (atten) {
     case ADC_ATTEN_DB_0:
@@ -103,6 +105,8 @@ static inline esp_err_t hw_adc_oneshot_stop(void) {
 static inline bool hw_adc_oneshot_calibrated(void) {
     return s_hw_adc.cali != NULL;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 static inline esp_err_t hw_adc_oneshot_read_mv(int *const mv) {
     int raw = 0;

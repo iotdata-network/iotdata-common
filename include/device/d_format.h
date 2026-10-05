@@ -13,11 +13,8 @@
 #include <stdio.h>
 
 // ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
-/* printf into a caller's buffer and return the buffer, so a formatted value can be used as an
-   argument where only an expression fits -- a "%s" in a larger printf, or a struct field. The
-   caller owns the buffer and therefore its lifetime, which is why this is not a static-buffer
-   convenience: two of these in one printf would otherwise fight over it. */
 __attribute__((format(printf, 3, 4))) static inline char *snprintf_inline(char *const buf, const size_t size, const char *const fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -26,6 +23,7 @@ __attribute__((format(printf, 3, 4))) static inline char *snprintf_inline(char *
     return buf;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
 static inline void _secs2str_put(char **const p, const char *const end, const char *s, int n) {
@@ -76,6 +74,7 @@ static inline char *secs2str(const long sec, char *const out, const int len) {
     return out;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
 #define FORMAT_HEXDUMP_COLUMNS  16
@@ -128,6 +127,7 @@ static inline bool format_hexdump_line(char *const out, const size_t size, const
     return true;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
 /* Fixed-point rendering for logs: 2135 -> "21.35". Avoids pulling in float printf. */

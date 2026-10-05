@@ -2,6 +2,9 @@
 #ifndef IOTDATA_NODE_UTILS_H
 #define IOTDATA_NODE_UTILS_H
 
+// ---------------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------------
+
 #ifndef PLATFORM_ESP32
 #include <dirent.h>
 #include <stdio.h>
@@ -12,15 +15,10 @@
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // The node's own hardware identity, and the station id derived from it.
-//
-// iotdata_station_from_id() is THE derivation and lives in the library, so that the same board
-// reports the same station whichever firmware it happens to be carrying. What differs per platform
-// is only where the six bytes come from.
 // ---------------------------------------------------------------------------------------------------------------------------
 
 #ifndef PLATFORM_ESP32
 
-/* A small sysfs attribute, newline stripped. */
 static inline bool _iotdata_node_sysfs(const char *const path, char *const out, const size_t size) {
     FILE *const f = fopen(path, "re");
     if (f == NULL)
@@ -33,8 +31,6 @@ static inline bool _iotdata_node_sysfs(const char *const path, char *const out, 
     return true;
 }
 
-/* FNV-1a, for the hostname fallback below. Any stable spread will do -- what matters is that the
-   same host lands on the same station every boot. */
 static inline uint32_t _iotdata_node_hash32(const char *s) {
     uint32_t h = 2166136261u;
     for (; *s != '\0'; s++) {
@@ -46,23 +42,18 @@ static inline uint32_t _iotdata_node_hash32(const char *s) {
 
 #endif
 
-// ---------------------------------------------------------------------------------------------------------------------------
-// ---------------------------------------------------------------------------------------------------------------------------
-
-/*
- * The board's hardware address, true when there is a real one.
- *
- * On linux, the lowest-named interface that is both ethernet (type 1) and carries a PERMANENT
- * address (addr_assign_type 0). Both filters matter: the permanence test is what keeps a docker
- * bridge, a veth or a bond -- whose addresses are generated, and change with the day's containers
- * -- from becoming the node's identity, and lowest-name makes the choice the same on every boot
- * regardless of the order the kernel happened to probe them in.
- */
 static inline bool iotdata_node_mac(uint8_t mac[6]) {
 #ifdef PLATFORM_ESP32
     memset(mac, 0, 6);
     return esp_efuse_mac_get_default(mac) == ESP_OK;
 #else
+    /*
+     * On linux, the lowest-named interface that is both ethernet (type 1) and carries a PERMANENT
+     * address (addr_assign_type 0). Both filters matter: the permanence test is what keeps a docker
+     * bridge, a veth or a bond -- whose addresses are generated, and change with the day's containers
+     * -- from becoming the node's identity, and lowest-name makes the choice the same on every boot
+     * regardless of the order the kernel happened to probe them in.
+     */
     char best[256] = { 0 }, path[320], buf[64];
     DIR *const dir = opendir("/sys/class/net");
     if (dir != NULL) {
@@ -91,15 +82,14 @@ static inline bool iotdata_node_mac(uint8_t mac[6]) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------------
 
-/* The low four bytes, or 0 when the board has no hardware address to offer. */
 static inline uint32_t iotdata_node_mac32(void) {
     uint8_t mac[6];
-    if (!iotdata_node_mac(mac))
-        return 0;
-    return ((uint32_t)mac[2] << 24) | ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
+    return iotdata_node_mac(mac) ? ((uint32_t)mac[2] << 24) | ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5] : 0;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
 // ---------------------------------------------------------------------------------------------------------------------------
 
 /*
@@ -137,6 +127,7 @@ static inline uint16_t iotdata_node_station_from_mac(const char *const tag) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------------
 
 static inline uint8_t iotdata_node_reason_reset(void) {
 #ifdef PLATFORM_ESP32
@@ -166,6 +157,7 @@ static inline uint8_t iotdata_node_reason_reset(void) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------------
 
 typedef struct {
     uint16_t key;  /* what the list is ordered by -- a station id */
@@ -185,6 +177,7 @@ static inline int iotdata_order_insert(iotdata_order_t *const ord, const int n, 
     return n + 1;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
 // ---------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_UTILS_H */
