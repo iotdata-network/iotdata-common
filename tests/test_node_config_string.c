@@ -85,11 +85,11 @@ int main(void) {
         memset(big, 'x', sizeof(big));
         big[sizeof(big) - 1] = '\0';
         iotdata_config_update_t u;
-        iotdata_config_update_begin(&u);
+        iotdata_config_update_begin(&u, false);
         CHECK(!iotdata_config_update_stage(&u, IOTDATA_CFG_MQTT_CLIENT, &(iotdata_config_value_t){ .s = { big, 299 } }), "299 into a row whose max is 31: refused");
-        iotdata_config_update_begin(&u);
+        iotdata_config_update_begin(&u, false);
         CHECK(!iotdata_config_update_stage(&u, IOTDATA_CFG_MQTT_SERVER, &(iotdata_config_value_t){ .s = { "", 0 } }), "empty into a row whose min is 1: refused");
-        iotdata_config_update_begin(&u);
+        iotdata_config_update_begin(&u, false);
         CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_PEERS, &(iotdata_config_value_t){ .s = { "", 0 } }), "empty into a row whose min is 0: accepted");
         CHECK(iotdata_config_update_commit(&u, &ds, NULL), "committed");
     }
@@ -99,7 +99,7 @@ int main(void) {
         char scratch[64];
         snprintf(scratch, sizeof(scratch), "mqtt://192.168.0.61:1883");
         iotdata_config_update_t u;
-        iotdata_config_update_begin(&u);
+        iotdata_config_update_begin(&u, false);
         CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_MQTT_SERVER, &(iotdata_config_value_t){ .s = { scratch, (uint16_t)strlen(scratch) } }), "staged from a local buffer");
         CHECK(iotdata_config_update_commit(&u, &ds, NULL), "committed");
         memset(scratch, 0, sizeof(scratch)); /* the borrow is over: the value must not have followed it */
@@ -110,11 +110,11 @@ int main(void) {
     {
         bool reboot = false;
         iotdata_config_update_t u;
-        iotdata_config_update_begin(&u);
+        iotdata_config_update_begin(&u, false);
         (void)iotdata_config_update_stage(&u, IOTDATA_CFG_MQTT_CLIENT, &(iotdata_config_value_t){ .s = { "gw-1", 4 } });
         CHECK(iotdata_config_update_commit(&u, &ds, &reboot), "changed");
         CHECK(strcmp(iotdata_config_string(MQTT_CLIENT), "gw-1") == 0, "took");
-        iotdata_config_update_begin(&u);
+        iotdata_config_update_begin(&u, false);
         (void)iotdata_config_update_stage(&u, IOTDATA_CFG_MQTT_CLIENT, &(iotdata_config_value_t){ .s = { "gw-1", 4 } });
         CHECK(iotdata_config_update_commit(&u, &ds, &reboot), "restated: still accepted");
         CHECK(strcmp(iotdata_config_string(MQTT_CLIENT), "gw-1") == 0, "and unchanged");

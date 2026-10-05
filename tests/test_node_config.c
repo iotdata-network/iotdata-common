@@ -80,7 +80,7 @@ int main(void) {
 
     printf("a write is all-or-nothing\n");
     iotdata_config_update_t u;
-    iotdata_config_update_begin(&u);
+    iotdata_config_update_begin(&u, false);
     CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TX_PERIOD_S, &(iotdata_config_value_t){ .u = 120 }), "in bounds");
     CHECK(!iotdata_config_update_stage(&u, IOTDATA_CFG_LORA_CHANNEL, &(iotdata_config_value_t){ .u = 200 }), "out of bounds is refused");
     bool reboot = false;
@@ -89,7 +89,7 @@ int main(void) {
 
     printf("a good one commits, and only what changed is announced\n");
     g_notified = 0;
-    iotdata_config_update_begin(&u);
+    iotdata_config_update_begin(&u, false);
     CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TX_PERIOD_S, &(iotdata_config_value_t){ .u = 120 }), "staged");
     CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_LORA_CHANNEL, &(iotdata_config_value_t){ .u = 23 }), "staged, but unchanged");
     CHECK(iotdata_config_update_commit(&u, NULL, &reboot), "committed");
@@ -98,23 +98,23 @@ int main(void) {
     CHECK(!reboot, "nor asks for a reboot it does not need");
 
     printf("a changed value announces, and the reboot flag is the table's to insist on\n");
-    iotdata_config_update_begin(&u);
+    iotdata_config_update_begin(&u, false);
     CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_LORA_CHANNEL, &(iotdata_config_value_t){ .u = 42 }), "staged");
     CHECK(iotdata_config_update_commit(&u, NULL, &reboot), "committed");
     CHECK(g_notified == 1, "the handler was told, once");
     CHECK(reboot, "and the row's flag asked for a restart even though the handler did not");
 
     printf("read-only is reportable, not writable\n");
-    iotdata_config_update_begin(&u);
+    iotdata_config_update_begin(&u, false);
     CHECK(!iotdata_config_update_stage(&u, IOTDATA_CFG_SERIAL_NO, &(iotdata_config_value_t){ .u = 9 }), "refused");
     CHECK(iotdata_config_u32(SERIAL_NO) == 7, "and unchanged");
 
     printf("a pair that must agree is judged together, which is why staging exists\n");
-    iotdata_config_update_begin(&u);
+    iotdata_config_update_begin(&u, false);
     /* each alone is in bounds; together they are nonsense, and only the SET can see that */
     CHECK(!iotdata_config_update_stage(&u, IOTDATA_CFG_TX_MIN_S, &(iotdata_config_value_t){ .u = 100 }), "a floor of 100 against a ceiling of 40 is refused");
     CHECK(u.rejected, "and the whole update is poisoned, not just that entry");
-    iotdata_config_update_begin(&u);
+    iotdata_config_update_begin(&u, false);
     CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TX_MAX_S, &(iotdata_config_value_t){ .u = 200 }), "raise the ceiling first");
     CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TX_MIN_S, &(iotdata_config_value_t){ .u = 100 }), "and the floor now fits, because the peek sees the STAGED ceiling");
     CHECK(iotdata_config_update_commit(&u, NULL, &reboot), "committed together");
@@ -150,7 +150,7 @@ int main(void) {
     CHECK(iotdata_config_i16(TRIM_MV) == 0, "a retired id is skipped");
 
     /* sign extension: a negative i16 must come back negative, not as 65036 */
-    iotdata_config_update_begin(&u);
+    iotdata_config_update_begin(&u, false);
     CHECK(iotdata_config_update_stage(&u, IOTDATA_CFG_TRIM_MV, &(iotdata_config_value_t){ .i = -500 }), "staged");
     CHECK(iotdata_config_update_commit(&u, &ds, NULL), "committed");
     iotdata_config_defaults();
@@ -161,21 +161,21 @@ int main(void) {
     iotdata_config_defaults();
     { /* locally: an ordinary write */
         iotdata_config_update_t lu;
-        iotdata_config_update_begin(&lu);
+        iotdata_config_update_begin(&lu, false);
         CHECK(iotdata_config_update_stage(&lu, IOTDATA_CFG_DEBUG_MS, &(iotdata_config_value_t){ .u = 2000 }), "console, file, command line: yes");
         CHECK(iotdata_config_update_commit(&lu, &ds, NULL), "committed");
         CHECK(iotdata_config_u16(DEBUG_MS) == 2000, "and took");
     }
     { /* the same id, the same value, off the radio */
         iotdata_config_update_t ru;
-        iotdata_config_update_begin_remote(&ru);
+        iotdata_config_update_begin(&ru, true);
         CHECK(!iotdata_config_update_stage(&ru, IOTDATA_CFG_DEBUG_MS, &(iotdata_config_value_t){ .u = 3000 }), "over the air: no");
         CHECK(!iotdata_config_update_commit(&ru, &ds, NULL), "and it poisons the update, like any refusal");
         CHECK(iotdata_config_u16(DEBUG_MS) == 2000, "nothing moved");
     }
     { /* a remote batch containing one: all or nothing still holds */
         iotdata_config_update_t ru;
-        iotdata_config_update_begin_remote(&ru);
+        iotdata_config_update_begin(&ru, true);
         (void)iotdata_config_update_stage(&ru, IOTDATA_CFG_TX_PERIOD_S, &(iotdata_config_value_t){ .u = 90 });
         (void)iotdata_config_update_stage(&ru, IOTDATA_CFG_DEBUG_MS, &(iotdata_config_value_t){ .u = 3000 });
         CHECK(!iotdata_config_update_commit(&ru, &ds, NULL), "one local row refuses the whole remote batch");

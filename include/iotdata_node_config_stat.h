@@ -10,7 +10,7 @@
 //     IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY(X)       show the node's own execution stats, and how often
 //     IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH(X)       publish them, and how often
 //     IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_MQTT(X)  ...when the publish path is MQTT: where to
-//     IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY_MESH(X)  show the network/mesh table, and how often
+//     IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY_NETW(X)  show the stations this node knows of, and how often
 //
 // The groups exist because the capabilities are genuinely separable. Everything with a log can
 // display; only a node with a transport can publish; only one whose transport is MQTT needs a
@@ -49,11 +49,11 @@
 #ifndef IOTDATA_CONFIG_STAT_PUBLISH_INTERVAL
 #define IOTDATA_CONFIG_STAT_PUBLISH_INTERVAL IOTDATA_CONFIG_STAT_INTERVAL
 #endif
-#ifndef IOTDATA_CONFIG_STAT_DISPLAY_MESH_INTERVAL
-#define IOTDATA_CONFIG_STAT_DISPLAY_MESH_INTERVAL IOTDATA_CONFIG_STAT_INTERVAL
+#ifndef IOTDATA_CONFIG_STAT_DISPLAY_NETW_INTERVAL
+#define IOTDATA_CONFIG_STAT_DISPLAY_NETW_INTERVAL IOTDATA_CONFIG_STAT_INTERVAL
 #endif
-#ifndef IOTDATA_CONFIG_STAT_PUBLISH_MESH_INTERVAL
-#define IOTDATA_CONFIG_STAT_PUBLISH_MESH_INTERVAL 900u
+#ifndef IOTDATA_CONFIG_STAT_PUBLISH_NETW_INTERVAL
+#define IOTDATA_CONFIG_STAT_PUBLISH_NETW_INTERVAL 900u
 #endif
 #ifndef IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC
 #define IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC "iotdata/stats"
@@ -94,19 +94,21 @@ static inline bool iotdata_config_stat_changed(__attribute__((unused)) const iot
 #define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_MQTT(X) \
     X(STAT_PUBLISH_MQTT_TOPIC_PREFIX, 0x0C2, STRING, 1, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
       "the topic the counters are published under")
-/* Only a node with a table of other stations to show.
+/* Only a node with a table of other stations to show. NETW rather than MESH because the table also
+ * carries plain sensors that never mesh -- it is the network as this node sees it, not the tree.
  *
- * NAMED FOR THE MESH, and on a gateway that is slightly generous: the table it gates also carries
- * plain sensors that never mesh, so "network" would describe the gateway's use of it better. MESH
- * is the composition rule that actually matters -- a node with no mesh has no such table at all --
- * and one name has to serve both. Worth revisiting if a non-meshing node ever grows one. */
-#define IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY_MESH(X) \
-    X(STAT_DISPLAY_MESH_INTERVAL_S, 0x0C3, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_MESH_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
+ * WHAT THAT TABLE IS differs by what the node can know, and the row does not try to hide it. A
+ * gateway merges everything into one view, because neighbour reports hand it everyone else's
+ * receptions as well as its own. A relay has no such source: it knows its own beacon peers and its
+ * own receptions, and nothing of the far side of the tree, so it shows those two separately. Both
+ * are "the network from here"; one is simply a smaller answer. */
+#define IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY_NETW(X) \
+    X(STAT_DISPLAY_NETW_INTERVAL_S, 0x0C3, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_NETW_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
       "how often to show the stations this node knows about, in seconds (0 = never)")
 /* Only a node that can both hold that table and send it somewhere. Separate from the display for
    the same reason PUBLISH is separate from DISPLAY above: one is for watching, one is for keeping. */
-#define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_MESH(X) \
-    X(STAT_PUBLISH_MESH_INTERVAL_S, 0x0C4, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_PUBLISH_MESH_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
+#define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_NETW(X) \
+    X(STAT_PUBLISH_NETW_INTERVAL_S, 0x0C4, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_PUBLISH_NETW_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
       "how often to publish the network table, in seconds (0 = never)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

@@ -47,7 +47,7 @@ static int fails = 0;
 
 static bool set_one(datastore_t *const ds, const uint16_t id, const uint64_t u) {
     iotdata_config_update_t up;
-    iotdata_config_update_begin(&up);
+    iotdata_config_update_begin(&up, false);
     (void)iotdata_config_update_stage(&up, id, &(iotdata_config_value_t){ .u = u });
     return iotdata_config_update_commit(&up, ds, NULL);
 }
@@ -91,9 +91,9 @@ int main(void) {
          validator runs when its own value is staged and peeks at whatever is staged BY THEN.
          Order-dependent, and the same rule test_node_config.c states for TX_MIN/TX_MAX. */
         iotdata_config_update_t up;
-        iotdata_config_update_begin(&up);
+        iotdata_config_update_begin(&up, false);
         CHECK(!iotdata_config_update_stage(&up, IOTDATA_CFG_MESH_REBROADCAST_JITTER_MIN_MS, &(iotdata_config_value_t){ .u = 20000 }), "floor first, against the OLD ceiling: refused");
-        iotdata_config_update_begin(&up);
+        iotdata_config_update_begin(&up, false);
         CHECK(iotdata_config_update_stage(&up, IOTDATA_CFG_MESH_REBROADCAST_JITTER_MAX_MS, &(iotdata_config_value_t){ .u = 30000 }), "raise the ceiling first");
         CHECK(iotdata_config_update_stage(&up, IOTDATA_CFG_MESH_REBROADCAST_JITTER_MIN_MS, &(iotdata_config_value_t){ .u = 20000 }), "and the floor now fits, because the peek sees the STAGED ceiling");
         CHECK(iotdata_config_update_commit(&up, &ds, NULL), "committed");
@@ -178,7 +178,7 @@ int main(void) {
     {
         bool reboot = false;
         iotdata_config_update_t up;
-        iotdata_config_update_begin(&up);
+        iotdata_config_update_begin(&up, false);
         (void)iotdata_config_update_stage(&up, IOTDATA_CFG_MESH_ENABLE, &(iotdata_config_value_t){ .b = false });
         CHECK(iotdata_config_update_commit(&up, &ds, &reboot), "accepted");
         CHECK(reboot, "and asks for one: it gates whether the module comes up at all");
