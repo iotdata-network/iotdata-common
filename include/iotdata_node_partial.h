@@ -34,7 +34,7 @@
 // caller sends the next chunk on its own transmit cadence:
 //
 //     iotdata_partial_t p = { 0 };
-//     do { ok = idep_report_paged(cfg, n, IOTDATA_NODE_TLV_VARIANT, 0, &p); } while (ok && p.more);
+//     do { ok = idep_report_paged(n, IOTDATA_NODE_TLV_VARIANT, 0, &p); } while (ok && p.more);
 //                                                           ^ one per cycle, not one per loop pass
 //
 // `cursor` is the BUILDER's, `index`/`total`/`more` are the loop's and the wire's. Keeping them

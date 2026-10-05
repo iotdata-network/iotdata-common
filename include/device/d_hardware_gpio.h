@@ -85,6 +85,10 @@ void hw_gpio_set(const gpio_num_t pin, const bool level) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+void hw_gpio_revoke(const gpio_num_t pin) {
+    (void)esp_gpio_revoke(pin == GPIO_NUM_NC ? 0 : (1ULL << pin));
+}
+
 void hw_gpio_revoke_two(const gpio_num_t pin_a, const gpio_num_t pin_b) {
     (void)esp_gpio_revoke((pin_a == GPIO_NUM_NC ? 0 : (1ULL << pin_a)) | (pin_b == GPIO_NUM_NC ? 0 : (1ULL << pin_b)));
 }

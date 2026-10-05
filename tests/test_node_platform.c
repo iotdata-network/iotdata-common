@@ -106,20 +106,23 @@ int main(void) {
     /* a node that senses AND relays: both groups, scopable */
     const idep_config_t both = { .caps = &caps, .status = both_cb, .tx = tx_cb, .control = ctl_cb, .control_actions = keys, .control_actions_count = 1, .receive_always = true };
     idep_node_init(&n, 0x0537, NULL, 0u);
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), 0, NULL);
+    idep_node_attach(&n, &both);
+    len = idep_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), 0, NULL);
     CHECK(len > 0 && count_group(buf, (uint8_t)len, 0) > 0 && count_group(buf, (uint8_t)len, 1) > 0, "no scope = both groups");
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
+    len = idep_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
     CHECK(len > 0 && count_group(buf, (uint8_t)len, 0) == 0 && count_group(buf, (uint8_t)len, 1) > 0, "scope=mesh = mesh only");
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_NODE, NULL);
+    len = idep_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_NODE, NULL);
     CHECK(len > 0 && count_group(buf, (uint8_t)len, 0) > 0 && count_group(buf, (uint8_t)len, 1) == 0, "scope=node = node only");
 
     /* a plain end device: in no mesh, so the mesh scope yields an EMPTY status, not the node group */
     const idep_config_t plain = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = true };
-    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
+    idep_node_attach(&n, &plain);
+    len = idep_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
     CHECK(len == 0, "a sensor asked for the mesh group answers empty, not the node group");
 
     /* CONTROL advertises what the app implements, and only that */
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
+    idep_node_attach(&n, &both);
+    len = idep_build(&n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
     bool adv = false, adv_plain = false;
     size_t cur = 0;
     uint8_t k, vl;
@@ -129,7 +132,8 @@ int main(void) {
         if (k == IOTDATA_NODE_CONTROL_CONTROL && vl == 2 && v[0] == IOTDATA_NODE_SUBJECT_MESH && v[1] == IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR)
             adv = true;
     CHECK(adv, "CONTROL advertises the app's action");
-    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
+    idep_node_attach(&n, &plain);
+    len = idep_build(&n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
     cur = 0;
     while (iotdata_kvr_next(buf, (uint8_t)len, &cur, &k, &v, &vl))
         if (k == IOTDATA_NODE_CONTROL_CONTROL && vl == 2 && v[0] == IOTDATA_NODE_SUBJECT_MESH)
@@ -140,7 +144,8 @@ int main(void) {
        repeated keys, ENTRY and NAMES, each carrying the variant number in its value -- and the
        DEFAULT answer is entries alone, because the names cost several times as much. */
     iotdata_partial_t vp = { 0 };
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_VARIANT, buf, sizeof(buf), 0, &vp);
+    idep_node_attach(&n, &both);
+    len = idep_build(&n, IOTDATA_NODE_TLV_VARIANT, buf, sizeof(buf), 0, &vp);
     CHECK(len > 0, "a variant suite was reported");
     cur = 0;
     bool v0 = false, named = false, sane = true;
@@ -166,7 +171,7 @@ int main(void) {
             CHECK(iotdata_node_variant_field_at(v, vl, 0) == iotdata_node_variant_field_id(d0->fields[0].type), "slot 0 is the field the build put there");
 
     /* ask for the names and they come, still keyed per variant */
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_VARIANT, buf, sizeof(buf), IOTDATA_VARIANT_WANT_NAMES, &vp);
+    len = idep_build(&n, IOTDATA_NODE_TLV_VARIANT, buf, sizeof(buf), IOTDATA_VARIANT_WANT_NAMES, &vp);
     CHECK(len > 0, "names reported when asked for");
     cur = 0;
     bool got_name = false, got_entry = false;
@@ -181,13 +186,14 @@ int main(void) {
 
     /* SETTINGS: the protocol's own values, read and written as one TLV. A node with no settings
        block answers empty; one with a block reports what it holds. */
-    len = idep_build(&both, &n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
+    len = idep_build(&n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
     CHECK(len == 0, "no settings block: an empty report, which is still a report");
 
     static iotdata_settings_t settings;
     iotdata_settings_defaults(&settings, 0x0111);
     const idep_config_t cfgset = { .caps = &caps, .status = st_cb, .tx = tx_cb, .settings = &settings, .receive_always = true };
-    len = idep_build(&cfgset, &n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
+    idep_node_attach(&n, &cfgset);
+    len = idep_build(&n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
     CHECK(len > 0, "a settings block reports");
     cur = 0;
     bool saw_station = false, saw_receive = false;
@@ -261,10 +267,12 @@ int main(void) {
 
     /* DIAGNOSTICS is advertised by every node unconditionally, so every node must answer it. A
        device with no recorder answers EMPTY -- absent would look exactly like being ignored. */
-    len = idep_build(&plain, &n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
+    idep_node_attach(&n, &plain);
+    len = idep_build(&n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
     CHECK(len == 0, "no recorder: an empty report, which is still a report");
     const idep_config_t recorder = { .caps = &caps, .status = st_cb, .tx = tx_cb, .diag = diag_cb, .receive_always = true };
-    len = idep_build(&recorder, &n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
+    idep_node_attach(&n, &recorder);
+    len = idep_build(&n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
     int records = 0;
     bool typed = false;
     cur = 0;
@@ -288,7 +296,8 @@ int main(void) {
     const uint8_t theirs[2] = { IOTDATA_NODE_SUBJECT_MESH, 0x7F };
     iotdata_kvr_add(&b, IOTDATA_NODE_CONTROL_CONTROL, theirs, (uint8_t)sizeof(theirs));
     bool reboot = false;
-    idep_process_control(&both, &n, kv, b.len, &reboot);
+    idep_node_attach(&n, &both);
+    idep_process_control(&n, kv, b.len, &reboot);
     CHECK(seen_key == IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR, "the hook got the action it claims");
     CHECK(n.stat_commands == 1, "a claimed action is a command");
     CHECK(n.stat_unknown == 1, "a refused action is unknown");
@@ -297,20 +306,22 @@ int main(void) {
        before it is held, so such a node hears the immediate copy), yet the receiver counts as
        open at every instant */
     idep_node_init(&n, 0x0537, NULL, 0u);
-    CHECK(!idep_window_advance(&both, &n, 10u * 60u * 1000u), "an always-on node never becomes due");
+    idep_node_attach(&n, &both);
+    CHECK(!idep_window_advance(&n, 10u * 60u * 1000u), "an always-on node never becomes due");
     CHECK(!idep_window_pending(&n), "and so never advertises");
-    CHECK(idep_window_active(&both, &n, 123456u), "but is always active");
+    CHECK(idep_window_active(&n, 123456u), "but is always active");
 
     /* a sleeping node still schedules and advertises normally */
     const idep_config_t sleeper = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = false, .receive_every_ms = 60000u, .receive_window_ms = 30000u };
     idep_node_init(&n, 0x0538, NULL, 0u);
-    CHECK(!idep_window_advance(&sleeper, &n, 1000u), "not due yet");
-    CHECK(idep_window_advance(&sleeper, &n, 60000u), "due after the cadence");
+    idep_node_attach(&n, &sleeper);
+    CHECK(!idep_window_advance(&n, 1000u), "not due yet");
+    CHECK(idep_window_advance(&n, 60000u), "due after the cadence");
     CHECK(idep_window_pending(&n), "and pending an advertisement");
-    CHECK(!idep_window_active(&sleeper, &n, 1000u), "not active until the window opens");
-    idep_window_begin(&sleeper, &n, 1000u);
-    CHECK(idep_window_active(&sleeper, &n, 2000u), "active inside the window");
-    CHECK(!idep_window_active(&sleeper, &n, 1000u + 30000u), "and closed after it");
+    CHECK(!idep_window_active(&n, 1000u), "not active until the window opens");
+    idep_window_begin(&n, 1000u);
+    CHECK(idep_window_active(&n, 2000u), "active inside the window");
+    CHECK(!idep_window_active(&n, 1000u + 30000u), "and closed after it");
 
     printf(fails ? "\nFAILED (%d)\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

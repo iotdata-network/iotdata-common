@@ -28,7 +28,10 @@
 #endif
 
 #define IOTDATA_SETTINGS_STATE_TAG     0x53455431u /* "SET1" */
-#define IOTDATA_SETTINGS_STATE_VERSION 1u
+/* 2: the receive interval and offset moved from SECONDS to MINUTES. The layout did not change, so
+   nothing would otherwise force a reseed -- and a stored 60 would silently stop meaning a minute
+   and start meaning an hour, which is invisible until a node goes quiet. */
+#define IOTDATA_SETTINGS_STATE_VERSION 2u
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -46,8 +49,8 @@ typedef struct {
 typedef struct {
     uint16_t station;
     uint16_t window_ms;  /* how long the receiver stays on  */
-    uint16_t interval_s; /* how often it opens              */
-    uint16_t offset_s;   /* when the next one opens         */
+    uint16_t interval_m; /* how often it opens, in MINUTES  */
+    uint16_t offset_m;   /* phase within the interval, MINUTES -- declared, not yet consumed */
     uint8_t report_count;
     iotdata_settings_report_t report[IOTDATA_SETTINGS_REPORT_MAX];
 } iotdata_settings_t;
@@ -82,9 +85,26 @@ typedef struct {
 #ifndef IOTDATA_SETTINGS_DEFAULT_WINDOW_MS
 #define IOTDATA_SETTINGS_DEFAULT_WINDOW_MS 5000u
 #endif
-#ifndef IOTDATA_SETTINGS_DEFAULT_INTERVAL_S
-#define IOTDATA_SETTINGS_DEFAULT_INTERVAL_S 60u
+/* MINUTES, not seconds: u16 seconds capped the interval at 18h, and a slow-cycle node spends more
+   of its budget on the receive window than on sensing. One-minute granularity is the whole range
+   anyone wants -- nobody reaches for 6025 seconds over 100 minutes.
+   This default deliberately MATCHES IDEP_RECEIVE_EVERY_MS. They disagreed before, so a node with a
+   settings block listened every 60s while one without listened every 6h, and the configured value
+   was not the one anybody had read. */
+#ifndef IOTDATA_SETTINGS_DEFAULT_INTERVAL_M
+#define IOTDATA_SETTINGS_DEFAULT_INTERVAL_M (6u * 60u) /* 6 hours, as IDEP_RECEIVE_EVERY_MS */
 #endif
+
+/* THE ONE SETTING THAT CAN PUT A NODE BEYOND REACH. The receive window is the only way in, so an
+   interval set too long over the air cannot be corrected over the air: it needs a visit with a
+   programmer. The type now holds 45 days; policy stops at a week, which bounds a mistyped OTA to
+   something you can wait out. 0 stays legal and means "never open a window" -- that is a decision
+   someone makes on purpose, and it reads as one. */
+#define IOTDATA_SETTINGS_INTERVAL_M_MAX (7u * 24u * 60u) /* 10080 */
+
+static inline bool iotdata_settings_interval_is_valid(const uint16_t minutes) {
+    return minutes <= (uint16_t)IOTDATA_SETTINGS_INTERVAL_M_MAX;
+}
 
 /* Spread the startup burst over this window. A fleet that lost power together comes back together,
    and without this every node in it would announce itself in the same second. */
@@ -101,8 +121,8 @@ static inline void iotdata_settings_defaults(iotdata_settings_t *const s, const 
     *s = (iotdata_settings_t){ 0 };
     s->station = derived;
     s->window_ms = (uint16_t)IOTDATA_SETTINGS_DEFAULT_WINDOW_MS;
-    s->interval_s = (uint16_t)IOTDATA_SETTINGS_DEFAULT_INTERVAL_S;
-    s->offset_s = 0;
+    s->interval_m = (uint16_t)IOTDATA_SETTINGS_DEFAULT_INTERVAL_M;
+    s->offset_m = 0;
     for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT && s->report_count < (uint8_t)IOTDATA_SETTINGS_REPORT_MAX; t++)
         if (iotdata_node_tlv_is_reportable(t)) {
             const bool at_startup = ((IOTDATA_SETTINGS_DEFAULT_STARTUP >> t) & 1u) != 0u;
@@ -240,7 +260,7 @@ static inline uint16_t iotdata_settings_window_ms(const iotdata_settings_t *cons
 }
 
 static inline uint32_t iotdata_settings_interval_ms(const iotdata_settings_t *const s) {
-    return (s != NULL) ? (uint32_t)s->interval_s * 1000u : 0u;
+    return (s != NULL) ? (uint32_t)s->interval_m * 60000u : 0u; /* 10080 * 60000 fits a uint32 */
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -270,8 +290,8 @@ static inline int iotdata_settings_pack(iotdata_kvr_t *const kv, const iotdata_s
     if (want_receive) {
         uint8_t r[IOTDATA_NODE_SETTINGS_RECEIVE_SIZE];
         iotdata_node_settings_put_u16(r, 0, s->window_ms);
-        iotdata_node_settings_put_u16(r, 2, s->interval_s);
-        iotdata_node_settings_put_u16(r, 4, s->offset_s);
+        iotdata_node_settings_put_u16(r, 2, s->interval_m);
+        iotdata_node_settings_put_u16(r, 4, s->offset_m);
         iotdata_kvr_add(kv, IOTDATA_NODE_SETTINGS_RECEIVE, r, (uint8_t)sizeof(r));
     }
     return kv->overflow ? -1 : (int)kv->len;
@@ -314,10 +334,10 @@ static inline bool iotdata_settings_apply(iotdata_settings_t *const s, const uin
                 const uint16_t w = iotdata_node_settings_get_u16(val, 0), i = iotdata_node_settings_get_u16(val, 2), o = iotdata_node_settings_get_u16(val, 4);
                 if (w != s->window_ms && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_WINDOW))
                     s->window_ms = w, changed = true;
-                if (i != s->interval_s && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_INTERVAL))
-                    s->interval_s = i, changed = true;
-                if (o != s->offset_s && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_OFFSET))
-                    s->offset_s = o, changed = true;
+                if (i != s->interval_m && iotdata_settings_interval_is_valid(i) && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_INTERVAL))
+                    s->interval_m = i, changed = true;
+                if (o != s->offset_m && iotdata_settings_interval_is_valid(o) && !iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_OFFSET))
+                    s->offset_m = o, changed = true;
             }
             break;
         default:
@@ -448,7 +468,7 @@ static inline bool iotdata_settings_key_read(const iotdata_settings_t *const s, 
         return false;
     if (i < 4) {
         static const size_t off[4] = { 0, 1, 2, 3 };
-        const uint16_t v = (off[i] == 0) ? s->station : (off[i] == 1) ? s->window_ms : (off[i] == 2) ? s->interval_s : s->offset_s;
+        const uint16_t v = (off[i] == 0) ? s->station : (off[i] == 1) ? s->window_ms : (off[i] == 2) ? s->interval_m : s->offset_m;
         return _iotdata_settings_u2a(v, out, size);
     }
     const uint8_t subject = _iotdata_settings_key_subject(i);
@@ -481,10 +501,15 @@ static inline bool iotdata_settings_key_write(iotdata_settings_t *const s, const
             s->station = (uint16_t)v;
         else if (i == 1)
             s->window_ms = (uint16_t)v;
-        else if (i == 2)
-            s->interval_s = (uint16_t)v;
-        else
-            s->offset_s = (uint16_t)v;
+        else if (i == 2) {
+            if (!iotdata_settings_interval_is_valid((uint16_t)v))
+                return false; /* refused, rather than clamped: a typo should not look accepted */
+            s->interval_m = (uint16_t)v;
+        } else {
+            if (!iotdata_settings_interval_is_valid((uint16_t)v))
+                return false;
+            s->offset_m = (uint16_t)v;
+        }
         return true;
     }
     const uint8_t subject = _iotdata_settings_key_subject(i);
@@ -620,7 +645,7 @@ static void iotdata_settings_console(const iotdata_console_emit_fn emit, const i
         emit("node: protocol settings%s\n", persists ? "" : " (NOT PERSISTED: nowhere to write them)");
         _iotdata_settings_show_field(emit, "station", (unsigned)iotdata_settings_station(s), (unsigned)_iotdata_settings_default.station, "", iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_STATION));
         _iotdata_settings_show_field(emit, "window", (unsigned)iotdata_settings_window_ms(s), (unsigned)_iotdata_settings_default.window_ms, "ms", iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_WINDOW));
-        _iotdata_settings_show_field(emit, "interval", (unsigned)(iotdata_settings_interval_ms(s) / 1000u), (unsigned)_iotdata_settings_default.interval_s, "s", iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_INTERVAL));
+        _iotdata_settings_show_field(emit, "interval", (unsigned)(iotdata_settings_interval_ms(s) / 60000u), (unsigned)_iotdata_settings_default.interval_m, "m", iotdata_settings_is_pinned(IOTDATA_SETTINGS_PIN_INTERVAL));
         emit("  reports:\n");
         for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT; t++)
             if (iotdata_node_tlv_is_reportable(t))
@@ -631,10 +656,10 @@ static void iotdata_settings_console(const iotdata_console_emit_fn emit, const i
     uint32_t v = 0;
     bool wrote = false;
     if (strcmp(argv[1], "station") == 0 || strcmp(argv[1], "window") == 0 || strcmp(argv[1], "interval") == 0) {
-        uint16_t *const field = (strcmp(argv[1], "station") == 0) ? &s->station : (strcmp(argv[1], "window") == 0) ? &s->window_ms : &s->interval_s;
+        uint16_t *const field = (strcmp(argv[1], "station") == 0) ? &s->station : (strcmp(argv[1], "window") == 0) ? &s->window_ms : &s->interval_m;
         const uint8_t pin = (uint8_t)((strcmp(argv[1], "station") == 0) ? IOTDATA_SETTINGS_PIN_STATION : (strcmp(argv[1], "window") == 0) ? IOTDATA_SETTINGS_PIN_WINDOW : IOTDATA_SETTINGS_PIN_INTERVAL);
         if (argc < 3) {
-            const uint16_t d = (strcmp(argv[1], "station") == 0) ? _iotdata_settings_default.station : (strcmp(argv[1], "window") == 0) ? _iotdata_settings_default.window_ms : _iotdata_settings_default.interval_s;
+            const uint16_t d = (strcmp(argv[1], "station") == 0) ? _iotdata_settings_default.station : (strcmp(argv[1], "window") == 0) ? _iotdata_settings_default.window_ms : _iotdata_settings_default.interval_m;
             _iotdata_settings_show_field(emit, argv[1], (unsigned)*field, (unsigned)d, "", iotdata_settings_is_pinned(pin));
             return;
         }
@@ -652,6 +677,12 @@ static void iotdata_settings_console(const iotdata_console_emit_fn emit, const i
            a station and the broadcast id would make this node answer every broadcast as its own. */
         if (strcmp(argv[1], "station") == 0 && !iotdata_station_is_assignable((uint16_t)v)) {
             emit("station: %u is not assignable (1..%u)\n", (unsigned)v, (unsigned)IOTDATA_STATION_ASSIGNABLE_MAX);
+            return;
+        }
+        /* Same reasoning one field over: the cap is what stops a slip parking this node out of
+           reach, and the console can make that slip as easily as the radio. */
+        if (strcmp(argv[1], "interval") == 0 && !iotdata_settings_interval_is_valid((uint16_t)v)) {
+            emit("interval: %u minutes is past the cap (0..%u, one week)\n", (unsigned)v, (unsigned)IOTDATA_SETTINGS_INTERVAL_M_MAX);
             return;
         }
         *field = (uint16_t)v;

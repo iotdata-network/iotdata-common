@@ -116,14 +116,14 @@ static inline uint16_t iotdata_node_station_from_mac(const char *const tag) {
     if (iotdata_node_mac(mac)) {
         const uint16_t station_id = iotdata_station_from_id(((uint32_t)mac[2] << 24) | ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5]);
 #ifdef PLATFORM_ESP32
-        ESP_LOGI(tag, "board: mac=%02X:%02X:%02X:%02X:%02X:%02X station=%" PRIu16, (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2], (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5], station_id);
+        ESP_LOGI(tag, "board: mac=%02X:%02X:%02X:%02X:%02X:%02X station=%03" PRIX16, (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2], (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5], station_id);
 #else
-        fprintf(stderr, "%s: board: mac=%02X:%02X:%02X:%02X:%02X:%02X station=%" PRIu16 "\n", tag, (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2], (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5], station_id);
+        fprintf(stderr, "%s: board: mac=%02X:%02X:%02X:%02X:%02X:%02X station=%03" PRIX16 "\n", tag, (unsigned)mac[0], (unsigned)mac[1], (unsigned)mac[2], (unsigned)mac[3], (unsigned)mac[4], (unsigned)mac[5], station_id);
 #endif
         return station_id;
     }
 #ifdef PLATFORM_ESP32
-    ESP_LOGW(tag, "board: no mac, station=1");
+    ESP_LOGW(tag, "board: no mac, station=001");
     return 1u;
 #else
     char host[256];

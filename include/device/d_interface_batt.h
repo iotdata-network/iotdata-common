@@ -52,7 +52,7 @@
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static const char *__tag_batt = "battery";
+static const char *__tag_batt = "device-battery";
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -342,9 +342,6 @@ static inline battery_state_t battery_state_of(const uint8_t percent) {
 
 static inline bool battery_begin(void) {
 
-    hw_gpio_cfg_enable_output(PIN_BATTERY_EN);
-    hw_gpio_set(PIN_BATTERY_EN, false);
-
     adc_unit_t unit;
     adc_channel_t channel;
     if (hw_adc_oneshot_channel(PIN_BATTERY_ADC, &unit, &channel) != ESP_OK)
@@ -359,6 +356,9 @@ static inline bool battery_begin(void) {
     if (!hw_adc_oneshot_calibrated())
         ESP_LOGW(__tag_batt, "begin: no eFuse calibration: voltages are approximate");
 
+    hw_gpio_cfg_enable_output(PIN_BATTERY_EN);
+    hw_gpio_set(PIN_BATTERY_EN, false);
+
     return true;
 }
 
@@ -366,9 +366,12 @@ static inline bool battery_begin(void) {
 
 static inline void battery_end(void) {
 
-    hw_gpio_set(PIN_BATTERY_EN, false);
+    hw_gpio_set(PIN_BATTERY_EN, false); /* off first, while the pin is still an output */
 
     (void)hw_adc_oneshot_stop();
+
+    hw_gpio_revoke(PIN_BATTERY_EN);
+    hw_gpio_cfg_disable(PIN_BATTERY_EN);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
