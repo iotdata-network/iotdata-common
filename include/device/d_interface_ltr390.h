@@ -210,6 +210,30 @@ void ltr390_diagnose(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+bool ltr390_detect(const ltr390_config_t *const config) {
+
+    const uint8_t addr = (config != NULL && config->i2c_addr != 0u) ? config->i2c_addr : (uint8_t)LTR390_I2C_ADDR;
+
+    if (hw_i2c_start(PIN_DEVICE_I2C_SDA, PIN_DEVICE_I2C_SCL, I2C_FREQ_DEFAULT, addr, _LTR390_I2C_MAX_PAYLOAD) != ESP_OK) {
+        ESP_LOGD(__tag_device_ltr390, "detect: i2c start failed");
+        return false;
+    }
+    uint8_t id = 0;
+    const bool read = (hw_i2c_read_byte(_LTR390_REG_PART_ID, &id) == ESP_OK);
+    hw_i2c_stop();
+
+    const bool found = read && ((id >> 4) == (_LTR390_PART_ID_VAL >> 4));
+    if (found)
+        ESP_LOGI(__tag_device_ltr390, "detect: present at 0x%02" PRIX8 " (part-id=0x%02" PRIX8 ", rev %u)", addr, id, (unsigned)(id & 0x0Fu));
+    else if (read)
+        ESP_LOGD(__tag_device_ltr390, "detect: 0x%02" PRIX8 " answers but part-id=0x%02" PRIX8 " is %s", addr, id, _ltr390_part_name(id));
+    else
+        ESP_LOGD(__tag_device_ltr390, "detect: nothing at 0x%02" PRIX8, addr);
+    return found;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
 esp_err_t ltr390_setup(const ltr390_config_t *const config) {
 
     ESP_ERROR_CHECK_BOOLEAN(GPIO_IS_VALID_INPUT_GPIO(PIN_DEVICE_I2C_SDA) && GPIO_IS_VALID_OUTPUT_GPIO(PIN_DEVICE_I2C_SDA));

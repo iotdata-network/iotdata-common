@@ -17,6 +17,7 @@
 #include <string.h>
 #include <inttypes.h>
 
+#include "device/d_format.h" /* snprintf_inline, reached by buffer_queue_tag_name */
 #include "device/d_module_buffers.h"
 
 static int fails = 0;
