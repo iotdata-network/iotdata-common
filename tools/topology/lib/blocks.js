@@ -68,21 +68,7 @@ function write(dir, layer, e0, n0, samples, extra = {}) {
             }
         }
     }
-    const head = JSON.stringify({
-        magic: MAGIC,
-        v: 1,
-        layer,
-        e0,
-        n0,
-        side: SIDE,
-        res: L.res,
-        dtype: L.dtype,
-        scale: L.scale,
-        nodata: L.nodata,
-        delta: !!L.delta,
-        w,
-        ...extra,
-    });
+    const head = JSON.stringify({ magic: MAGIC, v: 1, layer, e0, n0, side: SIDE, res: L.res, dtype: L.dtype, scale: L.scale, nodata: L.nodata, delta: !!L.delta, w, ...extra });
     const body = zlib.deflateSync(Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength), { level: 9 });
     const file = fileOf(dir, layer, e0, n0);
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -166,11 +152,7 @@ class Cache {
                 try {
                     const meta = Cache.header(full);
                     if (meta.magic !== MAGIC) throw new Error('not a terrain block');
-                    this.layers[layer].set(keyOf(meta.e0, meta.n0), {
-                        file: full,
-                        meta,
-                        data: null,
-                    });
+                    this.layers[layer].set(keyOf(meta.e0, meta.n0), { file: full, meta, data: null });
                     bytes += fs.statSync(full).size;
                 } catch (e) {
                     console.error(`terrain: ${full}: ${e.message}`);
@@ -222,14 +204,7 @@ class Cache {
     }
 
     stats() {
-        return {
-            resident: this.resident,
-            budget: this.budget,
-            loaded: this.lru.size,
-            hits: this.hits,
-            misses: this.misses,
-            evictions: this.evictions,
-        };
+        return { resident: this.resident, budget: this.budget, loaded: this.lru.size, hits: this.hits, misses: this.misses, evictions: this.evictions };
     }
 
     /* Nearest-cell lookup. Returns null outside the cache or on nodata, never a guessed value --
@@ -279,22 +254,8 @@ class Cache {
 
     extent() {
         const keys = [...this.layers.ground.keys()];
-        return {
-            blocks: keys,
-            side: SIDE,
-            canopyBlocks: [...this.layers.canopy.keys()],
-        };
+        return { blocks: keys, side: SIDE, canopyBlocks: [...this.layers.canopy.keys()] };
     }
 }
 
-module.exports = {
-    SIDE,
-    LAYERS,
-    blocksFor,
-    keyOf,
-    fileOf,
-    write,
-    read,
-    Cache,
-    floorTo,
-};
+module.exports = { SIDE, LAYERS, blocksFor, keyOf, fileOf, write, read, Cache, floorTo };

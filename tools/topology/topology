@@ -62,16 +62,7 @@ const SEED = {
     max: MAXR,
     mapType: 'terrain',
     labels: true,
-    nodes: [
-        {
-            name: 'gateway (surveyed)',
-            lat: 59.66206682,
-            lng: 12.99552614,
-            rings: true,
-            agl: 0,
-            note: 'config ref-altitude 131m AMSL',
-        },
-    ],
+    nodes: [{ name: 'gateway (surveyed)', lat: 59.66206682, lng: 12.99552614, rings: true, agl: 0, note: 'config ref-altitude 131m AMSL' }],
     sensors: [],
 };
 
@@ -80,10 +71,7 @@ const read = () => {
         const s = JSON.parse(fs.readFileSync(PERSIST, 'utf8'));
         /* an earlier save had one flat `centres` list, before sensors were separated out */
         if (s && Array.isArray(s.centres) && !s.nodes) {
-            s.nodes = s.centres.map(({ on, ...c }) => ({
-                ...c,
-                rings: on !== false,
-            }));
+            s.nodes = s.centres.map(({ on, ...c }) => ({ ...c, rings: on !== false }));
             delete s.centres;
         }
         if (s && Array.isArray(s.nodes)) {
@@ -155,10 +143,7 @@ function greatCircle(a, b, count) {
         const x = A * Math.cos(la1) * Math.cos(lo1) + Bc * Math.cos(la2) * Math.cos(lo2);
         const y = A * Math.cos(la1) * Math.sin(lo1) + Bc * Math.cos(la2) * Math.sin(lo2);
         const z = A * Math.sin(la1) + Bc * Math.sin(la2);
-        out.push({
-            lat: Math.atan2(z, Math.hypot(x, y)) / R,
-            lng: Math.atan2(y, x) / R,
-        });
+        out.push({ lat: Math.atan2(z, Math.hypot(x, y)) / R, lng: Math.atan2(y, x) / R });
     }
     return out;
 }
@@ -223,13 +208,7 @@ function radialField(o) {
         const th = (a * 2 * Math.PI) / rays,
             sinT = Math.sin(th),
             cosT = Math.cos(th);
-        const prof = [
-            {
-                z: origin.ground,
-                res: null,
-                canopy: origin.canopyKnown ? origin.canopy : null,
-            },
-        ];
+        const prof = [{ z: origin.ground, res: null, canopy: origin.canopyKnown ? origin.canopy : null }];
         let gap = false,
             vegMiss = origin.canopyKnown ? 0 : 1,
             vegSeen = 1;
@@ -247,11 +226,7 @@ function radialField(o) {
             if (gap) continue;
             vegSeen++;
             if (!t.canopyKnown) vegMiss++;
-            prof.push({
-                z: t.ground,
-                res: null,
-                canopy: t.canopyKnown ? t.canopy : null,
-            });
+            prof.push({ z: t.ground, res: null, canopy: t.canopyKnown ? t.canopy : null });
             const A = LINK.analyse(prof, r, hA, t.ground + targetAgl, { freq, grow });
             const m = budget - A.loss;
             const i = a * steps + (s - 1);
@@ -281,11 +256,7 @@ function radialField(o) {
         reach,
         coverage: total ? covered / total : 0,
         canopyCoverage: scored ? vegCells / scored : 0,
-        bands: LINK.BANDS.map((b) => ({
-            min: b.min,
-            label: b.label,
-            colour: b.colour,
-        })),
+        bands: LINK.BANDS.map((b) => ({ min: b.min, label: b.label, colour: b.colour })),
         /* rounded to whole dB: the overlay bands are 10dB wide and the inputs do not justify more */
         margin: Array.from(margin, (v) => (Number.isNaN(v) ? null : Math.round(v))),
         vegKnown: Array.from(vegKnown),
@@ -300,6 +271,33 @@ function radialField(o) {
  * polar grid cannot leave holes between rays. The winning transmitter is recorded per cell, which
  * is what turns "is there coverage" into "and which box is carrying it".
  */
+/* The lat/lng-aligned box that every site-wide overlay is drawn on: the points padded by radius, cut
+   into square cells of `cell` metres, the cell grown until neither side exceeds `cap`. Coverage and
+   elevation share it so the two views sit on exactly the same ground and can be flicked between. */
+function boxFor(points, radius, cell, cap) {
+    const lat0 = Math.min(...points.map((g) => g.lat)),
+        lat1 = Math.max(...points.map((g) => g.lat));
+    const lng0 = Math.min(...points.map((g) => g.lng)),
+        lng1 = Math.max(...points.map((g) => g.lng));
+    const mid = (lat0 + lat1) / 2;
+    const mLat = 111132.92 - 559.82 * Math.cos((2 * mid * Math.PI) / 180);
+    const mLng = 111412.84 * Math.cos((mid * Math.PI) / 180);
+    const padLat = radius / mLat,
+        padLng = radius / mLng;
+    const south = lat0 - padLat,
+        north = lat1 + padLat;
+    const west = lng0 - padLng,
+        east = lng1 + padLng;
+    let nx = Math.ceil(((east - west) * mLng) / cell),
+        ny = Math.ceil(((north - south) * mLat) / cell);
+    if (nx > cap || ny > cap) {
+        cell *= Math.max(nx, ny) / cap;
+        nx = Math.ceil(((east - west) * mLng) / cell);
+        ny = Math.ceil(((north - south) * mLat) / cell);
+    }
+    return { north, south, east, west, nx, ny, cell, mLat, mLng };
+}
+
 function coverageField(o) {
     const origins = Array.isArray(o.origins) ? o.origins : [];
     if (!origins.length) return { error: 'no transmitters to combine' };
@@ -324,30 +322,8 @@ function coverageField(o) {
     const live = fields.filter((f) => !f.error);
     if (!live.length) return { error: 'every transmitter is outside the cached terrain' };
 
-    const lat0 = Math.min(...origins.map((g) => g.lat)),
-        lat1 = Math.max(...origins.map((g) => g.lat));
-    const lng0 = Math.min(...origins.map((g) => g.lng)),
-        lng1 = Math.max(...origins.map((g) => g.lng));
-    const mid = (lat0 + lat1) / 2;
-    const mLat = 111132.92 - 559.82 * Math.cos((2 * mid * Math.PI) / 180);
-    const mLng = 111412.84 * Math.cos((mid * Math.PI) / 180);
-    const padLat = radius / mLat,
-        padLng = radius / mLng;
-    const south = lat0 - padLat,
-        north = lat1 + padLat;
-    const west = lng0 - padLng,
-        east = lng1 + padLng;
-
     /* one cell per sampling step, capped so a wide deployment cannot produce a vast payload */
-    let cell = Math.max(step, Number(o.cell) || step);
-    let nx = Math.ceil(((east - west) * mLng) / cell),
-        ny = Math.ceil(((north - south) * mLat) / cell);
-    const CAP = 360;
-    if (nx > CAP || ny > CAP) {
-        cell *= Math.max(nx, ny) / CAP;
-        nx = Math.ceil(((east - west) * mLng) / cell);
-        ny = Math.ceil(((north - south) * mLat) / cell);
-    }
+    const { north, south, east, west, nx, ny, cell, mLat, mLng } = boxFor(origins, radius, Math.max(step, Number(o.cell) || step), 360);
 
     const margin = new Float32Array(nx * ny).fill(NaN);
     const best = new Int16Array(nx * ny).fill(-1);
@@ -393,25 +369,44 @@ function coverageField(o) {
         rays,
         targetAgl: o.targetAgl,
         freq: o.freq,
-        origins: origins.map((g, k) => ({
-            name: g.name,
-            lat: g.lat,
-            lng: g.lng,
-            budget: g.budget,
-            agl: g.agl,
-            reach: fields[k].error ? null : fields[k].reach,
-            error: fields[k].error || null,
-        })),
+        origins: origins.map((g, k) => ({ name: g.name, lat: g.lat, lng: g.lng, budget: g.budget, agl: g.agl, reach: fields[k].error ? null : fields[k].reach, error: fields[k].error || null })),
         coveredFraction: covered / (nx * ny),
-        bands: LINK.BANDS.map((b) => ({
-            min: b.min,
-            label: b.label,
-            colour: b.colour,
-        })),
+        bands: LINK.BANDS.map((b) => ({ min: b.min, label: b.label, colour: b.colour })),
         margin: Array.from(margin, (v) => (Number.isNaN(v) ? null : Math.round(v))),
         best: Array.from(best),
         vegKnown: Array.from(veg),
     };
+}
+
+/* Ground height over the same box as coverage, for choosing where to put a box once coverage has
+   shown where one is needed. Ground only: the canopy layer is tree height above ground, and a mast
+   stands on the ground. Finer cells than coverage -- this is read by eye for local rises and
+   hollows, and it is one cheap sample per cell rather than a ray trace. */
+function elevationField(o) {
+    const points = (Array.isArray(o.points) ? o.points : []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+    if (!points.length) return { error: 'nothing placed to centre the elevation on' };
+    const radius = Math.max(50, Math.min(20000, Number(o.radius) || 1000));
+    const box = boxFor(points, radius, Math.max(2, Number(o.cell) || radius / 150), 480);
+    const { north, west, nx, ny, cell, mLat, mLng } = box;
+    const ground = new Array(nx * ny).fill(null);
+    let lo = Infinity,
+        hi = -Infinity,
+        known = 0;
+    for (let y = 0; y < ny; y++) {
+        const lat = north - ((y + 0.5) * cell) / mLat;
+        for (let x = 0; x < nx; x++) {
+            const s = sample(lat, west + ((x + 0.5) * cell) / mLng);
+            if (!s) continue;
+            const z = Math.round(s.ground * 10) / 10;
+            ground[y * nx + x] = z;
+            known++;
+            if (z < lo) lo = z;
+            if (z > hi) hi = z;
+        }
+    }
+    if (!known) return { error: 'the area is outside the cached terrain' };
+    const { mLat: _a, mLng: _b, ...out } = box;
+    return { ...out, radius, min: lo, max: hi, known: known / (nx * ny), ground };
 }
 
 function terrainInfo() {
@@ -473,6 +468,22 @@ http.createServer((req, res) => {
         });
         return;
     }
+    if (req.method === 'POST' && url.pathname === '/api/terrain/elevation') {
+        let b = '';
+        req.on('data', (c) => {
+            b += c;
+            if (b.length > 1e6) req.destroy();
+        });
+        req.on('end', () => {
+            try {
+                const f = elevationField(JSON.parse(b));
+                return json(res, f.error ? 409 : 200, f);
+            } catch (e) {
+                json(res, 400, { error: e.message });
+            }
+        });
+        return;
+    }
     if (req.method === 'POST' && url.pathname === '/api/terrain/radial') {
         let b = '';
         req.on('data', (c) => {
@@ -505,16 +516,12 @@ http.createServer((req, res) => {
                 const o = JSON.parse(b);
                 if (url.pathname === '/api/terrain/points') {
                     if (!Array.isArray(o.points)) throw new Error('expected { points: [...] }');
-                    return json(res, 200, {
-                        samples: o.points.map((p) => sample(p.lat, p.lng)),
-                    });
+                    return json(res, 200, { samples: o.points.map((p) => sample(p.lat, p.lng)) });
                 }
                 const n = Math.max(2, Math.min(2048, Number(o.samples) || 256));
                 if (!o.from || !o.to) throw new Error('expected { from, to, samples }');
                 const pts = greatCircle(o.from, o.to, n);
-                return json(res, 200, {
-                    samples: pts.map((p) => sample(p.lat, p.lng)),
-                });
+                return json(res, 200, { samples: pts.map((p) => sample(p.lat, p.lng)) });
             } catch (e) {
                 json(res, 400, { error: e.message });
             }

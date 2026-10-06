@@ -104,6 +104,8 @@
   #msg { color:var(--acc); font-size:11px; min-height:15px; margin-top:6px }
   .hint { color:var(--mut); font-size:10px; margin-top:6px }
   .prov { font:10px/1.4 ui-monospace,monospace; color:var(--mut); margin-top:4px }
+  .elelab-dark  { text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff }
+  .elelab-light { text-shadow: 0 0 2px #000, 0 0 2px #000, 0 0 3px #000 }
   @media print {
     #panel,#hover,#prof,#cover { display:none !important } #wrap { display:block }
     #mapbox { position:fixed; inset:0; min-width:0 }
@@ -159,6 +161,13 @@
       <label title="combine every gateway and relay into one best-signal map">
         <input type="checkbox" id="covg"> deployment coverage (best of all)</label>
       <div class="prov" id="covinfo"></div>
+      <label title="ground contours over the same area -- they draw over coverage, so a weak zone and the lie of the land show together">
+        <input type="checkbox" id="eleg"> elevation contours (ground)</label>
+      <div class="row"><div><label>contour every (m)</label>
+        <input type="number" id="cstep" min="0.5" max="100" step="0.5"></div>
+        <div><label>label every (m)</label>
+        <input type="number" id="clabel" min="1" max="500" step="1"></div></div>
+      <div class="prov" id="eleinfo"></div>
       <div class="prov" id="provinfo"></div>
       <div class="hint">Ground clearance is judged against 60% of the first Fresnel zone with earth
         curvature at k=4/3 &mdash; optimistic in the winter inversions this valley gets. Canopy is
@@ -217,6 +226,7 @@ async function boot() {
   S.spacing ||= 100; S.max ||= 1000; S.mapType ||= 'terrain'; S.labels = S.labels !== false;
   S.freq ||= 868;                             /* EU868, which is what this site is licensed under */
   S.canopyGrow ??= 0;
+  S.contourStep ??= 10; S.contourLabel ??= 50;   /* ground contours: lines, and which carry a label */
   S.sf ??= 12;               /* slowest and most sensitive; the generous end of the range */
   S.txdbm ??= 22;            /* module power, overridable per device                          */
   S.gain ??= 5;              /* antenna gain, likewise                                        */
@@ -240,6 +250,8 @@ async function boot() {
   elev = new google.maps.ElevationService();
   /* A marker click does not reach the map, so this only fires on bare map. While a panel is
      pinned that is the gesture for dropping a probe; with nothing pinned it just dismisses. */
+  map.addListener('mousemove', (ev) => eleCursor(ev.latLng));
+  map.addListener('mouseout', () => eleCursor(null));
   map.addListener('click', (ev) => {
     const first = !pin;
     setProbe(ev.latLng.lat(), ev.latLng.lng());
@@ -290,6 +302,11 @@ async function boot() {
   };
   $('hfield').onclick = toggleField;
   $('covg').onchange = toggleCoverage;
+  $('eleg').onchange = toggleElevation;
+  $('cstep').value = S.contourStep; $('clabel').value = S.contourLabel;
+  for (const [id, k] of [['cstep', 'contourStep'], ['clabel', 'contourLabel']]) $(id).onchange = () => {
+    const v = Number($(id).value); if (v > 0) { S[k] = v; if (ele) { drawContours(); eleInfo(); } }
+  };
   for (const k of ['spacing', 'max']) $(k).onchange = () => {
     const v = Number($(k).value); if (v > 0) { S[k] = v; draw(); }
   };
@@ -297,7 +314,10 @@ async function boot() {
      repaint, never a refetch. */
   $('freq').onchange = () => { const v = Number($('freq').value); if (v > 0) { S.freq = v; repaint(); } };
   $('labels').onchange = () => { S.labels = $('labels').checked; draw(); };
-  $('mapType').onchange = () => { S.mapType = $('mapType').value; map.setMapTypeId(S.mapType); };
+  $('mapType').onchange = () => {
+    S.mapType = $('mapType').value; map.setMapTypeId(S.mapType);
+    if (ele) drawContours();                       /* line colour follows light or dark imagery */
+  };
   $('hunpin').onclick = unpin;
   $('pclose').onclick = () => { closeProfile(); if (shown) hover(shown.kind, shown.i); };
   $('addnode').onclick = () => add('nodes');
@@ -945,6 +965,212 @@ function covInfo() {
     + `${(100 * cov.coveredFraction).toFixed(0)}% of the box has a usable link<br>`
     + rows.map(r => `&nbsp;${esc(r.o.name)} ${r.o.error ? '<span class="warn">no terrain</span>'
         : (100 * r.n / live).toFixed(0) + '%'}`).join('<br>');
+}
+
+/* ------------------------------------------------------------------ terrain elevation --------- */
+
+/* Coverage says WHERE a box is needed; contours say where on that ground to put it. They are lines,
+   not a heatmap, so they draw over coverage or receptivity and the two questions can be read at
+   once. Traced in the page from the ground grid (marching squares) and drawn as map polylines, so
+   they stay sharp at any zoom. Every `contourStep` metres a line, every `contourLabel` a heavier
+   one carrying its height. Same box as coverage; untick and tick to recentre after moving things. */
+let ele = null, eleLines = [], eleLabels = [];
+
+async function toggleElevation() {
+  if (!$('eleg').checked) return clearElevation();
+  if (!prov().local) { $('eleg').checked = false; msg('contours need the local terrain cache'); return; }
+  const points = S.nodes.map((n) => ({ lat: n.lat, lng: n.lng }));
+  if (probe) points.push({ lat: probe.lat, lng: probe.lng });  /* so the probe's surroundings are in */
+  if (!points.length) { $('eleg').checked = false; msg('nothing placed to centre the contours on'); return; }
+  $('eleinfo').textContent = 'computing…';
+  try {
+    ele = await post('/api/terrain/elevation', { points, radius: Number(S.max) || 1000 });
+    ele.smooth = eleSmooth(ele);
+    drawContours();
+    eleInfo();
+  } catch (e) {
+    ele = null; $('eleg').checked = false; $('eleinfo').textContent = '';
+    msg('contours: ' + e.message);
+  }
+}
+
+function eleUndraw() {
+  for (const l of eleLines) l.setMap(null);
+  for (const m of eleLabels) m.setMap(null);
+  eleLines = []; eleLabels = [];
+}
+
+function clearElevation() {
+  ele = null; eleUndraw();
+  $('eleg').checked = false;
+  $('eleinfo').textContent = '';
+}
+
+/* The label interval has to land on lines that are drawn, so it snaps to a multiple of the step. */
+function eleSteps() {
+  const step = Math.max(0.5, Number(S.contourStep) || 10);
+  const label = Math.max(1, Math.round((Number(S.contourLabel) || 50) / step)) * step;
+  return { step, label };
+}
+
+/* A 3x3 mean before tracing. The 1m ground model sampled every few metres carries enough small
+   relief that raw contours fray into wiggles and specks; this keeps knolls but drops the noise.
+   The cursor readout still uses the raw grid. */
+function eleSmooth({ nx, ny, ground: g }) {
+  const out = new Array(nx * ny).fill(null);
+  for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+    if (g[y * nx + x] == null) continue;
+    let s = 0, n = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= nx || yy >= ny) continue;
+      const v = g[yy * nx + xx]; if (v != null) { s += v; n++; }
+    }
+    out[y * nx + x] = s / n;
+  }
+  return out;
+}
+
+/* Marching squares for one level over grid points (cell centres). Returns chains of [x, y] in grid
+   units. Segments are keyed by the grid edge they cross, so neighbouring cells join exactly and
+   chains can be walked end to end; saddles are resolved by the cell-centre mean. */
+function traceLevel(z, nx, ny, L) {
+  const pts = new Map(), segs = [], adj = new Map();
+  const hk = (x, y) => 'h' + (y * nx + x), vk = (x, y) => 'v' + (y * nx + x);
+  const link = (ka, kb) => {
+    const i = segs.length; segs.push([ka, kb]);
+    for (const k of [ka, kb]) { const a = adj.get(k); a ? a.push(i) : adj.set(k, [i]); }
+  };
+  for (let y = 0; y < ny - 1; y++) for (let x = 0; x < nx - 1; x++) {
+    const a = z[y * nx + x], b = z[y * nx + x + 1], c = z[(y + 1) * nx + x + 1], d = z[(y + 1) * nx + x];
+    if (a == null || b == null || c == null || d == null) continue;
+    const idx = (a >= L ? 8 : 0) | (b >= L ? 4 : 0) | (c >= L ? 2 : 0) | (d >= L ? 1 : 0);
+    if (idx === 0 || idx === 15) continue;
+    const T = () => { const k = hk(x, y); pts.has(k) || pts.set(k, [x + (L - a) / (b - a), y]); return k; };
+    const R = () => { const k = vk(x + 1, y); pts.has(k) || pts.set(k, [x + 1, y + (L - b) / (c - b)]); return k; };
+    const B = () => { const k = hk(x, y + 1); pts.has(k) || pts.set(k, [x + (L - d) / (c - d), y + 1]); return k; };
+    const Lf = () => { const k = vk(x, y); pts.has(k) || pts.set(k, [x, y + (L - a) / (d - a)]); return k; };
+    const mid = (a + b + c + d) / 4 >= L;
+    switch (idx) {
+      case 1: case 14: link(Lf(), B()); break;
+      case 2: case 13: link(B(), R()); break;
+      case 3: case 12: link(Lf(), R()); break;
+      case 4: case 11: link(T(), R()); break;
+      case 6: case 9: link(T(), B()); break;
+      case 7: case 8: link(T(), Lf()); break;
+      case 5: if (mid) { link(T(), Lf()); link(B(), R()); } else { link(T(), R()); link(Lf(), B()); } break;
+      case 10: if (mid) { link(T(), R()); link(Lf(), B()); } else { link(T(), Lf()); link(B(), R()); } break;
+    }
+  }
+  const used = new Uint8Array(segs.length), chains = [];
+  const walk = (si, from) => {
+    const keys = [from];
+    let key = from, cur = si;
+    while (cur != null) {
+      used[cur] = 1;
+      const [ka, kb] = segs[cur];
+      key = ka === key ? kb : ka; keys.push(key);
+      cur = (adj.get(key) || []).find((j) => !used[j]);
+    }
+    chains.push(keys.map((k) => pts.get(k)));
+  };
+  for (const [k, list] of adj) if (list.length === 1 && !used[list[0]]) walk(list[0], k);  /* open */
+  for (let i = 0; i < segs.length; i++) if (!used[i]) walk(i, segs[i][0]);                  /* loops */
+  return chains;
+}
+
+/* Douglas-Peucker in grid units: a contour traced cell by cell has a vertex per cell, most of them
+   on a straight run. A closed loop starts and ends on the same point, where the distance to a
+   zero-length baseline is 0 for everything -- so measure from that point instead, or every loop
+   (hilltops, hollows, lakes) simplifies away to nothing. */
+function simplify(p, tol) {
+  if (p.length < 3) return p;
+  const keep = new Uint8Array(p.length); keep[0] = keep[p.length - 1] = 1;
+  const stack = [[0, p.length - 1]];
+  while (stack.length) {
+    const [i, j] = stack.pop();
+    const [ax, ay] = p[i], [bx, by] = p[j], dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+    let far = -1, fd = tol;
+    for (let k = i + 1; k < j; k++) {
+      const d = dx || dy ? Math.abs(dy * (p[k][0] - ax) - dx * (p[k][1] - ay)) / len
+                         : Math.hypot(p[k][0] - ax, p[k][1] - ay);
+      if (d > fd) { fd = d; far = k; }
+    }
+    if (far > 0) { keep[far] = 1; stack.push([i, far], [far, j]); }
+  }
+  return p.filter((_, k) => keep[k]);
+}
+
+function drawContours() {
+  eleUndraw();
+  if (!ele) return;
+  const { nx, ny, north, south, east, west, cell, smooth } = ele, { step, label } = eleSteps();
+  const dark = !/satellite|hybrid/.test(S.mapType);
+  const colour = dark ? '#5b3a12' : '#ffe08a';
+  const toLL = ([gx, gy]) => ({ lat: north - (gy + 0.5) * (north - south) / ny,
+                                lng: west + (gx + 0.5) * (east - west) / nx });
+  const levels = [];
+  for (let L = Math.ceil(ele.min / step) * step; L <= ele.max; L += step) levels.push(+L.toFixed(2));
+  if (levels.length > 150) { msg(`contours: ${levels.length} levels is too many -- raise "contour every"`); return; }
+  const LABEL_GAP = 450;                           /* metres of line between repeated labels */
+  let lines = 0;
+  for (const L of levels) {
+    const major = Math.abs(L / label - Math.round(L / label)) < 1e-6;
+    for (const raw of traceLevel(smooth, nx, ny, L)) {
+      let len = 0;
+      for (let k = 1; k < raw.length; k++) len += Math.hypot(raw[k][0] - raw[k - 1][0], raw[k][1] - raw[k - 1][1]);
+      if (len * cell < 3 * cell + 10) continue;    /* specks: a cell or two of noise, not a feature */
+      const pts = simplify(raw, 0.3);
+      eleLines.push(new google.maps.Polyline({
+        path: pts.map(toLL), map, clickable: false, zIndex: 1,
+        strokeColor: colour, strokeOpacity: major ? 0.95 : 0.6, strokeWeight: major ? 2 : 1,
+      }));
+      lines++;
+      if (!major || len * cell < 60) continue;
+      /* one label per LABEL_GAP along the line, the first half a gap in so short loops get one */
+      for (let at = Math.min(len * cell / 2, LABEL_GAP / 2), run = 0, k = 1; k < raw.length && at < len * cell; k++) {
+        const seg = Math.hypot(raw[k][0] - raw[k - 1][0], raw[k][1] - raw[k - 1][1]) * cell;
+        while (run + seg >= at && at < len * cell) {
+          const f = (at - run) / (seg || 1);
+          const p = [raw[k - 1][0] + f * (raw[k][0] - raw[k - 1][0]), raw[k - 1][1] + f * (raw[k][1] - raw[k - 1][1])];
+          eleLabels.push(new google.maps.Marker({
+            position: toLL(p), map, clickable: false, zIndex: 2,
+            icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
+            label: { text: String(L), color: colour, fontSize: '11px', fontWeight: '700',
+                     className: dark ? 'elelab-dark' : 'elelab-light' },
+          }));
+          at += LABEL_GAP;
+        }
+        run += seg;
+      }
+    }
+  }
+  msg(`contours: ${lines} lines every ${step} m, labelled every ${label} m, ground `
+    + `${ele.min.toFixed(0)}–${ele.max.toFixed(0)} m`);
+}
+
+function eleInfo(cursor) {
+  if (!ele) { $('eleinfo').textContent = ''; return; }
+  const { step, label } = eleSteps();
+  $('eleinfo').innerHTML =
+    `ground ${ele.min.toFixed(1)}–${ele.max.toFixed(1)} m in this box<br>`
+    + `lines every ${step} m, labelled every ${label} m, ${ele.cell.toFixed(1)} m grid`
+    + (ele.known < 0.999 ? `<br>${Math.round(100 - ele.known * 100)}% outside the cache` : '')
+    + `<br>${cursor || 'cursor: move over the map'}`;
+}
+
+/* Read straight from the grid already in the page -- no request per mouse move. */
+function eleCursor(ll) {
+  if (!ele) return;
+  if (!ll) return eleInfo();
+  const lat = ll.lat(), lng = ll.lng();
+  if (lat > ele.north || lat < ele.south || lng < ele.west || lng > ele.east) return eleInfo('cursor: outside the box');
+  const x = Math.min(ele.nx - 1, Math.floor((lng - ele.west) / (ele.east - ele.west) * ele.nx));
+  const y = Math.min(ele.ny - 1, Math.floor((ele.north - lat) / (ele.north - ele.south) * ele.ny));
+  const z = ele.ground[y * ele.nx + x];
+  if (z == null) return eleInfo('cursor: no terrain here');
+  const pz = probe && probe.elev != null ? ` &middot; ${z >= probe.elev ? '+' : ''}${(z - probe.elev).toFixed(1)} m vs probe` : '';
+  eleInfo(`cursor: <b>${z.toFixed(1)} m</b> &middot; ${(z - ele.min).toFixed(1)} m above box low${pz}`);
 }
 
 /* ------------------------------------------------------------------ cache coverage ------------ */

@@ -56,34 +56,24 @@ function get(url, headers = {}) {
     return new Promise((res, rej) => {
         const u = new URL(url);
         https
-            .request(
-                {
-                    hostname: u.hostname,
-                    path: u.pathname + u.search,
-                    method: 'GET',
-                    headers,
-                },
-                (r) => {
-                    if (r.statusCode === 401) {
-                        r.resume();
-                        return rej(new Error('401 -- check LM_USERPASS'));
-                    }
-                    if (r.statusCode >= 300) {
-                        r.resume();
-                        return rej(new Error(`HTTP ${r.statusCode} ${url}`));
-                    }
-                    const c = [];
-                    r.on('data', (d) => c.push(d));
-                    r.on('end', () => res(Buffer.concat(c)));
+            .request({ hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers }, (r) => {
+                if (r.statusCode === 401) {
+                    r.resume();
+                    return rej(new Error('401 -- check LM_USERPASS'));
                 }
-            )
+                if (r.statusCode >= 300) {
+                    r.resume();
+                    return rej(new Error(`HTTP ${r.statusCode} ${url}`));
+                }
+                const c = [];
+                r.on('data', (d) => c.push(d));
+                r.on('end', () => res(Buffer.concat(c)));
+            })
             .on('error', rej)
             .end();
     });
 }
-const authHeader = () => ({
-    authorization: 'Basic ' + Buffer.from(UP).toString('base64'),
-});
+const authHeader = () => ({ authorization: 'Basic ' + Buffer.from(UP).toString('base64') });
 
 /* One Cog per source tile, each with its own range-fetcher and tile cache, so adjacent blocks
    that land in the same 512x512 COG tile only pull it once. */
@@ -94,10 +84,7 @@ async function cogFor(href) {
     if (cogs.has(href)) return cogs.get(href);
     const u = new URL(href);
     const fetchRange = async (start, end) => {
-        const b = await get(href, {
-            ...authHeader(),
-            range: `bytes=${start}-${end}`,
-        });
+        const b = await get(href, { ...authHeader(), range: `bytes=${start}-${end}` });
         nreq++;
         nbytes += b.length;
         return b;
@@ -138,14 +125,7 @@ function readPoints() {
         for (const kind of ['nodes', 'sensors'])
             for (const c of s[kind] || []) {
                 const t = toTM(c.lat, c.lng);
-                out.push({
-                    name: c.name,
-                    lat: c.lat,
-                    lng: c.lng,
-                    e: t.e,
-                    n: t.n,
-                    from: path.basename(f),
-                });
+                out.push({ name: c.name, lat: c.lat, lng: c.lng, e: t.e, n: t.n, from: path.basename(f) });
             }
     }
     return out;
@@ -238,13 +218,7 @@ async function groundBlock(cog, e0, n0) {
         magic: 'iotdata-terrain',
         v: 1,
         side: B.SIDE,
-        ground: {
-            res: B.LAYERS.ground.res,
-            scale: B.LAYERS.ground.scale,
-            source: 'Lantmateriet Markhojdmodell (dtm-cog)',
-            crs: 'EPSG:5845',
-            tiles: [...new Set([...((prev.ground && prev.ground.tiles) || []), ...tiles])].sort(),
-        },
+        ground: { res: B.LAYERS.ground.res, scale: B.LAYERS.ground.scale, source: 'Lantmateriet Markhojdmodell (dtm-cog)', crs: 'EPSG:5845', tiles: [...new Set([...((prev.ground && prev.ground.tiles) || []), ...tiles])].sort() },
         radius: RADIUS,
         built: new Date().toISOString().slice(0, 19) + 'Z',
     };

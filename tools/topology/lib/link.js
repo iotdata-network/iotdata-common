@@ -106,24 +106,7 @@
             for (let k = 0; k < n; k++) if (pts[k].los < pts[k].top && pts[k].los >= pts[k].ground) vegDepth += step;
         }
 
-        const out = {
-            d,
-            n,
-            pts,
-            peak,
-            worst,
-            vegPeak,
-            known,
-            lam,
-            spacing: n > 1 ? d / (n - 1) : 0,
-            hasVeg: vegUnknown < n,
-            vegMax,
-            vegMean: vegSum / n,
-            vegUnknown: vegUnknown / n,
-            vegDepth,
-            vegLoss: weissberger(vegDepth, freq),
-            grow,
-        };
+        const out = { d, n, pts, peak, worst, vegPeak, known, lam, spacing: n > 1 ? d / (n - 1) : 0, hasVeg: vegUnknown < n, vegMax, vegMean: vegSum / n, vegUnknown: vegUnknown / n, vegDepth, vegLoss: weissberger(vegDepth, freq), grow };
         const rs = [];
         for (const s of prof) if (s.res != null) rs.push(s.res);
         out.resMax = rs.length ? Math.max.apply(null, rs) : null;
@@ -169,14 +152,7 @@
      decibels are a consequence of it, so the UI asks for the former and derives the latter.
      Slower is more sensitive and much slower on air: SF12 buys 14dB over SF7 and costs roughly 32x
      the airtime, which the EU duty cycle then limits. */
-    const LORA_SENS = {
-        7: -123,
-        8: -126,
-        9: -129,
-        10: -132,
-        11: -134.5,
-        12: -137,
-    };
+    const LORA_SENS = { 7: -123, 8: -126, 9: -129, 10: -132, 11: -134.5, 12: -137 };
     const SFS = [7, 8, 9, 10, 11, 12];
 
     const sens = (sf) => (LORA_SENS[sf] != null ? LORA_SENS[sf] : LORA_SENS[12]);
@@ -199,25 +175,5 @@
     /* The spreading factors that still close a path of this loss, fastest first. */
     const sfsThatClose = (loss, sysGain) => SFS.filter((sf) => budgetFor(sf, sysGain) - loss >= 0);
 
-    return {
-        R_EARTH,
-        K_REFRACT,
-        C_LIGHT,
-        lambda,
-        bulge,
-        fresnel,
-        fspl,
-        knifeEdge,
-        weissberger,
-        analyse,
-        BANDS,
-        bandOf,
-        LORA_SENS,
-        SFS,
-        sens,
-        systemGain,
-        budgetFor,
-        eirpOf,
-        sfsThatClose,
-    };
+    return { R_EARTH, K_REFRACT, C_LIGHT, lambda, bulge, fresnel, fspl, knifeEdge, weissberger, analyse, BANDS, bandOf, LORA_SENS, SFS, sens, systemGain, budgetFor, eirpOf, sfsThatClose };
 });

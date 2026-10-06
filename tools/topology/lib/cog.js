@@ -9,37 +9,8 @@
  */
 const zlib = require('zlib');
 
-const T = {
-    WIDTH: 256,
-    LENGTH: 257,
-    BITS: 258,
-    COMPRESSION: 259,
-    PREDICTOR: 317,
-    TILE_W: 322,
-    TILE_L: 323,
-    TILE_OFFSETS: 324,
-    TILE_BYTES: 325,
-    SAMPLES: 277,
-    SAMPLE_FORMAT: 339,
-    PIXEL_SCALE: 33550,
-    TIEPOINT: 33922,
-    NODATA: 42113,
-};
-const TYPE_SIZE = {
-    1: 1,
-    2: 1,
-    3: 2,
-    4: 4,
-    5: 8,
-    6: 1,
-    7: 1,
-    8: 2,
-    9: 4,
-    10: 8,
-    11: 4,
-    12: 8,
-    16: 8,
-};
+const T = { WIDTH: 256, LENGTH: 257, BITS: 258, COMPRESSION: 259, PREDICTOR: 317, TILE_W: 322, TILE_L: 323, TILE_OFFSETS: 324, TILE_BYTES: 325, SAMPLES: 277, SAMPLE_FORMAT: 339, PIXEL_SCALE: 33550, TIEPOINT: 33922, NODATA: 42113 };
+const TYPE_SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 16: 8 };
 
 class Cog {
     constructor(fetchRange) {
