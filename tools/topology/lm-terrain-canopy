@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""
+lm-terrain-canopy -- add the vegetation layer to the terrain cache, from Laserdata Skog.
+
+    LM_USERPASS="user:pass" ./lm-terrain-canopy --radius 1000
+
+Ground and canopy come from the SAME Lantmateriet laser campaign -- Markhojdmodell is the
+ground-classified subset gridded to 1m, Laserdata Skog is every return including treetops -- so
+they subtract cleanly into a canopy height without any cross-dataset registration error.
+
+This is Python rather than node because the payload is LAZ: a COPC octree of arithmetic-coded
+point records, which is not something to hand-decode. It only has to run once per block ever,
+because the cache is committed. Needs:  pip install 'laspy[lazrs]' numpy
+
+Cells with no laser return at all are stored as 'unknown' rather than as zero -- water absorbs the
+beam, and a data gap must not read as 'no trees here'.
+"""
+import argparse, io, json, os, sys, zlib, math, gc
+from pathlib import Path
+
+try:
+    import numpy as np
+    import laspy
+    from laspy.copc import CopcReader, Bounds
+except ImportError as e:
+    sys.exit(f"terrain-canopy: missing dependency ({e.name}).\n"
+             f"  python3 -m venv venv && ./venv/bin/pip install 'laspy[lazrs]' numpy requests")
+try:
+    import requests
+except ImportError:
+    sys.exit("terrain-canopy: missing requests. pip install requests")
+
+STAC = "https://api.lantmateriet.se/stac-hojd/v1"
+SIDE = 1000
+GROUND_RES, CANOPY_RES = 1, 2
+UNKNOWN = 255
+
+ap = argparse.ArgumentParser(add_help=True)
+ap.add_argument("--state", default="./topology.json", help="state file(s), comma separated")
+ap.add_argument("--cache", default="./cache")
+ap.add_argument("--radius", type=float, default=1000)
+# Taking the highest return per cell is what makes this a surface model, and it is also what makes
+# it vulnerable to a single bad point: one bird or cloud return becomes a wall across the cell. The
+# tallest tree in Sweden is about 49m, so anything above 60m above ground is not vegetation.
+ap.add_argument("--max-height", type=float, default=50.0,
+                help="discard returns more than this far above ground (metres, default 50)")
+# A ceiling cannot tell an isolated spike from a genuinely tall stand, so the surviving returns are
+# also checked for spatial coherence: real canopy and real buildings cover several cells, a cloud
+# or bird return does not. Observed here -- a smear of weak atmospheric returns over a 2-3 storey
+# building read as 54-207m until both filters were applied.
+ap.add_argument("--despeckle", type=float, default=10.0,
+                help="pull a cell down to its tallest neighbour if it stands this far above all "
+                     "of them (metres, 0 disables)")
+ap.add_argument("--force", action="store_true")
+ap.add_argument("--dry-run", action="store_true")
+args = ap.parse_args()
+
+CACHE = Path(args.cache).resolve()
+USERPASS = os.environ.get("LM_USERPASS", "")
+
+# ---- the same block geometry as lib/blocks.js ------------------------------------------------
+sys.path.insert(0, str(Path(__file__).parent))
+
+
+def to_tm(lat, lng):
+    """SWEREF 99 TM, matching lib/sweref.js. Gauss conformal, Lantmateriet's series."""
+    a, f = 6378137.0, 1 / 298.257222101
+    k0, fe, lon0 = 0.9996, 500000.0, math.radians(15)
+    e2 = f * (2 - f); n = f / (2 - f)
+    ahat = a / (1 + n) * (1 + n**2 / 4 + n**4 / 64)
+    A = e2
+    B = (5 * e2**2 - e2**3) / 6
+    C = (104 * e2**3 - 45 * e2**4) / 120
+    D = 1237 * e2**4 / 1260
+    b1 = n / 2 - 2 * n**2 / 3 + 5 * n**3 / 16 + 41 * n**4 / 180
+    b2 = 13 * n**2 / 48 - 3 * n**3 / 5 + 557 * n**4 / 1440
+    b3 = 61 * n**3 / 240 - 103 * n**4 / 140
+    b4 = 49561 * n**4 / 161280
+    phi = math.radians(lat); dl = math.radians(lng) - lon0
+    s, c = math.sin(phi), math.cos(phi)
+    ps = phi - s * c * (A + B * s**2 + C * s**4 + D * s**6)
+    xi = math.atan(math.tan(ps) / math.cos(dl))
+    eta = math.atanh(math.cos(ps) * math.sin(dl))
+    north = k0 * ahat * (xi + b1 * math.sin(2*xi) * math.cosh(2*eta)
+                            + b2 * math.sin(4*xi) * math.cosh(4*eta)
+                            + b3 * math.sin(6*xi) * math.cosh(6*eta)
+                            + b4 * math.sin(8*xi) * math.cosh(8*eta))
+    east = k0 * ahat * (eta + b1 * math.cos(2*xi) * math.sinh(2*eta)
+                            + b2 * math.cos(4*xi) * math.sinh(4*eta)
+                            + b3 * math.cos(6*xi) * math.sinh(6*eta)
+                            + b4 * math.cos(8*xi) * math.sinh(8*eta)) + fe
+    return east, north
+
+
+def to_wgs(e, n):
+    a, f = 6378137.0, 1 / 298.257222101
+    k0, fe, lon0 = 0.9996, 500000.0, math.radians(15)
+    e2 = f * (2 - f); nn = f / (2 - f)
+    ahat = a / (1 + nn) * (1 + nn**2 / 4 + nn**4 / 64)
+    d1 = nn/2 - 2*nn**2/3 + 37*nn**3/96 - nn**4/360
+    d2 = nn**2/48 + nn**3/15 - 437*nn**4/1440
+    d3 = 17*nn**3/480 - 37*nn**4/840
+    d4 = 4397*nn**4/161280
+    As = e2 + e2**2 + e2**3 + e2**4
+    Bs = -(7*e2**2 + 17*e2**3 + 30*e2**4) / 6
+    Cs = (224*e2**3 + 889*e2**4) / 120
+    Ds = -(4279*e2**4) / 1260
+    xi = n / (k0 * ahat); eta = (e - fe) / (k0 * ahat)
+    xs = xi - (d1*math.sin(2*xi)*math.cosh(2*eta) + d2*math.sin(4*xi)*math.cosh(4*eta)
+               + d3*math.sin(6*xi)*math.cosh(6*eta) + d4*math.sin(8*xi)*math.cosh(8*eta))
+    es = eta - (d1*math.cos(2*xi)*math.sinh(2*eta) + d2*math.cos(4*xi)*math.sinh(4*eta)
+                + d3*math.cos(6*xi)*math.sinh(6*eta) + d4*math.cos(8*xi)*math.sinh(8*eta))
+    ps = math.asin(math.sin(xs) / math.cosh(es))
+    dl = math.atan(math.sinh(es) / math.cos(xs))
+    s, c = math.sin(ps), math.cos(ps)
+    phi = ps + s * c * (As + Bs*s**2 + Cs*s**4 + Ds*s**6)
+    return math.degrees(phi), math.degrees(lon0 + dl)
+
+
+def key_of(e0, n0):
+    return f"E{e0 // 1000}_N{n0 // 1000}"
+
+
+def blocks_for(points, radius):
+    out = {}
+    for (pe, pn) in points:
+        for e in range(int(math.floor((pe - radius) / SIDE) * SIDE),
+                       int(math.floor((pe + radius) / SIDE) * SIDE) + 1, SIDE):
+            for n in range(int(math.floor((pn - radius) / SIDE) * SIDE),
+                           int(math.floor((pn + radius) / SIDE) * SIDE) + 1, SIDE):
+                dx = max(e - pe, 0, pe - (e + SIDE))
+                dy = max(n - pn, 0, pn - (n + SIDE))
+                if math.hypot(dx, dy) <= radius:
+                    out[key_of(e, n)] = (e, n)
+    return sorted(out.items())
+
+
+def read_block(path):
+    raw = path.read_bytes()
+    nl = raw.index(b"\n")
+    meta = json.loads(raw[:nl])
+    body = zlib.decompress(raw[nl + 1:])
+    arr = np.frombuffer(body, dtype="<i2").reshape(meta["w"], meta["w"])
+    if meta.get("delta"):
+        arr = np.cumsum(arr.astype("<i4"), axis=1).astype("<i4")
+    return meta, arr.astype("float64") * meta["scale"], np.frombuffer(body, dtype="<i2")
+
+
+def write_block(e0, n0, grid, extra):
+    meta = {"magic": "iotdata-terrain", "v": 1, "layer": "canopy", "e0": e0, "n0": n0,
+            "side": SIDE, "res": CANOPY_RES, "dtype": "u8", "scale": 1.0, "nodata": UNKNOWN,
+            "delta": False, "w": SIDE // CANOPY_RES, **extra}
+    d = CACHE / "canopy"
+    d.mkdir(parents=True, exist_ok=True)
+    body = zlib.compress(grid.astype("uint8").tobytes(), 9)
+    p = d / (key_of(e0, n0) + ".bin")
+    tmp = p.with_suffix(".bin.tmp")
+    tmp.write_bytes(json.dumps(meta, separators=(",", ":")).encode() + b"\n" + body)
+    tmp.replace(p)
+    return p.stat().st_size
+
+
+class HttpRangeFile(io.RawIOBase):
+    """Seekable read-only file over HTTP byte ranges, so COPC octree nodes are fetched on demand
+    instead of pulling the 1.5GB tile."""
+
+    def __init__(self, url, auth):
+        self.url, self.sess, self.pos, self.nreq, self.nbytes = url, requests.Session(), 0, 0, 0
+        self.sess.auth = auth
+        h = self.sess.head(url, timeout=60)
+        h.raise_for_status()
+        self.size = int(h.headers["content-length"])
+
+    def readable(self): return True
+    def seekable(self): return True
+    def tell(self): return self.pos
+
+    def seek(self, off, whence=io.SEEK_SET):
+        self.pos = off if whence == 0 else self.pos + off if whence == 1 else self.size + off
+        return self.pos
+
+    def read(self, n=-1):
+        if n is None or n < 0:
+            n = self.size - self.pos
+        if n == 0 or self.pos >= self.size:
+            return b""
+        end = min(self.pos + n, self.size) - 1
+        r = self.sess.get(self.url, headers={"Range": f"bytes={self.pos}-{end}"}, timeout=180)
+        r.raise_for_status()
+        b = r.content
+        self.nreq += 1; self.nbytes += len(b); self.pos += len(b)
+        return b
+
+    def readinto(self, buf):
+        d = self.read(len(buf))
+        buf[:len(d)] = d
+        return len(d)
+
+
+def stac_item(collection, e, n):
+    lat, lng = to_wgs(e, n)
+    r = requests.get(f"{STAC}/search", timeout=120, params={
+        "collections": collection, "limit": 1,
+        "bbox": f"{lng-1e-5},{lat-1e-5},{lng+1e-5},{lat+1e-5}"})
+    r.raise_for_status()
+    fs = r.json()["features"]
+    return fs[0] if fs else None
+
+
+# ---- main -------------------------------------------------------------------------------------
+points = []
+for f in args.state.split(","):
+    try:
+        s = json.loads(Path(f.strip()).read_text())
+    except Exception as ex:
+        print(f"terrain-canopy: {f}: {ex}", file=sys.stderr); continue
+    for kind in ("nodes", "sensors"):
+        for c in s.get(kind, []):
+            points.append(to_tm(c["lat"], c["lng"]))
+if not points:
+    sys.exit("terrain-canopy: no points found")
+
+want = blocks_for(points, args.radius)
+todo = [(k, en) for k, en in want
+        if args.force or not (CACHE / "canopy" / (k + ".bin")).exists()]
+print(f"terrain-canopy: {len(points)} points, {args.radius:.0f}m radius -> {len(want)} blocks")
+print(f"terrain-canopy: {len(want)-len(todo)} already cached, {len(todo)} to build")
+if args.dry_run:
+    for k, _ in todo:
+        print("  would build " + k)
+    sys.exit(0)
+if todo and not USERPASS:
+    sys.exit('terrain-canopy: LM_USERPASS is not set. Export it as "user:pass".')
+
+auth = tuple(USERPASS.split(":", 1)) if USERPASS else None
+readers, total_bytes, written = {}, 0, 0
+W = SIDE // CANOPY_RES
+
+for i, (k, (e0, n0)) in enumerate(todo, 1):
+    gfile = CACHE / "ground" / (k + ".bin")
+    if not gfile.exists():
+        print(f"  [{i}/{len(todo)}] {k}: no ground block yet, run ./lm-terrain-ground first -- skipped")
+        continue
+    item = stac_item("dsm-skoglig-copc", e0 + SIDE / 2, n0 + SIDE / 2)
+    if not item:
+        print(f"  [{i}/{len(todo)}] {k}: no Laserdata Skog coverage, skipped")
+        continue
+    href = item["assets"]["data"]["href"]
+    if href not in readers:
+        fh = HttpRangeFile(href, auth)
+        readers[href] = (fh, CopcReader.open(fh))
+    fh, rd = readers[href]
+
+    zc = float(rd.copc_info.center[2]); hs = float(rd.copc_info.halfsize)
+    # z must span the octree's own cube: a narrow z band prunes the traversal and returns almost
+    # nothing (see the COPC notes -- query() fills a 2D box's z from header.mins/maxs).
+    b = Bounds(np.array([e0, n0, zc - hs]), np.array([e0 + SIDE, n0 + SIDE, zc + hs]))
+    before = fh.nbytes
+    pts = rd.query(b)
+    x = np.asarray(pts.x, dtype="float64")
+    y = np.asarray(pts.y, dtype="float64")
+    z = np.asarray(pts.z, dtype="float64")
+    cls = np.asarray(pts.classification)
+    del pts; gc.collect()
+
+    keep = (x >= e0) & (x < e0 + SIDE) & (y >= n0) & (y < n0 + SIDE)
+    x, y, z, cls = x[keep], y[keep], z[keep], cls[keep]
+
+    gmeta, ground1, _ = read_block(gfile)
+    # ground at the canopy cell size, from OUR cached block so the two layers stay consistent
+    g2 = ground1.reshape(W, CANOPY_RES, W, CANOPY_RES).mean(axis=(1, 3))
+
+    ix = np.clip(((x - e0) / CANOPY_RES).astype(int), 0, W - 1)
+    iy = np.clip((((n0 + SIDE) - y) / CANOPY_RES).astype(int), 0, W - 1)
+
+    # Reject noise BEFORE taking the per-cell maximum, or one bad return becomes a wall. Two
+    # filters, because neither alone is enough: the ASPRS noise classes are present but do not
+    # catch everything (observed here -- a 207m atmospheric return carrying class 1), and a bare
+    # height ceiling would keep a low-flying bird. Height above ground is the one that works.
+    agl = z - g2[iy, ix]
+    good = (agl <= args.max_height) & ~np.isin(cls, (7, 18))
+    dropped = int((~good).sum())
+    ix, iy, z = ix[good], iy[good], z[good]
+
+    top = np.full(W * W, -np.inf)
+    np.maximum.at(top, iy * W + ix, z)          # highest surviving return per cell = the surface
+    top = top.reshape(W, W)
+
+    chm = top - g2
+    ok = np.isfinite(top)
+
+    # Despeckle: a cell standing far above EVERY neighbour has no support and is noise. The test is
+    # against the tallest neighbour, not the median -- a median would also flatten a genuinely tall
+    # tree at a forest edge, where half the window is bare ground. Vegetation and buildings are
+    # coherent at 2m cells: a spruce apex rises a few metres above its own crown, not ten.
+    speckle = 0
+    if args.despeckle > 0:
+        pad = 2
+        v = np.where(ok, chm, -np.inf)
+        win = np.lib.stride_tricks.sliding_window_view(
+            np.pad(v, pad, constant_values=-np.inf), (2 * pad + 1, 2 * pad + 1)).copy()
+        win[:, :, pad, pad] = -np.inf                  # exclude the cell itself
+        nb = win.max(axis=(2, 3))
+        spike = ok & np.isfinite(nb) & (chm > nb + args.despeckle)
+        speckle = int(spike.sum())
+        chm = np.where(spike, nb, chm)
+
+    out = np.full((W, W), UNKNOWN, dtype="uint8")
+    out[ok] = np.clip(np.round(chm[ok]), 0, UNKNOWN - 1).astype("uint8")
+    cover = float(ok.mean())
+
+    sz = write_block(e0, n0, out, {
+        "source": "lantmateriet:dsm-skoglig-copc", "tile": item["id"],
+        "flown": item["properties"]["datetime"],
+        "density": item["properties"].get("pc:density"),
+        "coverage": round(cover, 4), "crs": item["properties"].get("proj:code"),
+        "max_height": args.max_height, "dropped": dropped,
+        "despeckle": args.despeckle, "speckle": speckle,
+    })
+    written += 1; total_bytes += sz
+    vals = out[ok]
+    print(f"  [{i}/{len(todo)}] {k}  {sz/1024:5.0f} KiB  {x.size:7d} pts  "
+          f"cover {100*cover:5.1f}%  canopy p50 {np.percentile(vals,50):4.1f} "
+          f"p95 {np.percentile(vals,95):4.1f} max {vals.max():3d} m  "
+          f"drop {dropped:4d}/{speckle:3d}  (+{(fh.nbytes-before)/1e6:.0f} MB)", flush=True)
+    del x, y, z, cls, top, chm, out; gc.collect()
+
+mf = CACHE / "manifest.json"
+m = json.loads(mf.read_text()) if mf.exists() else {}
+m["canopy"] = {"res": CANOPY_RES, "scale": 1.0, "unknown": UNKNOWN,
+               "source": "Lantmateriet Laserdata Skog (dsm-skoglig-copc)",
+               "note": "highest laser return per cell minus Markhojdmodell ground; "
+                       "unknown where no return reached the cell (typically water)"}
+mf.write_text(json.dumps(m, indent=2) + "\n")
+
+net = sum(fh.nbytes for fh, _ in readers.values())
+print(f"terrain-canopy: wrote {written} blocks, {total_bytes/1e6:.2f} MB cached, "
+      f"{net/1e6:.0f} MB streamed")

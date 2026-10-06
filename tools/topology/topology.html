@@ -1,0 +1,1369 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>site topology</title>
+<style>
+  :root { --bg:#14181d; --fg:#e8edf2; --mut:#8c98a6; --rule:#2b333c; --acc:#4fb8d8; --sens:#f0b429; }
+  * { box-sizing:border-box }
+  html,body { margin:0; height:100%; font:13px/1.45 ui-sans-serif,system-ui,sans-serif;
+              background:var(--bg); color:var(--fg) }
+  #wrap { display:flex; height:100% }
+  #mapbox { flex:1; min-width:0; position:relative }
+  #map { position:absolute; inset:0 }
+  #panel { width:340px; flex:none; overflow-y:auto; border-left:1px solid var(--rule);
+           padding:12px 14px 40px; background:var(--bg) }
+  h1 { font-size:14px; margin:0 0 2px; letter-spacing:.02em }
+  .sub { color:var(--mut); font-size:11px; margin:0 0 12px }
+  fieldset { border:1px solid var(--rule); border-radius:5px; padding:8px 10px 10px; margin:0 0 10px }
+  legend, summary { color:var(--mut); font-size:10px; text-transform:uppercase; letter-spacing:.1em }
+  legend { padding:0 4px }
+  details { border:1px solid var(--rule); border-radius:5px; margin:0 0 10px }
+  summary { padding:7px 10px; cursor:pointer; user-select:none }
+  summary::marker { color:var(--mut) }
+  details[open] summary { border-bottom:1px solid var(--rule) }
+  .body { padding:6px 10px 10px }
+  label { display:block; color:var(--mut); font-size:11px; margin:6px 0 2px }
+  input[type=text],input[type=number],select {
+      width:100%; background:#1c2228; color:var(--fg); border:1px solid var(--rule);
+      border-radius:4px; padding:4px 6px; font:inherit; font-variant-numeric:tabular-nums }
+  .row { display:flex; gap:6px } .row>* { flex:1; min-width:0 }
+  .c { border:1px solid var(--rule); border-left-width:4px; border-radius:4px;
+       padding:6px 8px 7px; margin:6px 0 }
+  .ch { display:flex; align-items:center; gap:6px }
+  .ch input[type=text] { flex:1 }
+  .ch input[type=checkbox] { flex:none; accent-color:var(--acc) }
+  .x { flex:none; background:none; border:none; color:var(--mut); cursor:pointer; font-size:15px;
+       line-height:1; padding:0 2px }
+  .x:hover { color:#e6194b }
+  .ll { font:11px/1.35 ui-monospace,monospace; color:var(--mut); font-variant-numeric:tabular-nums;
+        display:flex; justify-content:space-between; gap:6px; margin-top:4px }
+  .el { font:11px/1.35 ui-monospace,monospace; color:var(--acc); margin-top:2px }
+  .el .grid { color:var(--mut) }
+  .el .grid.coarse { color:#f0b429 }
+  .note { color:var(--mut); font-size:10px; font-style:italic; margin-top:2px }
+  button { background:#232b33; color:var(--fg); border:1px solid var(--rule); border-radius:4px;
+           padding:6px 10px; font:inherit; cursor:pointer }
+  button:hover { border-color:var(--acc) }
+  button.p { background:var(--acc); color:#06222c; border-color:var(--acc) }
+  button.add { width:100%; margin-top:4px }
+  table { width:100%; border-collapse:collapse; font:11px/1.4 ui-monospace,monospace;
+          font-variant-numeric:tabular-nums }
+  th,td { text-align:right; padding:2px 3px; border-bottom:1px solid var(--rule) }
+  th:first-child,td:first-child { text-align:left }
+  th { color:var(--mut); font-weight:400 }
+  #hover { position:absolute; left:10px; bottom:10px; width:342px; max-height:46%; overflow-y:auto;
+           background:rgba(20,24,29,.93); border:1px solid var(--rule); border-radius:5px;
+           padding:7px 9px; display:none; backdrop-filter:blur(3px) }
+  #hover h2 { font-size:12px; margin:0 0 4px; display:flex; align-items:center; gap:6px }
+  #hover .dot { width:9px; height:9px; border-radius:50%; flex:none }
+  /* Pinned is a different mode, not just a sticky tooltip -- it gets the accent border, the close
+     cross, and clickable rows. An unpinned box is read-only, so it must not look clickable. */
+  #hover.pinned { border-color:var(--acc) }
+  #hover h2 .x, #prof h2 .x { margin-left:auto }
+  #hover:not(.pinned) h2 .x { display:none }
+  table.live tr[data-j] { cursor:pointer }
+  table.live tr[data-j]:hover td { background:#1f262d }
+  table tr.sel td { background:#1d303a }
+  table tr.probe td { border-top:1px solid var(--acc); font-style:italic }
+  /* the receptivity toggle sits with the name, because the field it draws belongs to this node */
+  .tog { flex:none; background:none; border:1px solid var(--rule); border-radius:3px;
+         color:var(--mut); cursor:pointer; font:10px/1.3 ui-monospace,monospace;
+         padding:1px 5px; margin-left:auto }
+  .tog:hover { border-color:var(--acc); color:var(--fg) }
+  .tog.on { background:var(--acc); border-color:var(--acc); color:#06222c }
+  .tog.busy { opacity:.5; pointer-events:none }
+  #hover h2 .tog + .x { margin-left:4px }
+  .probeline { font:11px/1.4 ui-monospace,monospace; color:var(--acc); margin-top:5px;
+               display:flex; align-items:center; gap:6px }
+  .probeline .x { font-size:13px }
+  .legend { margin-top:6px; font:10px/1.5 ui-monospace,monospace; color:var(--mut) }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:4px;
+              vertical-align:-1px }
+  .legend div { display:inline-block; margin-right:9px; white-space:nowrap }
+  .ok { color:#5fd37a } .warn { color:var(--sens) } .bad { color:#ff6b86 }
+  td .f1 { margin-left:3px; opacity:.7 }
+  #prof { position:absolute; left:362px; bottom:10px; width:490px; max-height:72%; overflow-y:auto;
+          background:rgba(20,24,29,.95); border:1px solid var(--acc); border-radius:5px;
+          padding:7px 9px; display:none; backdrop-filter:blur(3px) }
+  #prof h2 { font-size:12px; margin:0 0 2px; display:flex; align-items:center; gap:6px }
+  #prof svg { width:100%; height:auto; display:block; margin:3px 0 1px }
+  #prof .stats { font:11px/1.55 ui-monospace,monospace; font-variant-numeric:tabular-nums }
+  #prof .stats span.k { color:var(--mut) }
+  /* The chart needs real width to say anything, so while it is open the map pane is clamped and the
+     window scrolls instead of crushing the profile into illegibility. */
+  body.prof #mapbox { min-width:872px }
+  body.prof #wrap { overflow-x:auto }
+  /* Leaving the cached terrain is not a transient status-line event -- every elevation on screen
+     is silently wrong until it is fixed -- so it gets a banner that stays until it is resolved. */
+  #cover { position:absolute; left:50%; top:10px; transform:translateX(-50%); max-width:min(620px,92%);
+           background:rgba(70,26,10,.95); border:1px solid #f0b429; border-radius:5px;
+           padding:8px 11px; display:none; z-index:5; backdrop-filter:blur(3px) }
+  #cover h3 { margin:0 0 3px; font-size:12px; color:var(--sens) }
+  #cover p { margin:0; font-size:11px; color:#e8d9bd; line-height:1.45 }
+  #cover code { background:rgba(0,0,0,.35); padding:0 3px; border-radius:3px }
+  #msg { color:var(--acc); font-size:11px; min-height:15px; margin-top:6px }
+  .hint { color:var(--mut); font-size:10px; margin-top:6px }
+  .prov { font:10px/1.4 ui-monospace,monospace; color:var(--mut); margin-top:4px }
+  @media print {
+    #panel,#hover,#prof,#cover { display:none !important } #wrap { display:block }
+    #mapbox { position:fixed; inset:0; min-width:0 }
+    html,body { background:#fff }
+  }
+</style>
+<div id="wrap">
+  <div id="mapbox"><div id="map"></div>
+    <div id="hover"><h2><span class="dot" id="hdot"></span><span id="hname"></span>
+      <button class="tog" id="hfield" title="radial receptivity overlay">receptivity</button>
+      <button class="x" id="hunpin" title="unpin">&times;</button></h2><div id="hbody"></div></div>
+    <div id="prof"><h2><span id="pname"></span>
+      <button class="x" id="pclose" title="close">&times;</button></h2><div id="pbody"></div></div>
+    <div id="cover"><h3 id="covh"></h3><p id="covp"></p></div>
+  </div>
+  <div id="panel">
+    <h1>site topology</h1>
+    <p class="sub">Drag to place. Rings are geodesic, so they stay true at this latitude.
+       Hover a marker for its separations; click to pin it, then click a row for the terrain profile.</p>
+    <fieldset><legend>rings</legend>
+      <div class="row">
+        <div><label>spacing (m)</label><input type="number" id="spacing" min="10" step="10"></div>
+        <div><label>outermost (m)</label><input type="number" id="max" min="50" step="50"></div>
+      </div>
+      <label><input type="checkbox" id="labels"> distance labels</label>
+      <label>base map</label>
+      <select id="mapType">
+        <option value="terrain">terrain</option><option value="hybrid">satellite + labels</option>
+        <option value="satellite">satellite</option><option value="roadmap">roadmap</option>
+      </select>
+    </fieldset>
+    <fieldset><legend>link profile</legend>
+      <label>elevation source</label>
+      <select id="provider"></select>
+      <div class="row"><div><label>frequency (MHz)</label>
+        <input type="number" id="freq" min="30" step="1"></div>
+        <div><label>canopy growth (m/yr)</label>
+        <input type="number" id="grow" min="0" max="2" step="0.1"></div></div>
+      <div class="row"><div><label>sensitivity</label>
+        <select id="sf"></select></div>
+        <div><label>default tx (dBm)</label>
+        <input type="number" id="txdbm" min="-10" max="40" step="1"></div></div>
+      <div class="row" id="sensrow" hidden><div><label>receiver sensitivity (dBm)</label>
+        <input type="number" id="sens" min="-160" max="-80" step="0.5"></div><div></div></div>
+      <div class="row"><div><label>default antenna (dBi)</label>
+        <input type="number" id="gain" min="-5" max="30" step="0.5"></div>
+        <div><label>receiver antenna (dBi)</label>
+        <input type="number" id="rxgain" min="-5" max="30" step="0.5"></div></div>
+      <div class="row"><div><label>probe antenna agl (m)</label>
+        <input type="number" id="pagl" min="0" max="100" step="0.5"></div>
+        <div><label>receiver agl (m)</label>
+        <input type="number" id="tagl" min="0" max="100" step="0.5"></div></div>
+      <label title="combine every gateway and relay into one best-signal map">
+        <input type="checkbox" id="covg"> deployment coverage (best of all)</label>
+      <div class="prov" id="covinfo"></div>
+      <div class="prov" id="provinfo"></div>
+      <div class="hint">Ground clearance is judged against 60% of the first Fresnel zone with earth
+        curvature at k=4/3 &mdash; optimistic in the winter inversions this valley gets. Canopy is
+        scored separately as excess loss, because vegetation attenuates rather than blocks.</div>
+    </fieldset>
+    <details open><summary>gateways &amp; relays</summary><div class="body">
+      <div id="nodes"></div><button class="add" id="addnode">+ add gateway / relay</button>
+    </div></details>
+    <details open><summary>sensors</summary><div class="body">
+      <div id="sensors"></div><button class="add" id="addsensor">+ add sensor</button>
+      <div class="hint">Sensors carry no rings &mdash; hover one to see its reach to each gateway and relay.</div>
+    </div></details>
+    <div class="row">
+      <button class="p" id="save">save</button><button id="reload">reload</button><button id="print">print</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+</div>
+<script src="/lib/link.js"></script>
+<script>
+const COLOURS = ['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#2ad4e0',
+                 '#f032e6','#bcbd22','#17becf','#ff7f0e'];
+const SENSOR = '#f0b429';
+/* A SENSOR IS DRAWN AS AN SVG, not as a symbol with a label on top of it. A Marker label is laid
+   inside the glyph, so it was clipped the moment the count reached double digits and was low
+   contrast at any size that kept the glyph subordinate to the gateways. Here the text sits BELOW
+   the box with a white halo (paint-order: stroke), so the glyph stays small, any number fits, and
+   it stays readable over terrain, satellite and a greyscale print. */
+function sensorIcon(n) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="32">`
+        + `<rect x="14" y="1.5" width="15" height="15" rx="2.5" fill="${SENSOR}" `
+        + `stroke="#2a1f00" stroke-width="1.5"/>`
+        + `<text x="21.5" y="28" text-anchor="middle" font-family="system-ui,sans-serif" `
+        + `font-size="12" font-weight="700" fill="#1d1d1d" stroke="#ffffff" stroke-width="3.2" `
+        + `paint-order="stroke" stroke-linejoin="round">${n}</text></svg>`;
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+        anchor: new google.maps.Point(21.5, 9),   /* the BOX centre is the position, not the text */
+        scaledSize: new google.maps.Size(44, 32),
+    };
+}
+let map, S = null, elev = null, marks = { nodes: [], sensors: [] }, rings = [], labels = [], etimer = null;
+/* `pin` is the marker whose panel is held open; `shown` is whatever the panel is displaying right
+   now, which differs from `pin` while another marker is hovered over the top of it. `sel` is the
+   link whose profile is open. */
+let pin = null, shown = null, sel = null, dragging = false;
+const $ = (id) => document.getElementById(id);
+const colourOf = (kind, i) => kind === 'nodes' ? COLOURS[i % COLOURS.length] : SENSOR;
+const msg = (t) => { $('msg').textContent = t;
+  if (t) setTimeout(() => { if ($('msg').textContent === t) $('msg').textContent = ''; }, 5000); };
+const m2s = (d) => d < 10000 ? Math.round(d) + 'm' : (d / 1000).toFixed(2) + 'km';
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
+async function boot() {
+  S = await (await fetch('/api/state')).json();
+  S.spacing ||= 100; S.max ||= 1000; S.mapType ||= 'terrain'; S.labels = S.labels !== false;
+  S.freq ||= 868;                             /* EU868, which is what this site is licensed under */
+  S.canopyGrow ??= 0;
+  S.sf ??= 12;               /* slowest and most sensitive; the generous end of the range */
+  S.txdbm ??= 22;            /* module power, overridable per device                          */
+  S.gain ??= 5;              /* antenna gain, likewise                                        */
+  S.rxGain ??= 5;            /* the hypothetical far end in a receptivity field                */
+  delete S.eirp;             /* superseded: power and antenna are per device now               */
+  delete S.budget;           /* superseded: the budget is now derived from sf + eirp           */
+  S.targetAgl ??= 1;         /* a sensor on a post, which is what most of these are   */
+  S.probeAgl ??= 2;          /* a candidate mast, deliberately separate from the above */
+  S.nodes ||= []; S.sensors ||= [];
+  /* Default to Lantmateriet where there is a cache to read; fall back to Google so the tool still
+     works at a site that has not been built yet, or outside Sweden. */
+  try { TERRAIN = await (await fetch('/api/terrain')).json(); } catch { TERRAIN = null; }
+  const haveLM = !!(TERRAIN && TERRAIN.blocks && TERRAIN.blocks.ground);
+  if (!S.provider || !PROVIDERS[S.provider]) S.provider = haveLM ? 'lm' : 'google';
+  if (S.provider === 'lm' && !haveLM) S.provider = 'google';
+  const first = S.nodes[0] || S.sensors[0] || { lat: 59.66206682, lng: 12.99552614 };
+  map = new google.maps.Map($('map'), {
+    center: { lat: first.lat, lng: first.lng }, zoom: 13, mapTypeId: S.mapType,
+    mapTypeControl: false, streetViewControl: false, tilt: 0,
+  });
+  elev = new google.maps.ElevationService();
+  /* A marker click does not reach the map, so this only fires on bare map. While a panel is
+     pinned that is the gesture for dropping a probe; with nothing pinned it just dismisses. */
+  map.addListener('click', (ev) => {
+    const first = !pin;
+    setProbe(ev.latLng.lat(), ev.latLng.lng());
+    /* Nothing pinned means there is nothing for the probe to be a target OF, so it becomes the
+       subject instead: its own panel, its own links to every gateway and relay, and its own
+       receptivity field. That is the relay-siting case. */
+    if (first) { pin = { kind: 'probe', i: 0 }; hover('probe', 0); }
+  });
+  $('spacing').value = S.spacing; $('max').value = S.max; $('freq').value = S.freq;
+  $('grow').value = S.canopyGrow; $('tagl').value = S.targetAgl; $('pagl').value = S.probeAgl;
+  $('txdbm').value = S.txdbm; $('gain').value = S.gain; $('rxgain').value = S.rxGain;
+  sfOptions();
+  $('labels').checked = S.labels; $('mapType').value = S.mapType;
+  $('provider').innerHTML = Object.entries(PROVIDERS)
+    .map(([k, p]) => `<option value="${k}">${p.label}</option>`).join('');
+  $('provider').value = S.provider;
+  provInfo();
+  /* Switching source invalidates every cached elevation and profile -- they are not comparable. */
+  $('provider').onchange = () => {
+    S.provider = $('provider').value;
+    profiles.clear(); wanted.clear(); pbusy = false;
+    for (const c of [...S.nodes, ...S.sensors]) { delete c.elev; delete c.res; delete c.canopy;
+                                                  delete c.outside; }
+    /* the probe is not in the saved arrays, so it needs resampling on its own account */
+    if (probe) { probe.elev = probe.canopy = null; delete probe.outside; probeElev(); }
+    clearField();
+    provInfo(); panel(); elevate(); coverage();
+    msg('elevation source: ' + prov().label);
+  };
+  $('grow').onchange = () => { S.canopyGrow = Math.max(0, Number($('grow').value) || 0); repaint(); };
+  $('sf').onchange = () => {
+    const v = $('sf').value;
+    S.sf = v === 'custom' ? 'custom' : Number(v) || 12;
+    if (S.sf === 'custom' && S.sens == null) S.sens = LINK.sens(12);
+    sfOptions(); repaint(); staleField();
+  };
+  $('sens').onchange = () => { S.sens = Number($('sens').value) || LINK.sens(12); repaint(); staleField(); };
+  for (const [id, key] of [['txdbm', 'txdbm'], ['gain', 'gain'], ['rxgain', 'rxGain']])
+    $(id).onchange = () => { S[key] = Number($(id).value) || 0; panel(); staleField(); };
+  $('tagl').onchange = () => {
+    S.targetAgl = Math.max(0, Number($('tagl').value) || 0);
+    staleField();
+  };
+  $('pagl').onchange = () => {
+    S.probeAgl = Math.max(0, Number($('pagl').value) || 0);
+    if (probe) { probe.agl = S.probeAgl; if (pin) hover(pin.kind, pin.i); repaint(); }
+    staleField();
+  };
+  $('hfield').onclick = toggleField;
+  $('covg').onchange = toggleCoverage;
+  for (const k of ['spacing', 'max']) $(k).onchange = () => {
+    const v = Number($(k).value); if (v > 0) { S[k] = v; draw(); }
+  };
+  /* Frequency only scales the Fresnel radius, so the cached ground samples stay valid -- this is a
+     repaint, never a refetch. */
+  $('freq').onchange = () => { const v = Number($('freq').value); if (v > 0) { S.freq = v; repaint(); } };
+  $('labels').onchange = () => { S.labels = $('labels').checked; draw(); };
+  $('mapType').onchange = () => { S.mapType = $('mapType').value; map.setMapTypeId(S.mapType); };
+  $('hunpin').onclick = unpin;
+  $('pclose').onclick = () => { closeProfile(); if (shown) hover(shown.kind, shown.i); };
+  $('addnode').onclick = () => add('nodes');
+  $('addsensor').onclick = () => add('sensors');
+  $('save').onclick = save; $('reload').onclick = () => location.reload();
+  $('print').onclick = () => window.print();
+  panel(); draw(); elevate();
+}
+
+function add(kind) {
+  const c = map.getCenter(), n = S[kind].length;
+  S[kind].push({ name: kind === 'nodes' ? (n === 0 ? 'gateway' : 'relay ' + n) : 'sensor ' + (n + 1),
+                 lat: +c.lat().toFixed(8), lng: +c.lng().toFixed(8),
+                 rings: kind === 'nodes', agl: 0 });
+  panel(); draw(); elevate();
+}
+/* Removing one shifts every index above it, and pin/sel hold indices, so they are released rather
+   than quietly repointed at a different marker. */
+function del(kind, i) { unpin(); S[kind].splice(i, 1); panel(); draw(); elevate(); }
+
+/* google.maps.Circle cannot be dashed, so a ring is a polyline of geodesic points carrying a dash
+   symbol. computeOffset keeps it a true circle on the ground; a naive lat/lng offset would draw a
+   visible ellipse at 59.7N and be wrong by nearly a factor of two in longitude at 1km. */
+function ringOf(centre, radius, colour) {
+  const pts = [], steps = 180;
+  for (let i = 0; i <= steps; i++)
+    pts.push(google.maps.geometry.spherical.computeOffset(centre, radius, i * 360 / steps));
+  return new google.maps.Polyline({
+    path: pts, strokeOpacity: 0, clickable: false, map, zIndex: 1,
+    icons: [{ icon: { path: 'M 0,-1 0,1', strokeColor: colour, strokeOpacity: .95, strokeWeight: 2, scale: 3 },
+              offset: '0', repeat: '13px' }],
+  });
+}
+
+function draw() {
+  for (const o of [...rings, ...labels]) o.setMap(null);
+  rings = []; labels = [];
+  S.nodes.forEach((c, i) => {
+    if (!c.rings) return;                       /* the icon stays; only the rings come and go */
+    const colour = colourOf('nodes', i), at = new google.maps.LatLng(c.lat, c.lng);
+    const sp = Number(c.spacing) || S.spacing, mx = Number(c.max) || S.max;
+    for (let r = sp; r <= mx + .5; r += sp) {
+      rings.push(ringOf(at, r, colour));
+      if (S.labels) labels.push(new google.maps.Marker({
+        position: google.maps.geometry.spherical.computeOffset(at, r, 0), map, clickable: false,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
+        label: { text: r >= 1000 ? (r / 1000) + 'km' : r + 'm', color: colour,
+                 fontSize: '10px', fontWeight: '600' },
+      }));
+    }
+  });
+}
+
+function markers() {
+  for (const k of ['nodes', 'sensors']) { for (const m of marks[k]) m.setMap(null); marks[k] = []; }
+  for (const kind of ['nodes', 'sensors']) {
+    marks[kind] = S[kind].map((c, i) => {
+      const colour = colourOf(kind, i), isNode = kind === 'nodes';
+      const m = new google.maps.Marker({
+        position: { lat: c.lat, lng: c.lng }, map, draggable: true, title: c.name,
+        zIndex: isNode ? 50 : 40,
+        ...(isNode ? { label: { text: String(i), color: '#fff', fontSize: '10px', fontWeight: '700' },
+                       icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: colour,
+                               fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 } }
+                   : { icon: sensorIcon('S' + (i + 1)) }),
+      });
+      m.addListener('dragstart', () => { dragging = true; flushQueue(); });
+      m.addListener('drag', () => {
+        c.lat = m.getPosition().lat(); c.lng = m.getPosition().lng(); readout(kind, i); hover(kind, i);
+        if (sel) drawFocus();        /* the focus line should follow the marker, not lag a drag */
+      });
+      m.addListener('dragend', () => {
+        dragging = false;
+        c.lat = +m.getPosition().lat().toFixed(8); c.lng = +m.getPosition().lng().toFixed(8);
+        delete c.elev; delete c.res; delete c.canopy; delete c.outside;
+        if (fieldFor && fieldFor.kind === kind && fieldFor.i === i) clearField();
+        panel(); draw(); elevate();
+      });
+      m.addListener('click', () => clickMark(kind, i));
+      m.addListener('mouseover', () => hover(kind, i));
+      /* While something is pinned, leaving a marker falls BACK to the pinned panel rather than
+         clearing -- that is the whole point of pinning it. */
+      m.addListener('mouseout', hideHover);
+      return m;
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ elevation providers ------- */
+
+/* Two sources behind one shape. Both return, per sample, { z, res, canopy } where canopy is metres
+   of vegetation above the ground and null when that source cannot say.
+ *
+ * Lantmateriet is the default because it is measured ground at 1m with 0.1m uncertainty, served
+ * from the local cache, free and instant. Google is kept selectable because it is the only way to
+ * see what the difference actually costs you: over this site it reads up to 14m high, behaving
+ * like a canopy-inclusive surface averaged over ~100m rather than like terrain. */
+
+const post = async (url, body) => {
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' },
+                               body: JSON.stringify(body) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || ('HTTP ' + r.status));
+  return r.json();
+};
+const fromLM = (s) => s == null ? null
+  : { z: s.ground, res: TERRAIN && TERRAIN.ground ? TERRAIN.ground.res : 1,
+      canopy: s.canopyKnown ? s.canopy : null };
+
+const PROVIDERS = {
+  lm: {
+    label: 'Lantmäteriet 1 m', canopy: true, local: true,
+    async points(list) {
+      const r = await post('/api/terrain/points', { points: list });
+      return r.samples.map(fromLM);
+    },
+    async profile(a, b, n) {
+      const r = await post('/api/terrain/profile', { from: a, to: b, samples: n });
+      return r.samples.map(fromLM);
+    },
+  },
+  google: {
+    label: 'Google Elevation', canopy: false, local: false,
+    points(list) {
+      return new Promise((res, rej) => elev.getElevationForLocations({ locations: list },
+        (r, st) => st === 'OK' && r
+          ? res(r.map((x) => x ? { z: x.elevation, res: x.resolution || null, canopy: null } : null))
+          : rej(new Error(st))));
+    },
+    profile(a, b, n) {
+      const path = [new google.maps.LatLng(a.lat, a.lng), new google.maps.LatLng(b.lat, b.lng)];
+      return new Promise((res, rej) => elev.getElevationAlongPath({ path, samples: Math.min(512, n) },
+        (r, st) => st === 'OK' && r && r.length
+          ? res(r.map((x) => ({ z: x.elevation, res: x.resolution || null, canopy: null })))
+          : rej(new Error(st))));
+    },
+  },
+};
+const prov = () => PROVIDERS[S && S.provider] || PROVIDERS.lm;
+let TERRAIN = null;                       /* /api/terrain, for provenance and the coverage overlay */
+
+/* ------------------------------------------------------------------ terrain profiles ---------- */
+
+/* Ground profiles, keyed by the pair of endpoint coordinates rounded to 6dp (~0.1m, the precision
+   the readout shows). The pair is SORTED, so A->B and B->A are one cache entry served in either
+   direction -- hovering both ends of a link is the common case and must not bill twice. A marker
+   dragged away and back lands on its old key and costs nothing. */
+const profiles = new Map();         /* key -> samples[] | null while a request is in flight       */
+const wanted = new Map();           /* key -> [from, to] queued, in key order                     */
+let ptimer = null, pbusy = false;
+
+const llkey = (c) => c.lat.toFixed(6) + ',' + c.lng.toFixed(6);
+/* Queue the ROUNDED coordinates, and as a copy. The nodes themselves are mutated in place on every
+   mousemove of a drag, so a queued reference would have the request go out for a path the key no
+   longer describes; rounding to the same 6dp the key uses keeps the two exactly in step. */
+const snap = (c) => ({ lat: +c.lat.toFixed(6), lng: +c.lng.toFixed(6) });
+function pkey(p, q) {
+  const a = llkey(p), b = llkey(q);
+  return a <= b ? { k: a + '|' + b, flip: false } : { k: b + '|' + a, flip: true };
+}
+
+/* Samples for p->q, or null if they are not here yet (the request is queued and the panel repaints
+   when it lands). Nothing is requested mid-drag: every mousemove is a fresh coordinate, so a single
+   drag across the map would otherwise queue dozens of paths. */
+function profileOf(p, q) {
+  const { k, flip } = pkey(p, q);
+  const hit = profiles.get(k);
+  if (hit) return flip ? hit.slice().reverse() : hit;
+  if (!profiles.has(k) && !dragging) {
+    profiles.set(k, null);                      /* claim the key so a repaint cannot re-queue it  */
+    wanted.set(k, flip ? [snap(q), snap(p)] : [snap(p), snap(q)]);
+    clearTimeout(ptimer); ptimer = setTimeout(pump, 500);
+  }
+  return null;
+}
+
+/* One request at a time, debounced. Google bills per call regardless of sample count, so this is
+   one call per distinct link ever; Lantmateriet is a local read, but the same queue keeps the two
+   providers on one code path. */
+async function pump() {
+  if (pbusy) return;
+  const first = wanted.entries().next();
+  if (first.done) return;
+  const [k, [p, q]] = first.value;
+  wanted.delete(k);
+  const a = new google.maps.LatLng(p.lat, p.lng), b = new google.maps.LatLng(q.lat, q.lng);
+  const d = google.maps.geometry.spherical.computeDistanceBetween(a, b);
+  /* Match the sample spacing to what the source actually resolves. Lantmateriet is a 1m grid, so
+     2m spacing keeps every ridge it holds; Google is 9.5m at best and often far coarser here, so
+     asking for more than ~25m spacing buys interpolation rather than terrain. */
+  const step = prov().local ? 2 : 25;
+  const cap = prov().local ? 2048 : 512;
+  const samples = Math.max(24, Math.min(cap, Math.round(d / step) + 1));
+  pbusy = true;
+  try {
+    const got = await prov().profile(p, q, samples);
+    profiles.set(k, got);
+    trim(); repaint();
+  } catch (e) {
+    profiles.delete(k);                         /* drop the claim, so a later hover can retry     */
+    msg('profile: ' + e.message);
+  } finally {
+    pbusy = false;
+    if (wanted.size) pump();
+  }
+}
+/* A long session of dragging accumulates keys that will never be asked for again. Map keeps
+   insertion order, so the oldest COMPLETED entry goes; in-flight claims are left alone, and if
+   those are all there is the trim simply stops rather than spinning. */
+function trim() {
+  while (profiles.size > 300) {
+    let gone = false;
+    for (const [k, v] of profiles) if (v) { profiles.delete(k); gone = true; break; }
+    if (!gone) return;
+  }
+}
+
+/* Abandon the queue, releasing the claims with it -- a claim left behind is a key that can never be
+   requested again, because profileOf would see it as already pending. */
+function flushQueue() {
+  for (const k of wanted.keys()) profiles.delete(k);
+  wanted.clear();
+}
+
+/* The path physics lives in lib/link.js, loaded above and required by the server too, so the
+   receptivity overlay and this panel can never disagree about the same link. */
+const analyse = (prof, d, hA, hB, freqMHz) =>
+  LINK.analyse(prof, d, hA, hB,
+               { freq: freqMHz, grow: (Number(S.canopyGrow) || 0) * canopyAge() });
+const weissberger = (depth, freqMHz) => LINK.weissberger(depth, freqMHz);
+
+/* Years since the canopy was flown, for the optional growth allowance. */
+function canopyAge() {
+  const fl = TERRAIN && TERRAIN.canopyFlown && TERRAIN.canopyFlown.to;
+  if (!fl) return 0;
+  return Math.max(0, (Date.now() - Date.parse(fl)) / (365.25 * 864e5));
+}
+
+const height = (c) => c.elev == null ? null : c.elev + (Number(c.agl) || 0);
+const verdict = (w) => !w ? '' : w.clr < 0 ? 'bad' : w.clr / w.f1 < 0.6 ? 'warn' : 'ok';
+/* Foliage loss banded for an 868MHz LoRa budget: a few dB is nothing, ~10dB eats a spreading
+   factor, past ~20dB you are relying on margin you probably do not have. */
+const vegVerdict = (L) => !(L > 0) ? '' : L < 10 ? 'ok' : L < 20 ? 'warn' : 'bad';
+const RANK = { '': 0, ok: 1, warn: 2, bad: 3 };
+const worseOf = (a, b) => (RANK[a] >= RANK[b] ? a : b);
+const pct = (r) => (r < 0 ? '-' : '') + Math.min(999, Math.round(Math.abs(r) * 100)) + '%';
+const dB = (L) => (L >= 100 ? Math.round(L) : L.toFixed(1)) + ' dB';
+
+/* Everything the panel and the chart need about one link, profile included when it is cached. */
+function linkInfo(me, n) {
+  const sph = google.maps.geometry.spherical;
+  const a = new google.maps.LatLng(me.lat, me.lng), b = new google.maps.LatLng(n.lat, n.lng);
+  const d = sph.computeDistanceBetween(a, b);
+  const hA = height(me), hB = height(n);
+  /* `known` has to live on the info, not just inside the analysis: the profile panel quotes the
+     antenna heights before any profile has arrived, and reading it off a null analysis made every
+     panel claim the elevation was still pending even when both ends had one. */
+  const info = { d, brg: (sph.computeHeading(a, b) + 360) % 360, hA, hB,
+                 known: hA != null && hB != null, A: null };
+  if (d < 1) return info;                       /* two markers on the same spot: no path to ask for */
+  const prof = profileOf(me, n);
+  if (prof) info.A = analyse(prof, d, hA, hB, S.freq);
+  return info;
+}
+
+/* ------------------------------------------------------------------ the hover / pinned panel --- */
+
+/* A gateway or relay is shown its separation to the OTHER gateways and relays only -- adding every
+   sensor would bury the one comparison that matters. A sensor is shown its reach to each gateway
+   and relay, which is the question being asked when you place one. */
+function hover(kind, i) {
+  const me = subject({ kind, i });
+  if (!me) return unpin();
+  shown = { kind, i };
+  const live = !!pin && pin.kind === kind && pin.i === i;   /* clickable only when this one is pinned */
+  $('hover').classList.toggle('pinned', live);
+  $('hdot').style.background = kind === 'probe' ? 'var(--acc)' : colourOf(kind, i);
+  $('hname').textContent = kind === 'probe'
+    ? `probe  ${me.lat.toFixed(6)}, ${me.lng.toFixed(6)}`
+    : (kind === 'nodes' ? '' : 'S' + (i + 1) + ' ') + me.name;
+  const rows = S.nodes.map((n, j) => ({ n, j, info: linkInfo(me, n) }))
+                      .filter(x => !(kind === 'nodes' && x.j === i))
+                      .sort((a, b) => a.info.d - b.info.d);
+  /* A probe alone is reason enough to draw the table: pinning the only node on the map and
+     clicking around is exactly how you site the second one. */
+  if (!rows.length && !(live && probe && kind !== 'probe')) {
+    $('hbody').innerHTML = '<div class="hint">No other gateway or relay placed.</div>';
+  } else {
+    const probeInfo = live && probe && kind !== 'probe' ? linkInfo(me, probe) : null;
+    const veg = rows.some(r => r.info.A && r.info.A.hasVeg)
+             || !!(probeInfo && probeInfo.A && probeInfo.A.hasVeg);
+    let h = `<table class="${live ? 'live' : ''}">`
+          + '<tr><th>to</th><th>dist</th><th>brg</th><th>&Delta;elev</th><th>peak&middot;F1</th>'
+          + (veg ? '<th>veg</th>' : '') + '</tr>';
+    for (const { n, j, info } of rows) {
+      const { d, brg, hA, hB, A } = info;
+      const dz = (hA != null && hB != null) ? (hB - hA >= 0 ? '+' : '') + Math.round(hB - hA) + 'm' : '…';
+      const w = A && A.worst, gcls = verdict(w), vcls = A ? vegVerdict(A.vegLoss) : '';
+      const peak = !A ? (d < 1 ? '&mdash;' : '…')
+        : Math.round(A.peak.z) + 'm' + (w ? `<span class="f1">${pct(w.clr / w.f1)}</span>` : '');
+      const vcell = !A ? '…' : !A.hasVeg ? '&mdash;'
+        : A.vegDepth > 0 ? `${dB(A.vegLoss)}` : '0';
+      const tip = !A ? '' : `peak ${A.peak.z.toFixed(0)}m AMSL at ${m2s(A.peak.d1)}`
+        + (w ? ` — worst clearance ${w.clr.toFixed(0)}m = ${pct(w.clr / w.f1)} of F1 (${w.f1.toFixed(0)}m) at ${m2s(w.d1)}` : '')
+        + (A.hasVeg ? ` — ${A.vegDepth.toFixed(0)}m of the ray through foliage, ≈${dB(A.vegLoss)} excess loss` : '');
+      const on = sel && sel.kind === kind && sel.i === i && sel.j === j;
+      /* the row takes the WORSE of the two, so a clear-sky path buried in forest still reads red */
+      h += `<tr data-j="${j}" class="${on ? 'sel' : ''}" title="${esc(tip)}">`
+         + `<td>${j} ${esc(n.name)}</td><td>${m2s(d)}</td><td>${brg.toFixed(0)}&deg;</td>`
+         + `<td>${dz}</td><td class="${gcls}">${peak}</td>`
+         + (veg ? `<td class="${vcls}">${vcell}</td>` : '') + '</tr>';
+    }
+    /* The probe rides in the same table so it is compared on exactly the same terms as a real
+       node -- same columns, same verdicts, same profile -- but it is marked and never saved. */
+    if (probeInfo) {
+      const info = probeInfo, { d, brg, A } = info;
+      const w = A && A.worst, gcls = verdict(w), vcls = A ? vegVerdict(A.vegLoss) : '';
+      const dz = info.known ? (info.hB - info.hA >= 0 ? '+' : '') + Math.round(info.hB - info.hA) + 'm'
+               : probe.outside ? '—' : '…';
+      const peak = probe.outside ? '—' : !A ? '…'
+        : Math.round(A.peak.z) + 'm' + (w ? `<span class="f1">${pct(w.clr / w.f1)}</span>` : '');
+      const vcell = probe.outside ? '—' : !A ? '…' : !A.hasVeg ? '—'
+        : A.vegDepth > 0 ? dB(A.vegLoss) : '0';
+      const on = sel && sel.kind === kind && sel.i === i && sel.j === 'probe';
+      h += `<tr data-j="probe" class="probe ${on ? 'sel' : ''}">`
+         + `<td>◇ probe</td><td>${m2s(d)}</td><td>${brg.toFixed(0)}&deg;</td>`
+         + `<td>${dz}</td><td class="${gcls}">${peak}</td>`
+         + (veg ? `<td class="${vcls}">${vcell}</td>` : '') + '</tr>';
+    }
+    $('hbody').innerHTML = h + '</table>';
+    if (live) for (const tr of $('hbody').querySelectorAll('tr[data-j]'))
+      tr.onclick = () => openProfile(kind, i, tr.dataset.j === 'probe' ? 'probe'
+                                                                      : Number(tr.dataset.j));
+  }
+  if (live && probe && kind !== 'probe') {
+    const d = document.createElement('div');
+    d.className = 'probeline';
+    d.innerHTML = `<span>${probe.lat.toFixed(6)}, ${probe.lng.toFixed(6)}</span>`
+      + `<span>${probe.outside ? 'outside cache'
+          : probe.elev == null ? '…'
+          : probe.elev.toFixed(1) + 'm'
+            + (probe.canopy != null && probe.canopy > 0 ? ` +${probe.canopy.toFixed(0)}m veg` : '')
+            + ` @${probe.agl}m agl`}</span>`
+      + '<button class="x" id="pxclear" title="clear probe">&times;</button>';
+    $('hbody').appendChild(d);
+    $('pxclear').onclick = clearProbe;
+  } else if (live && kind !== 'probe') {
+    const d = document.createElement('div');
+    d.className = 'hint';
+    d.textContent = 'Click anywhere on the map to drop a probe point and test a placement.';
+    $('hbody').appendChild(d);
+  } else if (live) {
+    const d = document.createElement('div');
+    d.className = 'probeline';
+    d.innerHTML = `<span>${me.outside ? 'outside cache'
+        : me.elev == null ? 'sampling…'
+        : `ground ${me.elev.toFixed(1)}m`
+          + (me.canopy != null && me.canopy > 0 ? ` +${me.canopy.toFixed(0)}m veg` : '')
+          + ` · antenna ${me.agl}m agl`}</span>`
+      + '<button class="x" id="pxclear" title="clear probe">&times;</button>';
+    $('hbody').appendChild(d);
+    $('pxclear').onclick = clearProbe;
+  }
+  if (live && field) $('hbody').insertAdjacentHTML('beforeend', fieldLegend());
+  $('hfield').classList.toggle('on', !!field);
+  $('hover').style.display = 'block';
+}
+
+/* ------------------------------------------------------------------ the probe ----------------- */
+
+/* A throwaway point, placed by clicking the map while a panel is pinned. It behaves exactly like a
+   sensor for the purposes of distance, clearance, canopy and the profile chart, but is never saved
+   and never becomes part of the layout -- the whole point is to ask "what if something were here?"
+   without committing to it. */
+let probe = null, probeMark = null;
+
+/* What a panel is about. A pinned panel used to be a node or a sensor; it can now also be the
+   probe itself, which is what makes an arbitrary point assessable as a RELAY SITE rather than
+   only as a destination -- same table, same profiles, same receptivity field, but for a position
+   that does not exist yet. */
+const subject = (p) => !p ? null
+  : p.kind === 'probe' ? probe : (S[p.kind] && S[p.kind][p.i]);
+const labelOf = (p) => !p ? '' : p.kind === 'probe' ? 'probe site'
+  : (p.kind === 'nodes' ? '' : 'S' + (p.i + 1) + ' ') + (subject(p) || {}).name;
+
+function setProbe(lat, lng) {
+  probe = { name: 'probe', lat: +lat.toFixed(8), lng: +lng.toFixed(8),
+            agl: Number(S.probeAgl) || 2, elev: null, canopy: null };
+  drawProbe();
+  probeElev();
+  if (fieldFor && fieldFor.kind === 'probe') clearField();
+  if (pin) hover(pin.kind, pin.i);
+}
+function clearProbe() {
+  const wasSubject = pin && pin.kind === 'probe';
+  probe = null;
+  if (probeMark) { probeMark.setMap(null); probeMark = null; }
+  if (sel && (sel.j === 'probe' || sel.kind === 'probe')) closeProfile();
+  if (fieldFor && fieldFor.kind === 'probe') clearField();
+  if (wasSubject) return unpin();          /* the panel was about the probe; nothing left to show */
+  if (pin) hover(pin.kind, pin.i);
+}
+function drawProbe() {
+  if (probeMark) probeMark.setMap(null);
+  if (!probe) return;
+  probeMark = new google.maps.Marker({
+    position: { lat: probe.lat, lng: probe.lng }, map, zIndex: 60, draggable: true,
+    title: 'probe — drag to move, click to clear',
+    icon: { path: 'M -9,0 L 9,0 M 0,-9 L 0,9', strokeColor: '#4fb8d8', strokeWeight: 2, scale: 1 },
+  });
+  probeMark.addListener('dragend', () => {
+    probe.lat = +probeMark.getPosition().lat().toFixed(8);
+    probe.lng = +probeMark.getPosition().lng().toFixed(8);
+    probe.elev = probe.canopy = null;
+    if (fieldFor && fieldFor.kind === 'probe') clearField();
+    probeElev();
+    if (pin) hover(pin.kind, pin.i);
+    if (sel) { paintProfile(); }
+  });
+  probeMark.addListener('drag', () => {
+    probe.lat = probeMark.getPosition().lat(); probe.lng = probeMark.getPosition().lng();
+    if (sel) drawFocus();
+  });
+  probeMark.addListener('click', clearProbe);
+}
+async function probeElev() {
+  if (!probe) return;
+  const want = probe;
+  let got;
+  try { got = await prov().points([{ lat: probe.lat, lng: probe.lng }]); }
+  catch (e) { msg('probe: ' + e.message); return; }
+  if (probe !== want) return;                   /* moved again while we were waiting */
+  const r = got[0];
+  if (!r) { probe.outside = true; probe.elev = null; }
+  else {
+    delete probe.outside;
+    probe.elev = Math.round(r.z * 10) / 10;
+    probe.canopy = r.canopy == null ? null : Math.round(r.canopy * 10) / 10;
+  }
+  if (pin) hover(pin.kind, pin.i);
+  if (sel && sel.j === 'probe') paintProfile();
+}
+
+/* ------------------------------------------------------------------ receptivity field --------- */
+
+/* A hot/cold map of what the pinned node can reach, out to its outermost ring. The server does the
+   path maths -- it holds the terrain, and walking each ray outward lets every range ring reuse the
+   profile already gathered -- and hands back a margin in dB per polar cell, which is painted here
+   as one ground overlay rather than thousands of polygons. */
+let field = null, fieldOv = null, fieldFor = null;
+
+function fieldRadius() {
+  const c = subject(pin);
+  return (c && Number(c.max)) || Number(S.max) || 1000;
+}
+
+async function toggleField() {
+  if (field) return clearField();
+  if (!pin) return;
+  clearCoverage();                                 /* never two heatmaps at once */
+  if (!prov().local) { msg('receptivity needs the local terrain cache'); return; }
+  const c = subject(pin);
+  if (!c) return;
+  const btn = $('hfield');
+  btn.classList.add('busy'); btn.textContent = 'computing…';
+  try {
+    const radius = fieldRadius();
+    /* Keep the sampling roughly isotropic: rays spread with range, so a fixed count that looks
+       fine at 200m leaves 26m gaps at the rim of a 1km disc and the overlay reads as streaks.
+       Aim for ~12m of arc at the outer edge, bounded so a large radius stays affordable. */
+    const r = await post('/api/terrain/radial', {
+      lat: c.lat, lng: c.lng, radius,
+      step: Math.max(5, Math.round(radius / 120)),
+      rays: Math.max(180, Math.min(720, Math.ceil(2 * Math.PI * radius / 12))),
+      agl: Number(c.agl) || 0, targetAgl: Number(S.targetAgl) || 1,
+      budget: budgetOf(sysGainOut(c)), freq: Number(S.freq) || 868,
+      grow: (Number(S.canopyGrow) || 0) * canopyAge(),
+    });
+    field = r; fieldFor = { kind: pin.kind, i: pin.i, lat: c.lat, lng: c.lng };
+    drawField();
+    msg(`receptivity: ${m2s(r.reach)} reach at ${sfLabel()}, ${r.targetAgl}m agl`
+      + (r.coverage < 0.999 ? `, ${Math.round(100 - r.coverage * 100)}% outside the cache` : '')
+      + (r.canopyCoverage < 0.999
+          ? `, ${Math.round(100 - r.canopyCoverage * 100)}% hatched = no canopy data` : ''));
+  } catch (e) {
+    msg('receptivity: ' + e.message);
+  } finally {
+    btn.classList.remove('busy'); btn.textContent = 'receptivity';
+    if (pin) hover(pin.kind, pin.i);
+  }
+}
+
+function clearField() {
+  field = null; fieldFor = null;
+  if (fieldOv) { fieldOv.setMap(null); fieldOv = null; }
+  if (pin) hover(pin.kind, pin.i);
+}
+
+function drawField() {
+  if (fieldOv) { fieldOv.setMap(null); fieldOv = null; }
+  if (!field) return;
+  const f = field, N = 512, half = N / 2;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(N, N);
+  const px = img.data;
+  const cols = f.bands.map((b) => b.colour);
+  for (let y = 0; y < N; y++) {
+    /* pixel centre in metres from the origin; north is up, so y grows southward */
+    const dy = (half - (y + 0.5)) / half * f.radius;
+    for (let x = 0; x < N; x++) {
+      const dx = ((x + 0.5) - half) / half * f.radius;
+      const r = Math.hypot(dx, dy);
+      const o = (y * N + x) * 4;
+      if (r > f.radius || r < f.step * 0.5) continue;        /* outside the disc, or the origin */
+      let th = Math.atan2(dx, dy); if (th < 0) th += 2 * Math.PI;
+      const a = Math.min(f.rays - 1, Math.round(th / (2 * Math.PI) * f.rays) % f.rays);
+      const s = Math.min(f.steps - 1, Math.max(0, Math.round(r / f.step) - 1));
+      const idx = a * f.steps + s;
+      const m = f.margin[idx];
+      if (m == null) continue;                               /* no terrain there: leave it clear */
+      /* Paths with no canopy data are scored as if the ground were bare, which flatters them.
+         Hatch those cells so an optimistic reading is never mistaken for a measured one. */
+      if (f.vegKnown && !f.vegKnown[idx] && ((x + y) & 3)) continue;
+      const c = cols[LINK.bandOf(m)];
+      px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; px[o + 3] = 115;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const mLat = 111132.92 - 559.82 * Math.cos(2 * f.lat * Math.PI / 180);
+  const mLng = 111412.84 * Math.cos(f.lat * Math.PI / 180);
+  const bounds = new google.maps.LatLngBounds(
+    new google.maps.LatLng(f.lat - f.radius / mLat, f.lng - f.radius / mLng),
+    new google.maps.LatLng(f.lat + f.radius / mLat, f.lng + f.radius / mLng));
+  fieldOv = new google.maps.GroundOverlay(cv.toDataURL('image/png'), bounds,
+                                          { clickable: false, opacity: 1 });
+  fieldOv.setMap(map);
+}
+
+const fieldLegend = () => !field ? '' :
+  '<div class="legend">' + field.bands.map((b, i) => {
+    const c = b.colour;
+    const lo = b.min <= -1e8 ? '' : `≥${b.min}`;
+    return `<div><i style="background:rgb(${c[0]},${c[1]},${c[2]})"></i>${b.label}`
+         + (lo ? ` ${lo}dB` : '') + '</div>';
+  }).join('')
+  + `<div style="display:block;margin-top:3px">margin at ${sfLabel()} `
+  + `(${field.budget.toFixed(0)}dB), receiver at ${field.targetAgl}m agl, `
+  + `to ${m2s(field.radius)}</div>`
+  + (field.canopyCoverage < 0.999
+      ? `<div style="display:block" class="warn">hatched: over a quarter of the path unmeasured `
+        + `for canopy, scored as bare ground (optimistic) &mdash; `
+        + `${Math.round(100 - field.canopyCoverage * 100)}% of the disc. Lakes read this way: `
+        + `water returns no laser, though it also grows no trees.</div>`
+      : '') + '</div>';
+
+/* Any parameter change makes a drawn field a lie, so it goes rather than silently aging. */
+function staleField() {
+  if (field) { clearField(); msg('receptivity cleared — parameters changed'); }
+  if (cov) { clearCoverage(); msg('coverage cleared — parameters changed'); }
+}
+
+/* ------------------------------------------------------------------ deployment coverage ------- */
+
+/* The per-node field answers "what can THIS box reach". This answers the deployment question:
+   what can anything reach, and which box is carrying each place. It is a site-wide view, so it
+   lives in the sidebar rather than in a node's panel, and it replaces the single-node overlay
+   rather than stacking with it -- two translucent heatmaps on top of each other mean nothing. */
+let cov = null, covOv = null;
+
+async function toggleCoverage() {
+  if (!$('covg').checked) return clearCoverage();
+  if (!prov().local) { $('covg').checked = false; msg('coverage needs the local terrain cache'); return; }
+  if (!S.nodes.length) { $('covg').checked = false; msg('no gateways or relays placed'); return; }
+  clearField();                                    /* never two heatmaps at once */
+  $('covinfo').textContent = 'computing…';
+  try {
+    const radius = Number(S.max) || 1000;
+    const origins = S.nodes.map((n) => ({
+      name: n.name, lat: n.lat, lng: n.lng, agl: Number(n.agl) || 0,
+      budget: budgetOf(sysGainOut(n)),
+    }));
+    cov = await post('/api/terrain/coverage', {
+      origins, radius,
+      step: Math.max(5, Math.round(radius / 100)),
+      rays: Math.max(180, Math.min(720, Math.ceil(2 * Math.PI * radius / 12))),
+      targetAgl: Number(S.targetAgl) || 1, freq: Number(S.freq) || 868,
+      grow: (Number(S.canopyGrow) || 0) * canopyAge(),
+    });
+    drawCoverage();
+    covInfo();
+    msg(`coverage: ${(100 * cov.coveredFraction).toFixed(0)}% of the area reached by `
+      + `${cov.origins.filter(o => !o.error).length} transmitter(s) at ${sfLabel()}`);
+  } catch (e) {
+    cov = null; $('covg').checked = false; $('covinfo').textContent = '';
+    msg('coverage: ' + e.message);
+  }
+}
+
+function clearCoverage() {
+  cov = null;
+  if (covOv) { covOv.setMap(null); covOv = null; }
+  $('covg').checked = false;
+  $('covinfo').textContent = '';
+}
+
+/* The grid is already lat/lng aligned, so one cell is one pixel and the overlay needs no
+   reprojection -- unlike the polar field, which has to be swept into a raster. */
+function drawCoverage() {
+  if (covOv) { covOv.setMap(null); covOv = null; }
+  if (!cov) return;
+  const cv = document.createElement('canvas');
+  cv.width = cov.nx; cv.height = cov.ny;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(cov.nx, cov.ny), px = img.data;
+  const cols = cov.bands.map((b) => b.colour);
+  for (let y = 0; y < cov.ny; y++) for (let x = 0; x < cov.nx; x++) {
+    const i = y * cov.nx + x, o = i * 4;
+    const m = cov.margin[i];
+    if (m == null) continue;
+    if (cov.vegKnown && !cov.vegKnown[i] && ((x + y) & 3)) continue;
+    const c = cols[LINK.bandOf(m)];
+    px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; px[o + 3] = 120;
+  }
+  ctx.putImageData(img, 0, 0);
+  covOv = new google.maps.GroundOverlay(cv.toDataURL('image/png'),
+    new google.maps.LatLngBounds(new google.maps.LatLng(cov.south, cov.west),
+                                 new google.maps.LatLng(cov.north, cov.east)),
+    { clickable: false, opacity: 1 });
+  covOv.setMap(map);
+}
+
+/* Which transmitter carries how much is the actionable part: a relay that wins almost nothing is
+   a relay you could move or drop. */
+function covInfo() {
+  if (!cov) { $('covinfo').textContent = ''; return; }
+  const live = cov.margin.reduce((n, v) => n + (v != null ? 1 : 0), 0) || 1;
+  const won = {};
+  cov.best.forEach((k, i) => { if (k >= 0 && cov.margin[i] != null) won[k] = (won[k] || 0) + 1; });
+  const rows = cov.origins.map((o, k) => ({ o, k, n: won[k] || 0 }))
+                          .sort((a, b) => b.n - a.n);
+  $('covinfo').innerHTML =
+    `best of ${cov.origins.length} at ${sfLabel()}, receiver ${cov.targetAgl}m agl<br>`
+    + `${(100 * cov.coveredFraction).toFixed(0)}% of the box has a usable link<br>`
+    + rows.map(r => `&nbsp;${esc(r.o.name)} ${r.o.error ? '<span class="warn">no terrain</span>'
+        : (100 * r.n / live).toFixed(0) + '%'}`).join('<br>');
+}
+
+/* ------------------------------------------------------------------ cache coverage ------------ */
+
+/* The cache is built once, offline, for a fixed radius around the points as they were then. Drag
+   a marker past that edge and there is simply no terrain for it -- so say so loudly and name the
+   command that fixes it, rather than letting the panel quietly show blanks. The cache is only
+   re-read at startup, so the fix really is save-rebuild-reload. */
+function coverage() {
+  if (!S || !prov().local) { $('cover').style.display = 'none'; return; }
+  const out = [...S.nodes.map((c, i) => ({ c, tag: String(i) })),
+               ...S.sensors.map((c, i) => ({ c, tag: 'S' + (i + 1) }))]
+              .filter(x => x.c.outside);
+  if (!out.length && TERRAIN && TERRAIN.blocks && TERRAIN.blocks.ground) {
+    $('cover').style.display = 'none'; return;
+  }
+  if (!TERRAIN || !TERRAIN.blocks || !TERRAIN.blocks.ground) {
+    $('covh').textContent = 'No terrain cache';
+    $('covp').innerHTML = 'Nothing is cached in <code>./cache</code>. Build it with '
+      + '<code>LM_USERPASS="user:pass" ./lm-terrain-ground</code> and reload, or switch the elevation source '
+      + 'to Google in the panel.';
+  } else {
+    $('covh').textContent = `${out.length} point${out.length > 1 ? 's' : ''} outside the cached terrain`;
+    $('covp').innerHTML = esc(out.map(x => x.tag + ' ' + (x.c.name || '')).join(', '))
+      + ' &mdash; no elevation, clearance or canopy for these. Save, then re-run '
+      + '<code>./lm-terrain-ground</code> and <code>./lm-terrain-canopy</code>, then reload the page.';
+  }
+  $('cover').style.display = 'block';
+}
+
+function unpin() {
+  pin = null; shown = null;
+  closeProfile(); clearField();
+  if (probe) { probe = null; if (probeMark) { probeMark.setMap(null); probeMark = null; } }
+  $('hover').style.display = 'none';
+}
+function hideHover() { if (pin) hover(pin.kind, pin.i); else { shown = null; $('hover').style.display = 'none'; } }
+function clickMark(kind, i) {
+  if (pin && pin.kind === kind && pin.i === i) return unpin();   /* clicking the pin again releases it */
+  pin = { kind, i };
+  closeProfile();
+  if (fieldFor && (fieldFor.kind !== kind || fieldFor.i !== i)) clearField();
+  hover(kind, i);
+}
+/* Repaint whatever is on screen, after elevations or a profile arrive. */
+function repaint() { if (shown) hover(shown.kind, shown.i); if (sel) paintProfile(); }
+
+/* ------------------------------------------------------------------ the profile chart ---------- */
+
+function openProfile(kind, i, j) { sel = { kind, i, j }; paintProfile(); hover(kind, i); }
+function closeProfile() {
+  sel = null; clearFocus();
+  $('prof').style.display = 'none'; document.body.classList.remove('prof');
+}
+
+/* ------------------------------------------------------------------ the focused path ---------- */
+
+/* The profile chart is an abstraction -- distance along a line -- and it is easy to lose track of
+   which line. Drawing it on the map in white, with the two peaks the chart is really about flagged
+   in place, keeps the two views tied together. White because nothing else on the map is: the rings
+   are per-node colours and the receptivity overlay owns the greens and reds. */
+let focusLine = null, focusMarks = [];
+
+function clearFocus() {
+  if (focusLine) { focusLine.setMap(null); focusLine = null; }
+  for (const m of focusMarks) m.setMap(null);
+  focusMarks = [];
+}
+
+/* A flag that stays legible over terrain, satellite and a greyscale print: the text sits below the
+   pin with a white halo (paint-order: stroke), the same trick the sensor glyphs use. */
+function flagIcon(text, fill, ink) {
+  const w = Math.max(54, 9 + text.length * 6.6);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="34">`
+    + `<path d="M ${w / 2},15 L ${w / 2 - 5.5},5 L ${w / 2 + 5.5},5 Z" fill="${fill}" `
+    + `stroke="#1d1d1d" stroke-width="1.2" stroke-linejoin="round"/>`
+    + `<text x="${w / 2}" y="29" text-anchor="middle" font-family="ui-monospace,monospace" `
+    + `font-size="11" font-weight="700" fill="${ink}" stroke="#ffffff" stroke-width="3" `
+    + `paint-order="stroke" stroke-linejoin="round">${text}</text></svg>`;
+  return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+           anchor: new google.maps.Point(w / 2, 15), scaledSize: new google.maps.Size(w, 34) };
+}
+
+function drawFocus() {
+  clearFocus();
+  if (!sel) return;
+  const me = subject(sel);
+  const n = sel.j === 'probe' ? probe : S.nodes[sel.j];
+  if (!me || !n) return;
+  const a = new google.maps.LatLng(me.lat, me.lng), b = new google.maps.LatLng(n.lat, n.lng);
+  const dash = { path: 'M 0,-1 0,1', strokeColor: '#ffffff', strokeOpacity: .95, strokeWeight: 2,
+                 scale: 3 };
+  const arrow = { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, strokeColor: '#ffffff',
+                  fillColor: '#ffffff', fillOpacity: 1, strokeWeight: 1, scale: 3.2 };
+  focusLine = new google.maps.Polyline({
+    path: [a, b], map, geodesic: true, clickable: false, zIndex: 3, strokeOpacity: 0,
+    /* arrows run from the pinned node outward, which is also how the chart reads, left to right */
+    icons: [{ icon: dash, offset: '0', repeat: '11px' },
+            { icon: arrow, offset: '35%' }, { icon: arrow, offset: '70%' }],
+  });
+
+  const A = linkInfo(me, n).A;
+  if (!A || !A.d) return;
+  const at = (d1) => google.maps.geometry.spherical.interpolate(a, b, d1 / A.d);
+  const flag = (pos, icon, title) => focusMarks.push(new google.maps.Marker({
+    position: pos, map, icon, title, clickable: false, zIndex: 4 }));
+
+  if (A.peak) flag(at(A.peak.d1), flagIcon(`${Math.round(A.peak.z)}m`, '#e8edf2', '#14181d'),
+                   `ground peak ${A.peak.z.toFixed(1)}m AMSL at ${m2s(A.peak.d1)}`);
+  if (A.hasVeg && A.vegPeak && A.vegPeak.veg >= 1)
+    flag(at(A.vegPeak.d1), flagIcon(`${Math.round(A.vegPeak.veg)}m veg`, '#6fbf63', '#0e2a10'),
+         `tallest canopy ${A.vegPeak.veg.toFixed(1)}m above ground at ${m2s(A.vegPeak.d1)}`);
+}
+
+function paintProfile() {
+  if (!sel) return;
+  const me = subject(sel);
+  const n = sel.j === 'probe' ? probe : S.nodes[sel.j];
+  if (!me || !n) return closeProfile();
+  const info = linkInfo(me, n);
+  $('pname').textContent = labelOf(sel) + '  →  ' + (sel.j === 'probe'
+      ? `probe ${n.lat.toFixed(6)}, ${n.lng.toFixed(6)}` : n.name);
+  const A = info.A;
+  if (!A) {
+    $('pbody').innerHTML = `<div class="hint">${info.d < 1 ? 'The two markers are on the same spot.'
+                                                           : 'Fetching the ground profile…'}</div>`;
+  } else {
+    const w = A.worst, cls = verdict(w), vcls = vegVerdict(A.vegLoss);
+    const row = (k, v) => `<div><span class="k">${k}</span> ${v}</div>`;
+    const flown = TERRAIN && TERRAIN.canopyFlown;
+    $('pbody').innerHTML = chart(A, info)
+      + '<div class="stats">'
+      + row('source', `${prov().label}${A.resMax != null ? ` &middot; ${A.resMax.toFixed(1)}m grid` : ''}`)
+      + row('path', `${m2s(A.d)} &middot; ${info.brg.toFixed(0)}&deg; &middot; ${A.n} samples @ ${A.spacing.toFixed(0)}m`)
+      + row('antennas', info.known
+          ? `${info.hA.toFixed(1)}m → ${info.hB.toFixed(1)}m AMSL (ground + agl)`
+          : 'ground elevation still pending')
+      + row('terrain peak', `${A.peak.z.toFixed(1)}m AMSL at ${m2s(A.peak.d1)}`)
+      + (w ? row('ground clearance', `<span class="${cls}">${w.clr.toFixed(1)}m = `
+          + `${pct(w.clr / w.f1)} of F1 (${w.f1.toFixed(1)}m)</span> at ${m2s(w.d1)}`) : '')
+      + (w ? row('&nbsp;', cls === 'bad' ? 'blocked — terrain is above the sight line'
+                          : cls === 'warn' ? 'grazing — inside 60% of F1, expect diffraction loss'
+                          : 'clear of 60% F1') : '')
+      /* Vegetation is reported as loss, separately from the clearance verdict -- it attenuates
+         rather than blocks, and the antenna heights are referenced to ground, not to treetops. */
+      + (A.hasVeg
+          ? row('canopy', `max ${A.vegMax.toFixed(1)}m, mean ${A.vegMean.toFixed(1)}m`
+              + (A.vegUnknown > 0.01 ? ` &middot; ${Math.round(A.vegUnknown * 100)}% of path unmeasured` : '')
+              + (A.grow > 0.05 ? ` &middot; +${A.grow.toFixed(1)}m growth allowance` : ''))
+            + (info.known ? row('through foliage',
+                A.vegDepth > 0
+                  ? `<span class="${vcls}">${A.vegDepth.toFixed(0)}m of ray ≈ ${dB(A.vegLoss)} excess loss</span>`
+                  : 'sight line clears the canopy') : '')
+            + (flown ? row('canopy survey', `${flown.from}${flown.to !== flown.from ? ' … ' + flown.to : ''}`
+                + ' — advisory only, this is worked forest') : '')
+          : prov().canopy ? row('canopy', 'not cached for this path — run ./lm-terrain-canopy')
+                          : row('canopy', `${prov().label} has no vegetation layer`))
+      + (A.resMax != null && A.resMax > 30
+          ? row('warning', 'grid is coarser than the features that matter; ridges read low')
+          : '')
+      /* The whole budget in one place: free space, what the terrain diffracts away, what the trees
+         absorb, and which spreading factors still have anything left over. */
+      + (info.known ? (() => {
+          const sg = sysGain(me, n), bud = budgetOf(sg);
+          const m = bud - A.loss, cls = m < 0 ? 'bad' : m < 10 ? 'warn' : 'ok';
+          const ok = LINK.sfsThatClose(A.loss, sg);   /* always against the standard 125kHz set */
+          return row('path loss', `${A.fspl.toFixed(1)} free space`
+                + (A.diffLoss > 0.05 ? ` + ${A.diffLoss.toFixed(1)} diffraction` : '')
+                + (A.vegLoss > 0.05 ? ` + ${A.vegLoss.toFixed(1)} foliage` : '')
+                + ` = <b>${A.loss.toFixed(1)} dB</b>`)
+            + row('radios', `${radio(me).tx}dBm +${radio(me).gain}dBi → +${radio(n).gain}dBi`
+                + ` = ${sg.toFixed(0)}dB system, receiver ${sensNow()}dBm`)
+            + row('margin', `<span class="${cls}">${m >= 0 ? '+' : ''}${m.toFixed(1)} dB at `
+                + `${sfLabel()}</span> (${bud.toFixed(0)}dB budget)`)
+            + row('closes at', ok.length
+                ? `<span class="ok">${ok.map((x) => 'SF' + x).join(', ')}</span>`
+                  + (ok.length < LINK.SFS.length ? ' only' : ' — all')
+                : '<span class="bad">no spreading factor closes this path</span>');
+        })() : '')
+      + '</div>';
+  }
+  $('prof').style.display = 'block';
+  document.body.classList.add('prof');
+  drawFocus();
+}
+
+/* Hand-rolled SVG: no chart library on a page that must work from one injected key, and the shapes
+   wanted here (a filled terrain section with a sight line and a Fresnel envelope over it) are not
+   what a chart library draws anyway. */
+function chart(A, info) {
+  const W = 470, H = 232, L = 44, Rp = 8, T = 10, Bp = 26;
+  const x = (d1) => L + (W - L - Rp) * (A.d ? d1 / A.d : 0);
+  let lo = Infinity, hi = -Infinity;
+  for (const p of A.pts) {
+    lo = Math.min(lo, p.ground); hi = Math.max(hi, p.ground, p.top);
+    if (A.known) { lo = Math.min(lo, p.los - p.f1); hi = Math.max(hi, p.los); }
+  }
+  const pad = Math.max(4, (hi - lo) * 0.08); lo -= pad; hi += pad;
+  const y = (v) => T + (H - T - Bp) * (1 - (v - lo) / (hi - lo));
+  const at = (p, v) => `${x(p.d1).toFixed(1)},${y(v).toFixed(1)}`;
+
+  const step = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find(s => (hi - lo) / s <= 5) || 2000;
+  let g = '';
+  for (let v = Math.ceil(lo / step) * step; v < hi; v += step)
+    g += `<line x1="${L}" y1="${y(v).toFixed(1)}" x2="${W - Rp}" y2="${y(v).toFixed(1)}" stroke="#2b333c"/>`
+       + `<text x="${L - 5}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end" fill="#8c98a6" font-size="9">${v}</text>`;
+
+  const ground = `M ${at(A.pts[0], lo)} L ` + A.pts.map(p => at(p, p.ground)).join(' L ')
+               + ` L ${at(A.pts[A.pts.length - 1], lo)} Z`;
+  /* Canopy as a band standing on the ground, not as a second filled surface -- it has to read as
+     something the ray passes THROUGH, which is how it is scored. */
+  const canopy = A.hasVeg
+    ? `M ` + A.pts.map(p => at(p, p.top)).join(' L ') + ' L '
+      + A.pts.slice().reverse().map(p => at(p, p.ground)).join(' L ') + ' Z'
+    : null;
+  let over = '';
+  if (A.known) {
+    const a = A.pts[0], b = A.pts[A.pts.length - 1];
+    const env = (f) => A.pts.map(p => at(p, p.los - f * p.f1)).join(' L ');
+    const vline = (p, from, to, extra) =>
+      `<line x1="${x(p.d1).toFixed(1)}" y1="${y(from).toFixed(1)}" x2="${x(p.d1).toFixed(1)}"`
+      + ` y2="${y(to).toFixed(1)}" ${extra}/>`;
+    over =
+      /* full F1 faint, the 60% criterion dashed and bright: the one line you are reading against */
+        `<path d="M ${env(1)}" fill="none" stroke="#4fb8d8" stroke-opacity=".3"/>`
+      + `<path d="M ${env(0.6)}" fill="none" stroke="#4fb8d8" stroke-opacity=".85" stroke-dasharray="4 3"/>`
+      + `<line x1="${x(a.d1).toFixed(1)}" y1="${y(a.los).toFixed(1)}"`
+      + ` x2="${x(b.d1).toFixed(1)}" y2="${y(b.los).toFixed(1)}" stroke="#e8edf2" stroke-width="1.4"/>`
+      /* the masts, drawn from true ground (bulge is zero at both ends) up to the antenna */
+      + [a, b].map(p => vline(p, p.z, p.los, 'stroke="#e8edf2" stroke-width="1.4"')).join('');
+    const w = A.worst;
+    if (w) {
+      const col = w.clr < 0 ? '#ff6b86' : w.clr / w.f1 < 0.6 ? '#f0b429' : '#5fd37a';
+      over += vline(w, w.ground, w.los, `stroke="${col}" stroke-width="1.2" stroke-dasharray="2 2"`)
+            + `<circle cx="${x(w.d1).toFixed(1)}" cy="${y(w.ground).toFixed(1)}" r="2.6" fill="${col}"/>`;
+    }
+  }
+  const pk = A.peak;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img">`
+    + `<rect x="${L}" y="${T}" width="${W - L - Rp}" height="${H - T - Bp}" fill="#10141a" stroke="#2b333c"/>`
+    + g
+    + (canopy ? `<path d="${canopy}" fill="#4a7a46" fill-opacity=".55" stroke="#6fbf63"`
+      + ` stroke-opacity=".8" stroke-width=".8"/>` : '')
+    + `<path d="${ground}" fill="#3a4a3c" stroke="#7d9a7f" stroke-width="1"/>`
+    + over
+    + `<circle cx="${x(pk.d1).toFixed(1)}" cy="${y(pk.ground).toFixed(1)}" r="1.8" fill="#8c98a6"/>`
+    + `<text x="${L}" y="${H - 14}" fill="#8c98a6" font-size="9">0</text>`
+    + `<text x="${W - Rp}" y="${H - 14}" text-anchor="end" fill="#8c98a6" font-size="9">${m2s(A.d)}</text>`
+    + `<text x="${(L + W - Rp) / 2}" y="${H - 3}" text-anchor="middle" fill="#8c98a6" font-size="9">`
+    + `ground + bulge (k=4/3)${A.hasVeg ? ' &middot; canopy band' : ''} &middot; sight line `
+    + `&middot; dashed 60% F1 @ ${Number(S.freq) || 868}MHz</text>`
+    + `<text x="${L - 5}" y="${T + 4}" text-anchor="end" fill="#8c98a6" font-size="9">m</text>`
+    + `</svg>`;
+}
+
+/* ------------------------------------------------------------------ point elevations ----------- */
+
+/* One batched request for every point, debounced, because each drag would otherwise bill a call
+   against Google. Lantmateriet is local, but the debounce costs nothing and keeps one code path. */
+function elevate() {
+  clearTimeout(etimer);
+  etimer = setTimeout(async () => {
+    const items = [...S.nodes.map((c, i) => ({ kind: 'nodes', i, c })),
+                   ...S.sensors.map((c, i) => ({ kind: 'sensors', i, c }))].filter(x => x.c.elev == null);
+    if (!items.length) return;
+    let got;
+    try { got = await prov().points(items.map(x => ({ lat: x.c.lat, lng: x.c.lng }))); }
+    catch (e) { msg('elevation: ' + e.message); return; }
+    got.forEach((r, k) => {
+      if (!items[k]) return;
+      if (!r) { items[k].c.outside = true; return; }   /* outside the cache: say so, do not guess */
+      delete items[k].c.outside;
+      items[k].c.elev = Math.round(r.z * 10) / 10;
+      items[k].c.canopy = r.canopy == null ? null : Math.round(r.canopy * 10) / 10;
+      /* KEEP THE RESOLUTION. It is the grid spacing behind this point, so it says how much the
+         figure can be trusted -- 1m is Lantmateriet's measured ground, 9.5m is the best Google
+         holds, and 76m or more means the value was interpolated across a distance larger than most
+         of the terrain features that matter for a radio path. A smoothed ridge reads lower than it
+         is, which is exactly the error that makes a link look feasible when it is not. */
+      items[k].c.res = r.res == null ? null : Math.round(r.res * 10) / 10;
+    });
+    panel(); coverage();
+  }, 600);
+}
+
+function readout(kind, i) {
+  const c = S[kind][i], el = $('ll_' + kind + i);
+  if (el) el.innerHTML = `<span>${c.lat.toFixed(6)}</span><span>${c.lng.toFixed(6)}</span>`;
+}
+
+function rowsFor(kind) {
+  const host = $(kind); host.innerHTML = '';
+  S[kind].forEach((c, i) => {
+    const colour = colourOf(kind, i), isNode = kind === 'nodes', d = document.createElement('div');
+    d.className = 'c'; d.style.borderLeftColor = colour;
+    d.innerHTML = `<div class="ch">
+        ${isNode ? `<input type="checkbox" id="rg_${i}" ${c.rings ? 'checked' : ''} title="rings">` : ''}
+        <input type="text" id="nm_${kind}${i}" value="${(c.name || '').replace(/"/g, '&quot;')}">
+        <button class="x" id="dl_${kind}${i}" title="remove">&times;</button></div>
+      ${isNode ? `<div class="row"><div><label>ring (m)</label>
+        <input type="number" id="sp_${i}" placeholder="${S.spacing}" value="${c.spacing || ''}" min="10" step="10"></div>
+        <div><label>max (m)</label>
+        <input type="number" id="mx_${i}" placeholder="${S.max}" value="${c.max || ''}" min="50" step="50"></div></div>` : ''}
+      <div class="row"><div><label>antenna agl (m)</label>
+        <input type="number" id="ag_${kind}${i}" value="${Number(c.agl) || 0}" step="1"></div>
+        <div><label>ground</label><input type="text" value="${
+          c.outside ? 'no data' : c.elev == null ? '…' : c.elev + ' m'}" disabled></div></div>
+      <div class="row"><div><label>tx (dBm)</label>
+        <input type="number" id="tx_${kind}${i}" placeholder="${S.txdbm}" value="${c.tx ?? ''}"
+               min="-10" max="40" step="1"></div>
+        <div><label>antenna (dBi)</label>
+        <input type="number" id="gn_${kind}${i}" placeholder="${S.gain}" value="${c.gain ?? ''}"
+               min="-5" max="30" step="0.5"></div></div>
+      <div class="el">${c.outside ? '<span class="grid coarse">outside the cached terrain</span>'
+          : c.elev == null ? 'elevation pending'
+          : 'AMSL ' + (c.elev + (Number(c.agl) || 0)).toFixed(1) + ' m'
+            + (c.canopy != null && c.canopy > 0 ? ` &middot; canopy ${c.canopy.toFixed(1)}m` : '')
+            + (c.res == null ? ''
+               : ` <span class="grid${c.res > 30 ? ' coarse' : ''}">&middot; grid ${c.res}m</span>`)}</div>
+      ${(() => {
+          const r = radio(c), e = LINK.eirpOf(r.tx, r.gain);
+          const over = e > 27.5 ? ' bad' : e > 14.5 ? ' warn' : '';
+          return `<div class="el"><span class="grid">${r.tx}dBm + ${r.gain}dBi = </span>`
+               + `<span class="${over.trim()}">${e.toFixed(0)} dBm EIRP</span>`
+               + `<span class="grid">${e > 27.5 ? ' — above the 27dBm g3 limit'
+                                      : e > 14.5 ? ' — g3 sub-band only' : ''}</span></div>`;
+        })()}
+      ${c.note ? `<div class="note">${c.note}</div>` : ''}
+      <div class="ll" id="ll_${kind}${i}"></div>`;
+    host.appendChild(d);
+    if (isNode) {
+      $('rg_' + i).onchange = () => { c.rings = $('rg_' + i).checked; draw(); };
+      for (const [k, f] of [['sp_', 'spacing'], ['mx_', 'max']])
+        $(k + i).onchange = () => { const v = Number($(k + i).value); c[f] = v > 0 ? v : undefined; draw(); };
+    }
+    $('nm_' + kind + i).onchange = () => {
+      c.name = $('nm_' + kind + i).value || (kind === 'nodes' ? 'relay ' + i : 'sensor ' + (i + 1));
+      if (marks[kind][i]) marks[kind][i].setTitle(c.name);
+    };
+    $('dl_' + kind + i).onclick = () => del(kind, i);
+    $('ag_' + kind + i).onchange = () => { c.agl = Number($('ag_' + kind + i).value) || 0; panel(); };
+    for (const [pre, key] of [['tx_', 'tx'], ['gn_', 'gain']])
+      $(pre + kind + i).onchange = () => {
+        const v = $(pre + kind + i).value.trim();
+        if (v === '') delete c[key]; else c[key] = Number(v);   /* blank = follow the default */
+        if (fieldFor && fieldFor.kind === kind && fieldFor.i === i) clearField();
+        panel();
+      };
+    readout(kind, i);
+  });
+}
+
+/* Anything that rebuilds the side panel can have changed a name, an agl or an elevation, all of
+   which the open hover box and profile are quoting -- so they are redrawn from the same call. */
+/* A spreading factor is what you actually set on a node; the decibels follow from it, so the
+   control offers the choice and shows the consequence. */
+/* A device's radio, falling back to the site defaults. Blank means "same as everything else",
+   which is why the inputs show the default as a placeholder rather than a value. */
+const radio = (c) => ({ tx: c && c.tx != null ? Number(c.tx) : Number(S.txdbm) || 0,
+                        gain: c && c.gain != null ? Number(c.gain) : Number(S.gain) || 0 });
+/* Both ends contribute antenna gain, so a budget only exists for a PAIR. */
+const sysGain = (a, b) => LINK.systemGain(radio(a).tx, radio(a).gain, radio(b).gain);
+/* For a receptivity field the far end is hypothetical, so it uses the site's receiver antenna. */
+const sysGainOut = (a) => LINK.systemGain(radio(a).tx, radio(a).gain, Number(S.rxGain) || 0);
+const budgetPair = (a, b) => budgetOf(sysGain(a, b));
+/* The label quotes receiver sensitivity, not a budget: with per-device power and antennas the
+   budget is a property of a LINK, not of the site, so there is no single number to put here.
+ *
+ * "custom" exists because a spreading factor is not always the useful handle. A module quoted by
+ * air data rate -- an Ebyte E22 at 2.4kbps, say -- does not name its SF, and the rate alone cannot
+ * imply one: it is set by SF, bandwidth AND coding rate together, so 2.4kbps fits anything from
+ * SF7/62.5kHz to SF10/500kHz. The datasheet's sensitivity figure is unambiguous where the SF is
+ * not, so it can be entered directly. */
+function sfOptions() {
+  $('sf').innerHTML = LINK.SFS.map((sf) =>
+    `<option value="${sf}">SF${sf} (${LINK.sens(sf)} dBm)</option>`).join('')
+    + '<option value="custom">custom sensitivity…</option>';
+  $('sf').value = S.sf === 'custom' ? 'custom' : (Number(S.sf) || 12);
+  $('sensrow').hidden = S.sf !== 'custom';
+  $('sens').value = S.sens != null ? S.sens : LINK.sens(Number(S.sf) || 12);
+}
+
+/* Every budget in the page goes through here, so SF and custom cannot drift apart. */
+const sensNow = () => S.sf === 'custom' ? (Number(S.sens) || LINK.sens(12))
+                                        : LINK.sens(Number(S.sf) || 12);
+const budgetOf = (sysG) => sysG - sensNow();
+const sfLabel = () => S.sf === 'custom' ? `${sensNow()}dBm` : `SF${S.sf}`;
+
+/* Provenance for whatever source is selected, so a number on screen can always be traced. */
+function provInfo() {
+  const el = $('provinfo');
+  if (!prov().local) {
+    el.textContent = 'Google Elevation API — billed per request, terrain only, 9.5–76 m grid here.';
+    return;
+  }
+  if (!TERRAIN || !TERRAIN.blocks.ground) { el.textContent = 'no local cache'; return; }
+  const g = TERRAIN.blocks.ground || 0, c = TERRAIN.blocks.canopy || 0;
+  const gf = TERRAIN.groundFlown;
+  el.innerHTML = `${g} km² ground${c ? ` / ${c} km² canopy` : ''} cached, `
+    + `${(TERRAIN.bytes / 1e6).toFixed(1)} MB`
+    + (gf ? `<br>flown ${gf.from}${gf.to !== gf.from ? '…' + gf.to : ''}, `
+      + `1 m grid, 0.1 m uncertainty` : '')
+    + (c < g ? `<br><span class="grid coarse">${g - c} km² without canopy</span>` : '');
+}
+
+function panel() { rowsFor('nodes'); rowsFor('sensors'); markers(); repaint(); coverage(); }
+
+async function save() {
+  /* `outside` is a runtime observation about the cache, not part of the layout -- strip it so a
+     saved state does not carry a stale verdict into the next session. */
+  const clean = { ...S };
+  for (const k of ['nodes', 'sensors'])
+    clean[k] = S[k].map(({ outside, ...rest }) => rest);
+  const r = await fetch('/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' },
+                                        body: JSON.stringify(clean) });
+  const o = await r.json().catch(() => ({}));
+  msg(r.ok ? `saved ${S.nodes.length} gateway/relay + ${S.sensors.length} sensor`
+           : 'save failed: ' + (o.error || r.status));
+}
+window.initMap = boot;
+</script>
+<script async src="https://maps.googleapis.com/maps/api/js?key=__MAPS_KEY__&libraries=geometry&callback=initMap&loading=async"></script>

@@ -1,0 +1,262 @@
+#!/usr/bin/env node
+/*
+ * lm-terrain-ground -- fill the local terrain cache from Lantmateriet, so topology runs offline.
+ *
+ *   LM_USERPASS="user:pass" ./lm-terrain-ground --state topology.json --radius 1000
+ *
+ * Credentials are needed HERE and nowhere else. topology itself reads only the local cache, so the
+ * server never holds a Lantmateriet password and the browser never sees one -- unlike the Maps key,
+ * which has to reach the page.
+ *
+ * Ground comes from Markhojdmodell (1m grid, 0.1m height uncertainty) read straight out of the
+ * cloud-optimised GeoTIFF by byte range: a 1km block costs a few hundred KB, not the 267MB tile.
+ * Canopy comes from the Laserdata Skog point cloud and is built by ./lm-terrain-canopy, which needs
+ * Python -- LAZ is not something to hand-decode. Both write into the same cache, and because the
+ * cache is committed that only has to happen once per block, ever.
+ */
+'use strict';
+const fs = require('fs'),
+    path = require('path'),
+    https = require('https');
+const { toTM } = require('./lib/sweref');
+const { Cog } = require('./lib/cog');
+const B = require('./lib/blocks');
+
+const A = process.argv.slice(2),
+    opt = (k, d) => {
+        const i = A.indexOf('--' + k);
+        return i >= 0 && A[i + 1] !== undefined ? A[i + 1] : d;
+    };
+if (A.includes('--help') || A.includes('-h')) {
+    console.log(`usage: lm-terrain-ground [options]
+  --state PATH[,PATH]  topology state file(s) to read positions from (default ./topology.json)
+  --cache DIR          cache directory                               (default ./cache)
+  --radius M           cache this far around every point             (default 1000)
+  --force              refetch blocks that are already cached
+  --dry-run            list what would be fetched, then stop
+
+Set LM_USERPASS="user:pass" with your Lantmateriet Geotorget credentials.
+Point several sites at one --cache to share blocks: they are keyed by national grid kilometre.`);
+    process.exit(0);
+}
+const STATES = opt('state', './topology.json')
+    .split(',')
+    .map((s) => path.resolve(s.trim()));
+const CACHE = path.resolve(opt('cache', './cache'));
+const RADIUS = Number(opt('radius', 1000));
+const FORCE = A.includes('--force'),
+    DRY = A.includes('--dry-run');
+
+const STAC = 'https://api.lantmateriet.se/stac-hojd/v1';
+const UP = process.env.LM_USERPASS || '';
+
+/* ------------------------------------------------------------------ http ---------------------- */
+
+function get(url, headers = {}) {
+    return new Promise((res, rej) => {
+        const u = new URL(url);
+        https
+            .request(
+                {
+                    hostname: u.hostname,
+                    path: u.pathname + u.search,
+                    method: 'GET',
+                    headers,
+                },
+                (r) => {
+                    if (r.statusCode === 401) {
+                        r.resume();
+                        return rej(new Error('401 -- check LM_USERPASS'));
+                    }
+                    if (r.statusCode >= 300) {
+                        r.resume();
+                        return rej(new Error(`HTTP ${r.statusCode} ${url}`));
+                    }
+                    const c = [];
+                    r.on('data', (d) => c.push(d));
+                    r.on('end', () => res(Buffer.concat(c)));
+                }
+            )
+            .on('error', rej)
+            .end();
+    });
+}
+const authHeader = () => ({
+    authorization: 'Basic ' + Buffer.from(UP).toString('base64'),
+});
+
+/* One Cog per source tile, each with its own range-fetcher and tile cache, so adjacent blocks
+   that land in the same 512x512 COG tile only pull it once. */
+const cogs = new Map();
+let nreq = 0,
+    nbytes = 0;
+async function cogFor(href) {
+    if (cogs.has(href)) return cogs.get(href);
+    const u = new URL(href);
+    const fetchRange = async (start, end) => {
+        const b = await get(href, {
+            ...authHeader(),
+            range: `bytes=${start}-${end}`,
+        });
+        nreq++;
+        nbytes += b.length;
+        return b;
+    };
+    const p = Cog.open(fetchRange).then((c) => {
+        c.href = href;
+        return c;
+    });
+    cogs.set(href, p);
+    return p;
+}
+
+/* STAC search is public -- no credentials -- and tells us which tile covers a block. */
+const itemCache = new Map();
+async function itemFor(collection, e, n) {
+    const { lat, lng } = require('./lib/sweref').toWGS(e, n);
+    const k = `${collection}:${Math.round(e)},${Math.round(n)}`;
+    if (itemCache.has(k)) return itemCache.get(k);
+    const url = `${STAC}/search?collections=${collection}&limit=1` + `&bbox=${lng - 1e-5},${lat - 1e-5},${lng + 1e-5},${lat + 1e-5}`;
+    const j = JSON.parse((await get(url)).toString('utf8'));
+    const f = j.features && j.features[0];
+    itemCache.set(k, f || null);
+    return f || null;
+}
+
+/* ------------------------------------------------------------------ build --------------------- */
+
+function readPoints() {
+    const out = [];
+    for (const f of STATES) {
+        let s;
+        try {
+            s = JSON.parse(fs.readFileSync(f, 'utf8'));
+        } catch (e) {
+            console.error(`terrain: ${f}: ${e.message}`);
+            continue;
+        }
+        for (const kind of ['nodes', 'sensors'])
+            for (const c of s[kind] || []) {
+                const t = toTM(c.lat, c.lng);
+                out.push({
+                    name: c.name,
+                    lat: c.lat,
+                    lng: c.lng,
+                    e: t.e,
+                    n: t.n,
+                    from: path.basename(f),
+                });
+            }
+    }
+    return out;
+}
+
+async function groundBlock(cog, e0, n0) {
+    const res = B.LAYERS.ground.res,
+        w = B.SIDE / res;
+    const out = new Int16Array(w * w);
+    const { nodata, scale } = B.LAYERS.ground;
+    const tiles = await cog.prefetch(e0, n0, e0 + B.SIDE, n0 + B.SIDE);
+    let missing = 0;
+    for (let r = 0; r < w; r++) {
+        const n = n0 + B.SIDE - (r + 0.5) * res;
+        for (let c = 0; c < w; c++) {
+            const v = cog.valueAtSync(e0 + (c + 0.5) * res, n);
+            if (v === undefined) throw new Error('prefetch missed a COG tile -- this is a bug');
+            if (v === null) {
+                out[r * w + c] = nodata;
+                missing++;
+            } else out[r * w + c] = Math.round(v / scale);
+        }
+    }
+    return { out, missing, tiles };
+}
+
+(async () => {
+    const points = readPoints();
+    if (!points.length) {
+        console.error('terrain: no points found in ' + STATES.join(', '));
+        process.exit(2);
+    }
+    const want = B.blocksFor(points, RADIUS);
+    console.log(`terrain: ${points.length} points from ${STATES.length} state file(s)`);
+    console.log(`terrain: ${RADIUS}m radius -> ${want.length} blocks of ${B.SIDE}m ` + `(${want.length} km²) in ${CACHE}`);
+
+    const todo = want.filter((b) => FORCE || !fs.existsSync(B.fileOf(CACHE, 'ground', b.e0, b.n0)));
+    const have = want.length - todo.length;
+    console.log(`terrain: ground -- ${have} already cached, ${todo.length} to fetch`);
+    if (DRY) {
+        for (const b of todo) console.log('  would fetch ' + b.key);
+        process.exit(0);
+    }
+    if (todo.length && !UP) {
+        console.error('terrain: LM_USERPASS is not set, cannot fetch. Export it as "user:pass".');
+        process.exit(2);
+    }
+
+    const t0 = Date.now();
+    let written = 0,
+        bytes = 0,
+        prevHref = null;
+    const tiles = new Set();
+    for (const [i, b] of todo.entries()) {
+        const mid = { e: b.e0 + B.SIDE / 2, n: b.n0 + B.SIDE / 2 };
+        const item = await itemFor('dtm-cog', mid.e, mid.n);
+        if (!item) {
+            console.log(`  ${b.key}: no Markhojdmodell coverage, skipped`);
+            continue;
+        }
+        const href = item.assets.data.href;
+        /* Blocks are processed in grid order, so a run of them shares one source tile. Drop the
+           previous tile's decoded 512x512 chunks when we move on -- a wide --radius crosses
+           several tiles and holding them all resident is what would blow up on a small box. */
+        if (prevHref && prevHref !== href) (await cogFor(prevHref)).evict();
+        prevHref = href;
+        tiles.add(item.id);
+        const cog = await cogFor(href);
+        const { out, missing } = await groundBlock(cog, b.e0, b.n0);
+        const sz = B.write(CACHE, 'ground', b.e0, b.n0, out, {
+            source: 'lantmateriet:dtm-cog',
+            tile: item.id,
+            flown: item.properties.datetime,
+            sigma_h: item.properties.lagesosakerhethojd,
+            sigma_xy: item.properties.lagesosakerhetplan,
+            crs: item.properties['proj:code'],
+        });
+        written++;
+        bytes += sz;
+        /* the per-tile COG cache is what keeps this cheap; drop it between source tiles so a large
+           --radius spanning several tiles does not hold them all resident */
+        console.log(`  [${i + 1}/${todo.length}] ${b.key}  ${(sz / 1024).toFixed(0)} KiB` + (missing ? `  (${missing} nodata cells)` : '') + `  tile ${item.id}`);
+    }
+
+    /* manifest: what is cached, from what, measured when -- so topology can show provenance */
+    const mfPath = path.join(CACHE, 'manifest.json');
+    const prev = fs.existsSync(mfPath) ? JSON.parse(fs.readFileSync(mfPath, 'utf8')) : {};
+    const mf = {
+        ...prev,
+        magic: 'iotdata-terrain',
+        v: 1,
+        side: B.SIDE,
+        ground: {
+            res: B.LAYERS.ground.res,
+            scale: B.LAYERS.ground.scale,
+            source: 'Lantmateriet Markhojdmodell (dtm-cog)',
+            crs: 'EPSG:5845',
+            tiles: [...new Set([...((prev.ground && prev.ground.tiles) || []), ...tiles])].sort(),
+        },
+        radius: RADIUS,
+        built: new Date().toISOString().slice(0, 19) + 'Z',
+    };
+    fs.mkdirSync(CACHE, { recursive: true });
+    fs.writeFileSync(mfPath, JSON.stringify(mf, null, 2) + '\n');
+
+    const secs = (Date.now() - t0) / 1000;
+    console.log(`terrain: wrote ${written} ground blocks, ${(bytes / 1e6).toFixed(2)} MB cached`);
+    console.log(`terrain: ${nreq} range requests, ${(nbytes / 1e6).toFixed(1)} MB fetched, ` + `${secs.toFixed(0)}s`);
+    const canopy = want.filter((b) => !fs.existsSync(B.fileOf(CACHE, 'canopy', b.e0, b.n0)));
+    if (canopy.length) console.log(`terrain: ${canopy.length} blocks have no canopy yet -- run ./lm-terrain-canopy ` + `for the vegetation layer`);
+})().catch((e) => {
+    console.error('terrain: ' + e.message);
+    process.exit(1);
+});

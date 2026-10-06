@@ -1,0 +1,561 @@
+#!/usr/bin/env node
+/*
+ * topology -- a site-survey map: draggable centres with dashed range rings.
+ *
+ *   ./topology --port 4096 --persist ./topology.json --centres 6
+ *
+ * The Maps JS key is NEVER written to disk by this tool. Pass it with --key or in MAPS_API_KEY and
+ * the server injects it into the page as it serves it, so the html file stays committable. The key
+ * still reaches the browser -- that is unavoidable for the Maps JS API -- so restrict it by HTTP
+ * referrer in the Google console rather than treating it as a secret.
+ *
+ * Elevation comes from the local terrain cache (./cache, filled by ./lm-terrain-ground and ./lm-terrain-canopy)
+ * rather than from Google. That is not just a quality choice: Lantmateriet's 1m ground model is
+ * measured to 0.1m where Google's figures for this site run up to 14m high, because what Google
+ * returns here behaves like a canopy-inclusive surface averaged over ~100m rather than ground.
+ * Google stays available as a selectable provider so the two can be compared directly.
+ *
+ * No Lantmateriet credentials are needed here. Only the cache builders talk to Geotorget.
+ */
+'use strict';
+const http = require('http'),
+    fs = require('fs'),
+    path = require('path');
+const { Cache, SIDE } = require('./lib/blocks');
+const { toTM, toWGS } = require('./lib/sweref');
+const LINK = require('./lib/link');
+
+const A = process.argv.slice(2),
+    opt = (n, d) => {
+        const i = A.indexOf('--' + n);
+        return i >= 0 && A[i + 1] !== undefined ? A[i + 1] : d;
+    };
+if (A.includes('--help') || A.includes('-h')) {
+    console.log(`usage: topology [options]
+  --port N        listen port                      (default 4096)
+  --host H        bind address                     (default 0.0.0.0, reachable from the LAN)
+  --persist PATH  where positions are saved        (default ./topology.json)
+  --spacing M     default ring spacing in metres   (default 100)
+  --max M         default outermost ring in metres (default 1000)
+  --cache DIR     terrain cache directory          (default ./cache)
+  --cache-mem MB  ceiling for decompressed blocks   (default 192)
+  --key K         Maps JS API key                  (or set MAPS_API_KEY)`);
+    process.exit(0);
+}
+const PORT = Number(opt('port', 4096)),
+    HOST = opt('host', '0.0.0.0');
+const PERSIST = path.resolve(opt('persist', './topology.json'));
+const SPACING = Number(opt('spacing', 100)),
+    MAXR = Number(opt('max', 1000));
+const CACHEDIR = path.resolve(opt('cache', './cache'));
+const CACHEMEM = Math.max(8, Number(opt('cache-mem', 192))) * 1e6;
+const KEY = opt('key', process.env.MAPS_API_KEY || '');
+if (!KEY) {
+    console.error('topology: no Maps key. Pass --key or set MAPS_API_KEY.');
+    process.exit(2);
+}
+
+/* The existing gateway's surveyed position, from the packet forwarder's global_conf. Seeded as
+   centre 0 so the first thing on screen is the one position that is already a fact. */
+const SEED = {
+    spacing: SPACING,
+    max: MAXR,
+    mapType: 'terrain',
+    labels: true,
+    nodes: [
+        {
+            name: 'gateway (surveyed)',
+            lat: 59.66206682,
+            lng: 12.99552614,
+            rings: true,
+            agl: 0,
+            note: 'config ref-altitude 131m AMSL',
+        },
+    ],
+    sensors: [],
+};
+
+const read = () => {
+    try {
+        const s = JSON.parse(fs.readFileSync(PERSIST, 'utf8'));
+        /* an earlier save had one flat `centres` list, before sensors were separated out */
+        if (s && Array.isArray(s.centres) && !s.nodes) {
+            s.nodes = s.centres.map(({ on, ...c }) => ({
+                ...c,
+                rings: on !== false,
+            }));
+            delete s.centres;
+        }
+        if (s && Array.isArray(s.nodes)) {
+            s.sensors = s.sensors || [];
+            return s;
+        }
+        console.error(`topology: ${PERSIST} is not a saved state, ignoring it`);
+    } catch (e) {
+        if (e.code !== 'ENOENT') console.error(`topology: ${PERSIST}: ${e.message}, ignoring it`);
+    }
+    return SEED;
+};
+/* tmp + rename, so an interrupted save cannot leave a half-written file where the positions were */
+const write = (obj) => {
+    const tmp = PERSIST + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n');
+    fs.renameSync(tmp, PERSIST);
+};
+
+const PAGE = path.join(__dirname, 'topology.html');
+const send = (res, code, type, body) => {
+    res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' });
+    res.end(body);
+};
+const json = (res, code, obj) => send(res, code, 'application/json', JSON.stringify(obj));
+
+/* ------------------------------------------------------------------ terrain ------------------- */
+
+const cache = new Cache(CACHEDIR, CACHEMEM);
+let cacheStat = { counts: {}, bytes: 0 };
+try {
+    cacheStat = cache.load();
+} catch (e) {
+    console.error(`topology: ${CACHEDIR}: ${e.message}`);
+}
+
+/* Ground is bilinear -- a 1m grid read nearest shows stair steps on a shallow slope that look like
+   terrain roughness. Canopy is nearest: it is a per-cell maximum, so interpolating between cells
+   would invent a surface that was never measured. */
+const sample = (lat, lng) => {
+    const { e, n } = toTM(lat, lng);
+    if (!cache.has('ground', e, n)) return null; /* outside the cache -- say so, do not guess */
+    const g = cache.atSmooth('ground', e, n);
+    if (g == null) return null;
+    const hasC = cache.has('canopy', e, n);
+    const c = hasC ? cache.at('canopy', e, n) : null;
+    return { ground: g, canopy: c, canopyKnown: hasC && c != null };
+};
+
+/* Evenly spaced samples along the great circle a->b, inclusive of both ends, matching what the
+   browser's geometry library would produce for the same path. */
+function greatCircle(a, b, count) {
+    const R = Math.PI / 180;
+    const la1 = a.lat * R,
+        lo1 = a.lng * R,
+        la2 = b.lat * R,
+        lo2 = b.lng * R;
+    const dl = lo2 - lo1;
+    const d = 2 * Math.asin(Math.sqrt(Math.sin((la2 - la1) / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dl / 2) ** 2));
+    const out = [];
+    for (let i = 0; i < count; i++) {
+        const f = count > 1 ? i / (count - 1) : 0;
+        if (d < 1e-12) {
+            out.push({ lat: a.lat, lng: a.lng });
+            continue;
+        }
+        const A = Math.sin((1 - f) * d) / Math.sin(d),
+            Bc = Math.sin(f * d) / Math.sin(d);
+        const x = A * Math.cos(la1) * Math.cos(lo1) + Bc * Math.cos(la2) * Math.cos(lo2);
+        const y = A * Math.cos(la1) * Math.sin(lo1) + Bc * Math.cos(la2) * Math.sin(lo2);
+        const z = A * Math.sin(la1) + Bc * Math.sin(la2);
+        out.push({
+            lat: Math.atan2(z, Math.hypot(x, y)) / R,
+            lng: Math.atan2(y, x) / R,
+        });
+    }
+    return out;
+}
+
+/* Earliest and latest survey date across a layer's blocks. The page quotes these so a profile is
+   never read as current truth -- this is managed forest, and a stand measured in 2019 has grown
+   since or been felled outright. */
+function flownRange(layer) {
+    const ds = [...cache.layers[layer].values()]
+        .map((b) => b.meta.flown)
+        .filter(Boolean)
+        .sort();
+    return ds.length ? { from: ds[0].slice(0, 10), to: ds[ds.length - 1].slice(0, 10) } : null;
+}
+
+/* ------------------------------------------------------------------ receptivity field --------- */
+
+/* A hot/cold map of what the pinned node could reach, evaluated on a polar grid.
+ *
+ * Walking outward along a ray is what makes this affordable: the profile from the origin to range
+ * r is a prefix of the profile to r + step, so every range ring on a ray reuses the samples already
+ * gathered rather than re-sampling the whole path. Terrain is a local array read, so the whole
+ * field costs a few tens of milliseconds and can be recomputed whenever a marker moves.
+ */
+function radialField(o) {
+    const from = { lat: o.lat, lng: o.lng };
+    const radius = Math.max(50, Math.min(20000, Number(o.radius) || 1000));
+    const step = Math.max(5, Math.min(200, Number(o.step) || Math.max(10, radius / 100)));
+    const rays = Math.max(16, Math.min(720, Number(o.rays) || 240));
+    const steps = Math.floor(radius / step);
+    const budget = Number(o.budget) || 151;
+    const agl = Number(o.agl) || 0,
+        targetAgl = Number(o.targetAgl) || 1;
+    const freq = Number(o.freq) || 868,
+        grow = Number(o.grow) || 0;
+
+    const origin = sample(from.lat, from.lng);
+    if (!origin) return { error: 'origin is outside the cached terrain' };
+    const hA = origin.ground + agl;
+
+    /* geodesic-ish stepping: metres per degree at this latitude, good to well under a cell */
+    const mPerLat = 111132.92 - 559.82 * Math.cos((2 * from.lat * Math.PI) / 180);
+    const mPerLng = 111412.84 * Math.cos((from.lat * Math.PI) / 180);
+
+    const margin = new Float32Array(rays * steps).fill(NaN);
+    /* How much of each path had canopy data. A path scored with no vegetation reads BETTER than
+       it is -- the one direction a siting aid must not fail silently -- so thin cells get hatched.
+     *
+     * This is a FRACTION, not a flag. Treating one missing sample as poisoning the whole ray made
+     * a lake near the origin hatch everything behind it out to the rim, drawing a wedge of
+     * "no data" across forest that is fully surveyed. Water is most of what is missing, and a lake
+     * genuinely has no canopy, so a short unknown stretch is not worth flagging at all. */
+    const VEG_HATCH = 0.25; /* hatch once this much of the path is unmeasured */
+    const vegKnown = new Uint8Array(rays * steps);
+    let reach = 0,
+        covered = 0,
+        total = 0,
+        vegCells = 0,
+        scored = 0;
+
+    for (let a = 0; a < rays; a++) {
+        const th = (a * 2 * Math.PI) / rays,
+            sinT = Math.sin(th),
+            cosT = Math.cos(th);
+        const prof = [
+            {
+                z: origin.ground,
+                res: null,
+                canopy: origin.canopyKnown ? origin.canopy : null,
+            },
+        ];
+        let gap = false,
+            vegMiss = origin.canopyKnown ? 0 : 1,
+            vegSeen = 1;
+        for (let s = 1; s <= steps; s++) {
+            const r = s * step;
+            const lat = from.lat + (r * cosT) / mPerLat;
+            const lng = from.lng + (r * sinT) / mPerLng;
+            const t = sample(lat, lng);
+            total++;
+            if (!t) {
+                gap = true;
+                continue;
+            } /* a hole anywhere voids the rest of the ray */
+            covered++;
+            if (gap) continue;
+            vegSeen++;
+            if (!t.canopyKnown) vegMiss++;
+            prof.push({
+                z: t.ground,
+                res: null,
+                canopy: t.canopyKnown ? t.canopy : null,
+            });
+            const A = LINK.analyse(prof, r, hA, t.ground + targetAgl, { freq, grow });
+            const m = budget - A.loss;
+            const i = a * steps + (s - 1);
+            const ok = vegMiss / vegSeen <= VEG_HATCH;
+            margin[i] = m;
+            vegKnown[i] = ok ? 1 : 0;
+            scored++;
+            if (ok) vegCells++;
+            if (m >= 0) reach = Math.max(reach, r);
+        }
+    }
+    return {
+        lat: from.lat,
+        lng: from.lng,
+        radius,
+        step,
+        rays,
+        steps,
+        budget,
+        agl,
+        targetAgl,
+        freq,
+        grow,
+        originGround: origin.ground,
+        originCanopy: origin.canopyKnown ? origin.canopy : null,
+        hA,
+        reach,
+        coverage: total ? covered / total : 0,
+        canopyCoverage: scored ? vegCells / scored : 0,
+        bands: LINK.BANDS.map((b) => ({
+            min: b.min,
+            label: b.label,
+            colour: b.colour,
+        })),
+        /* rounded to whole dB: the overlay bands are 10dB wide and the inputs do not justify more */
+        margin: Array.from(margin, (v) => (Number.isNaN(v) ? null : Math.round(v))),
+        vegKnown: Array.from(vegKnown),
+    };
+}
+
+/* The deployment view: every transmitter's field at once, reduced to the best signal each place
+ * can get from ANY of them.
+ *
+ * Each origin keeps its own polar field -- that is what makes the per-ray prefix trick work -- and
+ * they are then gathered onto one rectangular grid rather than scattered into it, so the rim of a
+ * polar grid cannot leave holes between rays. The winning transmitter is recorded per cell, which
+ * is what turns "is there coverage" into "and which box is carrying it".
+ */
+function coverageField(o) {
+    const origins = Array.isArray(o.origins) ? o.origins : [];
+    if (!origins.length) return { error: 'no transmitters to combine' };
+    const radius = Math.max(50, Math.min(20000, Number(o.radius) || 1000));
+    const step = Math.max(5, Math.min(200, Number(o.step) || Math.max(10, radius / 100)));
+    const rays = Math.max(16, Math.min(720, Number(o.rays) || 360));
+
+    const fields = origins.map((g) =>
+        radialField({
+            lat: g.lat,
+            lng: g.lng,
+            radius,
+            step,
+            rays,
+            agl: g.agl,
+            targetAgl: o.targetAgl,
+            budget: g.budget,
+            freq: o.freq,
+            grow: o.grow,
+        })
+    );
+    const live = fields.filter((f) => !f.error);
+    if (!live.length) return { error: 'every transmitter is outside the cached terrain' };
+
+    const lat0 = Math.min(...origins.map((g) => g.lat)),
+        lat1 = Math.max(...origins.map((g) => g.lat));
+    const lng0 = Math.min(...origins.map((g) => g.lng)),
+        lng1 = Math.max(...origins.map((g) => g.lng));
+    const mid = (lat0 + lat1) / 2;
+    const mLat = 111132.92 - 559.82 * Math.cos((2 * mid * Math.PI) / 180);
+    const mLng = 111412.84 * Math.cos((mid * Math.PI) / 180);
+    const padLat = radius / mLat,
+        padLng = radius / mLng;
+    const south = lat0 - padLat,
+        north = lat1 + padLat;
+    const west = lng0 - padLng,
+        east = lng1 + padLng;
+
+    /* one cell per sampling step, capped so a wide deployment cannot produce a vast payload */
+    let cell = Math.max(step, Number(o.cell) || step);
+    let nx = Math.ceil(((east - west) * mLng) / cell),
+        ny = Math.ceil(((north - south) * mLat) / cell);
+    const CAP = 360;
+    if (nx > CAP || ny > CAP) {
+        cell *= Math.max(nx, ny) / CAP;
+        nx = Math.ceil(((east - west) * mLng) / cell);
+        ny = Math.ceil(((north - south) * mLat) / cell);
+    }
+
+    const margin = new Float32Array(nx * ny).fill(NaN);
+    const best = new Int16Array(nx * ny).fill(-1);
+    const veg = new Uint8Array(nx * ny);
+    for (let y = 0; y < ny; y++) {
+        const lat = north - ((y + 0.5) * cell) / mLat;
+        for (let x = 0; x < nx; x++) {
+            const lng = west + ((x + 0.5) * cell) / mLng;
+            const i = y * nx + x;
+            for (let k = 0; k < fields.length; k++) {
+                const f = fields[k];
+                if (f.error) continue;
+                const dy = (lat - f.lat) * mLat,
+                    dx = (lng - f.lng) * mLng;
+                const r = Math.hypot(dx, dy);
+                if (r > f.radius || r < f.step * 0.5) continue;
+                let th = Math.atan2(dx, dy);
+                if (th < 0) th += 2 * Math.PI;
+                const a = Math.min(f.rays - 1, Math.round((th / (2 * Math.PI)) * f.rays) % f.rays);
+                const s = Math.min(f.steps - 1, Math.max(0, Math.round(r / f.step) - 1));
+                const m = f.margin[a * f.steps + s];
+                if (m == null) continue;
+                if (best[i] < 0 || m > margin[i]) {
+                    margin[i] = m;
+                    best[i] = k;
+                    veg[i] = f.vegKnown[a * f.steps + s];
+                }
+            }
+        }
+    }
+    let covered = 0;
+    for (let i = 0; i < margin.length; i++) if (best[i] >= 0 && margin[i] >= 0) covered++;
+    return {
+        north,
+        south,
+        east,
+        west,
+        nx,
+        ny,
+        cell,
+        radius,
+        step,
+        rays,
+        targetAgl: o.targetAgl,
+        freq: o.freq,
+        origins: origins.map((g, k) => ({
+            name: g.name,
+            lat: g.lat,
+            lng: g.lng,
+            budget: g.budget,
+            agl: g.agl,
+            reach: fields[k].error ? null : fields[k].reach,
+            error: fields[k].error || null,
+        })),
+        coveredFraction: covered / (nx * ny),
+        bands: LINK.BANDS.map((b) => ({
+            min: b.min,
+            label: b.label,
+            colour: b.colour,
+        })),
+        margin: Array.from(margin, (v) => (Number.isNaN(v) ? null : Math.round(v))),
+        best: Array.from(best),
+        vegKnown: Array.from(veg),
+    };
+}
+
+function terrainInfo() {
+    const mf = cache.manifest || {};
+    const cov = [...cache.layers.canopy.values()].map((b) => b.meta.coverage).filter((v) => v != null);
+    return {
+        dir: CACHEDIR,
+        blocks: cacheStat.counts,
+        bytes: cacheStat.bytes,
+        side: SIDE,
+        ground: mf.ground || null,
+        canopy: mf.canopy || null,
+        groundFlown: flownRange('ground'),
+        canopyFlown: flownRange('canopy'),
+        canopyCoverage: cov.length ? cov.reduce((a, b) => a + b, 0) / cov.length : null,
+        radius: mf.radius || null,
+        built: mf.built || null,
+        extent: cache.extent(),
+        mem: cache.stats(),
+    };
+}
+
+http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+        let html;
+        try {
+            html = fs.readFileSync(PAGE, 'utf8');
+        } catch {
+            return send(res, 500, 'text/plain', `cannot read ${PAGE}\n`);
+        }
+        return send(res, 200, 'text/html; charset=utf-8', html.replace('__MAPS_KEY__', KEY));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/terrain') {
+        return json(res, 200, terrainInfo());
+    }
+    /* The shared physics, served to the page so the overlay and the profile panel cannot drift. */
+    if (req.method === 'GET' && /^\/lib\/[a-z]+\.js$/.test(url.pathname)) {
+        try {
+            return send(res, 200, 'application/javascript; charset=utf-8', fs.readFileSync(path.join(__dirname, url.pathname), 'utf8'));
+        } catch {
+            return send(res, 404, 'text/plain', 'not found\n');
+        }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/terrain/coverage') {
+        let b = '';
+        req.on('data', (c) => {
+            b += c;
+            if (b.length > 1e6) req.destroy();
+        });
+        req.on('end', () => {
+            try {
+                const o = JSON.parse(b);
+                const f = coverageField(o);
+                return json(res, f.error ? 409 : 200, f);
+            } catch (e) {
+                json(res, 400, { error: e.message });
+            }
+        });
+        return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/terrain/radial') {
+        let b = '';
+        req.on('data', (c) => {
+            b += c;
+            if (b.length > 1e6) req.destroy();
+        });
+        req.on('end', () => {
+            try {
+                const o = JSON.parse(b);
+                if (o.lat == null || o.lng == null) throw new Error('expected { lat, lng, ... }');
+                const f = radialField(o);
+                return json(res, f.error ? 409 : 200, f);
+            } catch (e) {
+                json(res, 400, { error: e.message });
+            }
+        });
+        return;
+    }
+    /* Batch point lookup and path profile, both local reads -- no network, no credentials, and
+       fast enough that the browser does not need to debounce or cache them the way it must for
+       the metered Google service. */
+    if (req.method === 'POST' && (url.pathname === '/api/terrain/points' || url.pathname === '/api/terrain/profile')) {
+        let b = '';
+        req.on('data', (c) => {
+            b += c;
+            if (b.length > 1e6) req.destroy();
+        });
+        req.on('end', () => {
+            try {
+                const o = JSON.parse(b);
+                if (url.pathname === '/api/terrain/points') {
+                    if (!Array.isArray(o.points)) throw new Error('expected { points: [...] }');
+                    return json(res, 200, {
+                        samples: o.points.map((p) => sample(p.lat, p.lng)),
+                    });
+                }
+                const n = Math.max(2, Math.min(2048, Number(o.samples) || 256));
+                if (!o.from || !o.to) throw new Error('expected { from, to, samples }');
+                const pts = greatCircle(o.from, o.to, n);
+                return json(res, 200, {
+                    samples: pts.map((p) => sample(p.lat, p.lng)),
+                });
+            } catch (e) {
+                json(res, 400, { error: e.message });
+            }
+        });
+        return;
+    }
+    if (url.pathname === '/api/state') {
+        if (req.method === 'GET') return send(res, 200, 'application/json', JSON.stringify(read()));
+        if (req.method === 'PUT') {
+            let b = '';
+            req.on('data', (c) => {
+                b += c;
+                if (b.length > 1e6) req.destroy();
+            });
+            req.on('end', () => {
+                try {
+                    const o = JSON.parse(b);
+                    if (!o || !Array.isArray(o.nodes) || !Array.isArray(o.sensors)) throw new Error('expected { nodes: [...], sensors: [...] }');
+                    write(o);
+                    console.log(`saved ${o.nodes.length} gateway/relay + ${o.sensors.length} sensor -> ${PERSIST}`);
+                    send(res, 200, 'application/json', '{"ok":true}');
+                } catch (e) {
+                    send(res, 400, 'application/json', JSON.stringify({ error: e.message }));
+                }
+            });
+            return;
+        }
+    }
+    send(res, 404, 'text/plain', 'not found\n');
+}).listen(PORT, HOST, () => {
+    console.log(`topology: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}  (${SPACING}m rings to ${MAXR}m)`);
+    console.log(`topology: positions in ${PERSIST}${fs.existsSync(PERSIST) ? '' : ' (not yet created)'}`);
+    const g = cacheStat.counts.ground || 0,
+        c = cacheStat.counts.canopy || 0;
+    if (!g) {
+        console.log(`topology: no terrain cache in ${CACHEDIR} -- run ./lm-terrain-ground to build it, ` + `or switch the page to the Google provider`);
+    } else {
+        console.log(`topology: terrain ${g} ground + ${c} canopy blocks ` + `(${(cacheStat.bytes / 1e6).toFixed(1)} MB) from ${CACHEDIR}`);
+        /* Blocks are inflated on first touch, not at startup: the whole cache decompressed is
+           about 2MB per square kilometre, which a wide radius turns into gigabytes. */
+        console.log(`topology: blocks inflate on demand, up to ` + `${(CACHEMEM / 1e6).toFixed(0)} MB resident (--cache-mem)`);
+        if (c < g) console.log(`topology: ${g - c} blocks have ground but no canopy ` + `-- run ./lm-terrain-canopy for the vegetation layer`);
+    }
+});
