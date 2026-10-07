@@ -44,6 +44,8 @@
 #define IOTDATA_NODE_CFGID_DDUP_DEBUG                   0x095
 #define IOTDATA_NODE_CFGID_DDUP_DEBUG_INJECT_LATENCY_MS 0x096
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #ifndef IOTDATA_NODE_CONFIG_DDUP_ENABLE
 #define IOTDATA_NODE_CONFIG_DDUP_ENABLE false
 #endif

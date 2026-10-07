@@ -48,6 +48,8 @@
 #define IOTDATA_NODE_CFGID_BLACKBOX_FILE_DIRECTORY   0x0B0
 #define IOTDATA_NODE_CFGID_BLACKBOX_FILE_GENERATIONS 0x0B1
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #ifndef IOTDATA_NODE_CONFIG_BBOX_ENABLED
 #define IOTDATA_NODE_CONFIG_BBOX_ENABLED false
 #endif

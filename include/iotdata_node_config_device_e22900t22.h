@@ -35,6 +35,10 @@
 #define IOTDATA_NODE_CFGID_LORA_CRYPT       0x037
 #define IOTDATA_NODE_CFGID_LORA_DEBUG       0x038
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+// XXX FIX ME
+
 #ifndef IOTDATA_NODE_CONFIG_LORA_MODULE
 #define IOTDATA_NODE_CONFIG_LORA_MODULE LORA_MODULE_DIP
 #endif

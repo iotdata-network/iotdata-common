@@ -46,6 +46,8 @@
 #define IOTDATA_NODE_CFGID_STAT_DISPLAY_NETW_INTERVAL_S   0x0C3
 #define IOTDATA_NODE_CFGID_STAT_PUBLISH_NETW_INTERVAL_S   0x0C4
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #ifndef IOTDATA_NODE_CONFIG_STAT_INTERVAL
 #define IOTDATA_NODE_CONFIG_STAT_INTERVAL 300u
 #endif

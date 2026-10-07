@@ -48,6 +48,8 @@
 #define IOTDATA_NODE_CFGID_CART_RETRY_MIN    0x0D6
 #define IOTDATA_NODE_CFGID_CART_RETRY_MAX    0x0D7
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #ifndef IOTDATA_NODE_CONFIG_CART_ENABLE
 #define IOTDATA_NODE_CONFIG_CART_ENABLE false
 #endif

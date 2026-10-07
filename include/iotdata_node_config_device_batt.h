@@ -51,12 +51,9 @@
 #define IOTDATA_NODE_CFGID_BATT_MV_MAX       0x0E3
 #define IOTDATA_NODE_CFGID_BATT_OFFSET_MV    0x0E4
 
-/* THE CHEMISTRY VALUES, for a build that wants the rows without the driver. Unlike the other blocks,
-   this one's type validator names the enum members themselves, so it needs them in PASS ONE --
-   IOTDATA_NODE_CONFIG_NO_APPLY cannot help, because the validator is not the part that applies anything.
-   d_interface_batt.h's battery_type_t wins whenever it is present and these must match it.
-   OPEN: the chemistry is pure data, and a config block reaching into an ESP32 driver for it is the
-   coupling worth removing -- moving battery_type_t somewhere host-visible would retire this block. */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+// XXX FIX ME
 #ifndef BATTERY_TYPE_LIION
 #define BATTERY_TYPE_LIION   0
 #define BATTERY_TYPE_LIPO    1
@@ -65,6 +62,7 @@
 #ifndef BATTERY_TYPE
 #define BATTERY_TYPE BATTERY_TYPE_LIION
 #endif
+
 #ifndef IOTDATA_NODE_CONFIG_BATT_TYPE
 #define IOTDATA_NODE_CONFIG_BATT_TYPE BATTERY_TYPE
 #endif

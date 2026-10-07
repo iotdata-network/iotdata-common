@@ -31,6 +31,10 @@
 #define IOTDATA_NODE_CFGID_DOWN_TTL_BCAST_MIN 0x021
 #define IOTDATA_NODE_CFGID_DOWN_REPEAT_MIN    0x022
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+// XXX FIX ME
+
 #ifndef IOTDATA_NODE_CONFIG_DOWN_MIN_MAX
 #define IOTDATA_NODE_CONFIG_DOWN_MIN_MAX (IOTDATA_NODE_DOWN_TTL_MS_MAX / 60000UL)
 #endif

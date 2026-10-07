@@ -44,6 +44,8 @@
 #define IOTDATA_NODE_CFGID_MQTT_TOPIC_PREFIX          0x085
 #define IOTDATA_NODE_CFGID_MQTT_DEBUG                 0x086
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #ifndef IOTDATA_NODE_CONFIG_MQTT_CLIENT
 #define IOTDATA_NODE_CONFIG_MQTT_CLIENT "iotdata"
 #endif
