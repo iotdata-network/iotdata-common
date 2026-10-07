@@ -15,6 +15,17 @@ esp32-tool diag     extract|decode|clear                       # blackbox diagno
 esp32-tool deploy   -p PORT -b BUILD_DIR [--pull HOST:PATH]    # flash, then monitor
 ```
 
+`flash` and `deploy` also take **`-f NAME-VERSION`**, which flashes a *staged release* out of the
+iotdata-release tree instead of a build directory — the manifest beside it supplies the chip, the
+offsets and the binaries, so one name covers the whole set:
+
+```sh
+esp32-tool deploy -b /opt/iotdata/src/iotdata-release/esp32c3/bin -f relay-0.9.9
+```
+
+Staging is not this tool's job (see `iotdata-common/tools/ota-stage`); flashing what was staged is.
+
+
 Everything the flash needs — chip, flash settings, the three binaries and their offsets — is read
 from the build dir's `flasher_args.json`, so it works for any project without hardcoding anything.
 `monitor` is the same coloured-log / reconnect / command-inject loop as

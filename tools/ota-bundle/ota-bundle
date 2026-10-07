@@ -1,0 +1,206 @@
+#!/usr/bin/env node
+/*
+ * ota-bundle -- build one OTA blob from staged releases.
+ *
+ *   ota-bundle -d .../iotdata-release/esp32c3 -r relay-0.9.9 --form full  --codec deflate
+ *   ota-bundle -d .../iotdata-release/esp32c3 -r relay-0.9.9 --form delta --base relay-0.9.8
+ *
+ * The format is defined by iotdata-common/include/iotdata_node_content_ota.h and that header is the
+ * authority -- this is its encoder, and the two are meant to be read side by side. Magic, then kvr
+ * pairs, then an END sentinel, then the payload.
+ *
+ * EVERYTHING COMES OUT OF THE STAGED MANIFESTS. The app name, semver, stamp, bootloader floor and
+ * both image hashes are read from bin/<release>.json rather than passed in, so a blob cannot claim
+ * something the release does not say -- and the stamp in particular can only come from there,
+ * because it was generated at build time and cannot be re-derived later.
+ *
+ * Writes three files per blob: the .bin, a .sha256 of it, and a .txt that is the header's own fields
+ * one per line, so a bundle can be read without a decoder.
+ */
+'use strict';
+const fs = require('fs'),
+    path = require('path'),
+    zlib = require('zlib'),
+    crypto = require('crypto'),
+    { execFileSync } = require('child_process');
+
+/* Mirrors iotdata_node_content_ota.h. Changing either without the other is the bug this comment
+   exists to prevent. */
+const MAGIC = 'IOTA';
+const HASH_LEN = 16;
+const KEY = { END: 0x00, APP: 0x01, SEMVER: 0x02, STAMP: 0x03, FORM: 0x04, CODEC: 0x05, FLAGS: 0x06, BOOTLOADER_MIN: 0x07, OUTPUT_SIZE: 0x08, TARGET_HASH: 0x09, BASE_HASH: 0x0a };
+const FORM = { full: 0x00, delta: 0x01 };
+const CODEC = { none: 0x00, deflate: 0x01, heatshrink: 0x02 };
+const FLAG = { 'downgrade-okay': 0x01 };
+
+const die = (m) => {
+    console.error('ota-bundle: ' + m);
+    process.exit(1);
+};
+
+const A = process.argv.slice(2),
+    opt = (n, d) => {
+        const i = A.indexOf('--' + n);
+        return i >= 0 && A[i + 1] !== undefined ? A[i + 1] : d;
+    };
+const sopt = (s, n, d) => {
+    const i = A.indexOf('-' + s);
+    return i >= 0 && A[i + 1] !== undefined ? A[i + 1] : opt(n, d);
+};
+if (A.length === 0 || A.includes('-h') || A.includes('--help')) {
+    console.log(`usage: ota-bundle [options]
+  -d, --dir DIR      the chip's release subtree, holding bin/ (default .)
+  -r, --release NAME target release, e.g. relay-0.9.9           [required]
+      --form F       full | delta                               (default full)
+      --codec C      none | deflate                             (default deflate)
+      --base NAME    base release, required for --form delta
+      --flags LIST   comma separated: downgrade-okay
+      --out DIR      where to write (default <dir>/ota)
+      --quiet        only print the blob path
+
+heatshrink is a reserved codec value with no encoder yet -- see the codec note in
+iotdata_node_content_ota.h for why it is deliberately absent rather than guessed at.`);
+    process.exit(0);
+}
+
+const DIR = path.resolve(sopt('d', 'dir', '.'));
+const BIN = path.join(DIR, 'bin');
+const OUT = path.resolve(opt('out', path.join(DIR, 'ota')));
+const RELEASE = sopt('r', 'release', null) || die('set -r <release>, e.g. -r relay-0.9.9');
+const FORM_S = opt('form', 'full');
+const CODEC_S = opt('codec', 'deflate');
+const BASE = opt('base', null);
+const FLAGS_S = opt('flags', '');
+const QUIET = A.includes('--quiet');
+
+if (!(FORM_S in FORM)) die(`unknown form ${FORM_S} -- full | delta`);
+if (!(CODEC_S in CODEC)) die(`unknown codec ${CODEC_S} -- none | deflate`);
+if (CODEC_S === 'heatshrink') die('heatshrink has no encoder yet: the format reserves the value, nothing implements it');
+if (FORM_S === 'delta' && !BASE) die('--form delta needs --base <release>');
+if (FORM_S === 'full' && BASE) die('--base means nothing for --form full');
+
+let flags = 0;
+for (const f of FLAGS_S.split(',').filter(Boolean)) {
+    if (!(f in FLAG)) die(`unknown flag ${f} -- ${Object.keys(FLAG).join(', ')}`);
+    flags |= FLAG[f];
+}
+
+// ---------------------------------------------------------------------------------------------
+
+function manifest(name) {
+    const p = path.join(BIN, name + '.json');
+    if (!fs.existsSync(p)) {
+        const have = fs.existsSync(BIN) ? fs.readdirSync(BIN).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)) : [];
+        die(`no release '${name}' in ${BIN}` + (have.length ? `\n  staged there: ${have.join(', ')}` : '\n  (nothing staged there)'));
+    }
+    const m = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (!m.iotdata || !m.iotdata.ota) die(`${name} has no app payload in its manifest -- restage it`);
+    return m.iotdata;
+}
+
+/* 16 bytes of the staged sha256. The manifest carries the full digest; the header carries half of
+   it, because these are identity checks and the blob's authenticity comes from the deployer's
+   signature (see WHY 16-BYTE HASHES in the format header). */
+const hash16 = (hex) => Buffer.from(hex, 'hex').subarray(0, HASH_LEN);
+
+const kvr = [];
+const put = (key, val) => {
+    const v = Buffer.isBuffer(val) ? val : Buffer.from(val);
+    if (v.length > 255) die(`value for key ${key} is ${v.length} bytes, kvr allows 255`);
+    kvr.push(Buffer.concat([Buffer.from([key, v.length]), v]));
+};
+const u8 = (n) => Buffer.from([n & 0xff]);
+const u32 = (n) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n >>> 0);
+    return b;
+};
+
+// ---------------------------------------------------------------------------------------------
+
+const t = manifest(RELEASE);
+const appfile = (m) => path.join(BIN, m.ota.file);
+if (!t.stamp) die(`${RELEASE} was staged before stamps were recorded -- restage it, the stamp cannot be recovered`);
+
+let payload, base = null, basename = null;
+if (FORM_S === 'delta') {
+    /* --base takes a bare version too: the application is already fixed by -r, so repeating it buys
+       nothing and gets it wrong eventually. */
+    basename = BASE.includes('-') ? BASE : `${t.name}-${BASE}`;
+    base = manifest(basename);
+    if (base.name !== t.name) die(`a delta between different applications makes no sense: ${base.name} -> ${t.name}`);
+    if (base.ota.sha256 === t.ota.sha256) die(`${BASE} and ${RELEASE} have identical app images -- there is nothing to diff`);
+    fs.mkdirSync(OUT, { recursive: true });
+    const tmp = path.join(OUT, '.' + RELEASE + '.hdiff');
+    /* hdiffz with no compression flag, so FORM and CODEC stay independent and the codec below is the
+       only thing that squeezed it -- see FORM AND CODEC ARE INDEPENDENT in the format header. */
+    try {
+        execFileSync('hdiffz', ['-f', appfile(base), appfile(t), tmp], { stdio: 'pipe' });
+    } catch (e) {
+        die(`hdiffz failed: ${e.stderr ? e.stderr.toString().trim() : e.message}`);
+    }
+    payload = fs.readFileSync(tmp);
+    fs.unlinkSync(tmp);
+} else {
+    payload = fs.readFileSync(appfile(t));
+}
+
+const raw = payload.length;
+if (CODEC_S === 'deflate')
+    /* RAW deflate, no zlib or gzip wrapper: the device side is miniz's inflate_raw, and a wrapper
+       would be bytes on a link measured in bytes per second for a checksum we already have. */
+    payload = zlib.deflateRawSync(payload, { level: 9 });
+
+put(KEY.APP, t.name);
+put(KEY.SEMVER, t.version);
+put(KEY.STAMP, t.stamp);
+put(KEY.FORM, u8(FORM[FORM_S]));
+put(KEY.CODEC, u8(CODEC[CODEC_S]));
+put(KEY.FLAGS, u8(flags));
+put(KEY.BOOTLOADER_MIN, u32(t.bootloader_min === undefined ? 1 : t.bootloader_min));
+put(KEY.OUTPUT_SIZE, u32(t.ota.size));
+put(KEY.TARGET_HASH, hash16(t.ota.sha256));
+if (base) put(KEY.BASE_HASH, hash16(base.ota.sha256));
+put(KEY.END, Buffer.alloc(0));
+
+const header = Buffer.concat([Buffer.from(MAGIC, 'ascii'), ...kvr]);
+const blob = Buffer.concat([header, payload]);
+
+// ---------------------------------------------------------------------------------------------
+
+const stem = base ? `${RELEASE}-${base.version}+${FORM_S}+${CODEC_S}` : `${RELEASE}+${FORM_S}+${CODEC_S}`;
+fs.mkdirSync(OUT, { recursive: true });
+const blobpath = path.join(OUT, stem + '.bin');
+fs.writeFileSync(blobpath, blob);
+const digest = crypto.createHash('sha256').update(blob).digest('hex');
+fs.writeFileSync(blobpath + '.sha256', `${digest}  ${stem}.bin\n`);
+
+/* The header as text, so a bundle can be read on a box with no decoder and diffed against another. */
+const lines = [
+    `file=${stem}.bin`,
+    `blob_sha256=${digest}`,
+    `blob_size=${blob.length}`,
+    `header_size=${header.length}`,
+    `app=${t.name}`,
+    `semver=${t.version}`,
+    `stamp=${t.stamp}`,
+    `form=${FORM_S}`,
+    `codec=${CODEC_S}`,
+    `flags=${FLAGS_S || 'none'}`,
+    `bootloader_min=${t.bootloader_min === undefined ? 1 : t.bootloader_min}`,
+    `output_size=${t.ota.size}`,
+    `target_hash=${hash16(t.ota.sha256).toString('hex')}`,
+    ...(base ? [`base_release=${basename}`, `base_semver=${base.version}`, `base_hash=${hash16(base.ota.sha256).toString('hex')}`] : []),
+    `payload_raw=${raw}`,
+    `payload_wire=${payload.length}`,
+    /* of the full image, measured on the BLOB -- that is what actually crosses the link. */
+    `of_full_image=${((100 * blob.length) / t.ota.size).toFixed(1)}%`,
+];
+fs.writeFileSync(blobpath + '.txt', lines.join('\n') + '\n');
+
+if (QUIET) console.log(blobpath);
+else {
+    console.log(`ota ${stem}`);
+    console.log(`     header ${header.length} B   payload ${payload.length} B` + (raw !== payload.length ? ` (from ${raw} B)` : '')
+        + `   blob ${blob.length} B   = ${((100 * blob.length) / t.ota.size).toFixed(1)}% of the full image`);
+}

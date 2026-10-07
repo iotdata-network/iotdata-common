@@ -38,10 +38,21 @@ VERSION        ?= 0.0.0
 VERSION_STAMP  ?= $(shell date -u +%Y%m%d%H%M)
 CFLAGS_DEFINES += -DIOTDATA_VERSION_APP='"$(NAME)"' -DIOTDATA_VERSION_SEMVER='"$(VERSION)"' -DIOTDATA_VERSION_STAMP='"$(VERSION_STAMP)"'
 
+# Staging, the same shape the esp32 rule uses: one release tree, one subtree per platform, one
+# manifest format. See iotdata-common/tools/ota-stage.
+_TARGET_LINUX_MK_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+OTA_STAGE      ?= $(_TARGET_LINUX_MK_DIR)/../tools/ota-stage/ota-stage
+STAGE_ROOT     ?= $(abspath $(_TARGET_LINUX_MK_DIR)/../../iotdata-release)
+STAGE_ARGS     ?=
+# The oldest loader this build needs. Means little on linux today -- it is carried so an OTA blob
+# from a linux build has the same fields as one from an esp32 build, and so an esp32 gateway later
+# slots in without the format gaining a platform-conditional.
+BOOTLOADER_MIN ?= 1
+
 TEST_TARGET    ?= $(TARGET)_test
 TEST_LIBS      ?= $(LIBS)
 SOURCES_ALL    ?= $(MAIN) $(if $(TEST_MAIN),$(TEST_MAIN)) $(SOURCES_TARGET)
-TARGETS_ALL    ?= $(TARGET) $(if $(TEST_MAIN),$(TEST_TARGET)) $(TARGET).d $(if $(TEST_MAIN),$(TEST_TARGET).d)
+TARGETS_ALL    ?= $(TARGET) $(TARGET).buildinfo $(if $(TEST_MAIN),$(TEST_TARGET)) $(TARGET).d $(if $(TEST_MAIN),$(TEST_TARGET).d)
 
 # WHAT WAS ACTUALLY INCLUDED, asked of the compiler rather than listed by hand.
 #
@@ -58,9 +69,17 @@ CFLAGS_DEPEND  ?= -MMD -MP
 $(if $(TEST_MAIN),$(eval -include $(TEST_TARGET).d))
 
 .DEFAULT_GOAL := all
-.PHONY: all clean format
+.PHONY: all clean format stage
 
 all: $(TARGET)
+
+## ---- stage: into the iotdata-release tree, as <name>-<version> -------------
+## The platform subtree is derived from the binary's own ELF header, so a cross-built aarch64
+## artefact cannot be staged into the x86_64 tree by a forgotten variable.
+stage: $(TARGET)
+	@test "$(VERSION)" != "0.0.0" || { echo "stage: VERSION is still the 0.0.0 default -- set it at the release point" >&2; exit 1; }
+	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- clone the iotdata-release repo there first" >&2; exit 1; }
+	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --app $(TARGET) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS)
 
 # MAKEFILE_LIST is a prerequisite because the makefiles carry the compile flags -- NAME, VERSION and
 # the rest -- and make has no other way to notice that one of them changed. Without it, bumping
@@ -68,6 +87,10 @@ all: $(TARGET)
 # kind of quiet lie the version report exists to prevent.
 $(TARGET): $(MAIN) $(SOURCES) $(MAKEFILE_LIST)
 	$(CC) $(CFLAGS) $(CFLAGS_DEPEND) -MF $(TARGET).d -o $(TARGET) $(MAIN) $(LDFLAGS) $(LIBS)
+	@# THE STAMP MUST SURVIVE THE BUILD. VERSION_STAMP is a fresh `date -u` every invocation, so by
+	@# the time anything stages this binary the value compiled into it is unrecoverable -- unless the
+	@# build writes it down here. esp32 gets this free from CMakeCache.txt; linux has to say it.
+	@printf 'name=%s\nversion=%s\nstamp=%s\n' '$(NAME)' '$(VERSION)' '$(VERSION_STAMP)' > $(TARGET).buildinfo
 
 clean:
 	rm -f $(TARGETS_ALL)

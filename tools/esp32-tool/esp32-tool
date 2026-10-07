@@ -438,29 +438,37 @@ def esptool_major(esptool):
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
 
-def load_flasher_args(build_dir):
-    path = os.path.join(build_dir, "flasher_args.json")
+# A STAGED RELEASE IS A FLASHER_ARGS WITH LONGER FILENAMES, and nothing else. ota-stage rewrites the
+# paths and leaves the structure alone, so everything downstream of here -- offsets, flash args, the
+# esptool v4/v5 translation -- cannot tell the two apart and needs no idea which it is holding.
+def load_flasher_args(build_dir, file_name=None):
+    path = os.path.join(build_dir, (file_name + ".json") if file_name else "flasher_args.json")
     if not os.path.isfile(path):
+        if file_name:
+            have = sorted(f[:-5] for f in os.listdir(build_dir) if f.endswith(".json")) if os.path.isdir(build_dir) else []
+            die(f"no release {file_name!r} in {build_dir}" + (f"\n  staged there: {', '.join(have)}" if have else "\n  (nothing staged there)"))
         die(f"{path} not found — is {build_dir!r} an ESP-IDF build directory?")
     with open(path) as f:
         return json.load(f)
 
-def do_flash(port, build_dir, baud):
-    esptool = find_esptool()
-    if not esptool:
-        die("esptool not found — install it with:  pip install esptool  (this is not the IDF toolchain)")
-    fa = load_flasher_args(build_dir)
+def do_flash(port, build_dir, baud, file_name=None):
+    # What we are flashing is checked BEFORE whether we can flash it: a mistyped -f or a half-copied
+    # release is the common mistake, and a missing esptool is a one-time setup problem.
+    fa = load_flasher_args(build_dir, file_name)
     extra = fa.get("extra_esptool_args", {})
     chip = extra.get("chip", "esp32c3")
     # verify the referenced binaries are actually present before touching the chip
     files = fa["flash_files"]  # { "0xNNN": "relative/path.bin", ... }
     for rel in files.values():
         if not os.path.isfile(os.path.join(build_dir, rel)):
-            die(f"missing binary {rel!r} in {build_dir} (rebuild, or --pull it from the build host)")
+            die(f"missing binary {rel!r} in {build_dir} (rebuild, re-stage, or --pull it from the build host)")
     # esptool v5 (ESP-IDF v6+) hyphenates its subcommands, option flags and reset
     # modes ("write-flash", "--flash-mode", "default-reset"); esptool v4 (the apt/pip
     # package) uses underscores. flasher_args.json is written in the BUILD's style, so
     # translate every arg to match whichever esptool we actually found on this box.
+    esptool = find_esptool()
+    if not esptool:
+        die("esptool not found — install it with:  pip install esptool  (this is not the IDF toolchain)")
     v5 = (esptool_major(esptool) or 4) >= 5
     def flag(tok):        # option flag: translate the NAME only, keep the leading "--"
         if tok.startswith("--"):
@@ -476,7 +484,9 @@ def do_flash(port, build_dir, baud):
     argv += ["write-flash" if v5 else "write_flash", *(flag(a) for a in fa.get("write_flash_args", []))]
     for offset in sorted(files, key=lambda o: int(o, 16)):
         argv += [offset, files[offset]]
-    print(f"{CYAN}flash{RESET} chip={chip} port={port} dir={build_dir}")
+    meta = fa.get("iotdata", {})
+    what = f" release={meta['name']}-{meta['version']}" if meta.get("name") else ""
+    print(f"{CYAN}flash{RESET} chip={chip} port={port} dir={build_dir}{what}")
     for offset in sorted(files, key=lambda o: int(o, 16)):
         print(f"       {offset:>8}  {files[offset]}")
     # esptool resolves the relative binary paths against cwd
@@ -484,6 +494,9 @@ def do_flash(port, build_dir, baud):
     if r.returncode != 0:
         die(f"esptool exited {r.returncode}")
     print(f"{COLORS['I']}flash complete{RESET}")
+
+# --------------------------------------------------------------------------------------
+
 
 # --------------------------------------------------------------------------------------
 
@@ -700,7 +713,10 @@ def main():
         # cycle, so "not found" is usually "not awake yet" rather than "not plugged in".
         p.add_argument("-w", "--wait", action="store_true", help="wait for the port to appear instead of failing (for a board that sleeps between cycles)")
         if build:
-            p.add_argument("-b", "--build-dir", default=None, help="ESP-IDF build directory (default: ./build, or the --pull staging dir)")
+            p.add_argument("-b", "--build-dir", default=None, help="ESP-IDF build directory, or a staged release directory with -f (default: ./build, or the --pull staging dir)")
+            # -f names a STAGED release inside -b, without its extension, so one name covers the
+            # manifest and the three or four binaries it points at.
+            p.add_argument("-f", "--file-name", default=None, metavar="NAME-VERSION", help="flash a staged release by name instead of a build: reads <NAME-VERSION>.json from -b")
             p.add_argument("--pull", metavar="HOST:PATH", default=None, help="rsync the build's binaries from a remote build dir first")
             p.add_argument("--baud", type=int, default=460800, help="flash baud (ignored on USB-JTAG)")
     sub.add_parser("list", help="show the attached boards: serial (MAC), port, by-id path")
@@ -742,7 +758,7 @@ def main():
     if args.cmd == "flash":
         build = resolve_build_dir(args)  # resolve (and --pull) BEFORE waiting, so the window is spent flashing
         require_port(args)
-        do_flash(args.port, build, args.baud)
+        do_flash(args.port, build, args.baud, getattr(args, "file_name", None))
         return
     if args.cmd in ("monitor", "deploy"):
         logged = log_open(getattr(args, "log", None), args.port)
@@ -784,7 +800,7 @@ def main():
     if args.cmd == "deploy":
         build = resolve_build_dir(args)  # resolve (and --pull) BEFORE waiting, so the window is spent flashing
         require_port(args)
-        do_flash(args.port, build, args.baud)
+        do_flash(args.port, build, args.baud, getattr(args, "file_name", None))
         # esptool's --after hard_reset already restarted the app; monitor picks it up
         # (its own reconnect handles the USB-JTAG re-enumeration a reset can cause).
         try:

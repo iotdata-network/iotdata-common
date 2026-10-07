@@ -12,6 +12,13 @@
 # build_release/): ESP_LOG compiled out and assertions silenced, so the format
 # strings drop out of flash. Kept entirely separate from the verbose build/.
 #
+# `make stage` then copies that image into the iotdata-release repo as
+# <NAME>-<VERSION>, beside a manifest esp32-tool can flash by name:
+#   make release && make stage VERSION=0.9.3
+#   esp32-tool deploy -b .../iotdata-release/esp32c3/bin -f iotdata-relay-0.9.3
+# It stages the LEAN build by default, because that is the one that would go out
+# over the air -- STAGE_FROM=build to stage the verbose one deliberately.
+#
 # Source paths come from iotdata-common/make/config.mk — include that first so
 # BUILDER_DEFS can reference the SRC_* variables.
 
@@ -48,6 +55,18 @@ TARGET       ?= build/$(PROJECT).bin
 SDKCONFIG_DEFAULTS ?= sdkconfig.defaults
 RELEASE_DIR        ?= build_release
 RELEASE_DEFAULTS   ?= $(RELEASE_DIR)/sdkconfig.defaults
+
+# staging: the sibling release repo, one subtree per chip, so PLATFORM picks the directory and an
+# esp32c3 release can never land in an esp32s3 tree by a typo.
+STAGE_ROOT   ?= $(abspath $(_TARGET_ESP32_MK_DIR)/../../iotdata-release)
+STAGE_FROM   ?= $(RELEASE_DIR)
+# The oldest bootloader this app will run on, recorded in the staged manifest and asserted by an OTA
+# blob's header. A FLOOR, not an exact match. Bump it when the app starts needing something a newer
+# bootloader provides -- and note CONFIG_BOOTLOADER_PROJECT_VER has to actually be set and bumped for
+# the floor to mean anything, or every bootloader in the fleet claims version 1 forever.
+BOOTLOADER_MIN ?= 1
+STAGE_ARGS   ?=
+OTA_STAGE    ?= $(_TARGET_ESP32_MK_DIR)/../tools/ota-stage/ota-stage
 
 # The common IDF config baseline lives beside this makefile. On first build a project's local
 # sdkconfig.defaults is SEEDED from it (only when absent — never overwritten), with an optional
@@ -150,6 +169,15 @@ release: | $(SDKCONFIG_DEFAULTS)
 	$(BUILDER) -B $(RELEASE_DIR) -D SDKCONFIG=$(RELEASE_DIR)/sdkconfig -D SDKCONFIG_DEFAULTS=$(RELEASE_DEFAULTS) $(BUILDER_DEFS) build
 	@echo ""
 	@echo "release image: $$(ls $(RELEASE_DIR)/*.bin 2>/dev/null)"
+## ---- stage: copy a built image into the iotdata-release repo ---------------
+## Named <NAME>-<VERSION> with a manifest beside it; no compression, no archive, so the staged
+## .bin is byte-identical to the build's and a release can be diffed against a rebuild.
+stage:
+	@test "$(VERSION)" != "0.0.0" || { echo "stage: VERSION is still the 0.0.0 default -- set it at the release point (make stage VERSION=0.9.3)" >&2; exit 1; }
+	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- clone the iotdata-release repo there first" >&2; exit 1; }
+	@test -f "$(STAGE_FROM)/flasher_args.json" || { echo "stage: nothing built in $(STAGE_FROM) -- run 'make release' first, or STAGE_FROM=build to stage the verbose build" >&2; exit 1; }
+	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --build $(STAGE_FROM) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS)
+
 release-size:
 	$(BUILDER) -B $(RELEASE_DIR) size
 release-upload:

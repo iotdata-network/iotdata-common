@@ -40,6 +40,8 @@ test:
 	@$(TEST_DIR)/test_node_diagnostics_off
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_status.c -o $(TEST_DIR)/test_node_status -lm -lcjson
 	@$(TEST_DIR)/test_node_status
+	@$(TEST_CC) $(TEST_CFLAGS) test_node_content_ota.c -o $(TEST_DIR)/test_node_content_ota -lm
+	@$(TEST_DIR)/test_node_content_ota
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_control.c -o $(TEST_DIR)/test_node_control -lm -lcjson
 	@$(TEST_DIR)/test_node_control
 	@$(TEST_CC) $(TEST_CFLAGS) test_format.c -o $(TEST_DIR)/test_format
