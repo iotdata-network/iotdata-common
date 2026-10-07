@@ -25,11 +25,11 @@
 //
 //     #include "iotdata_node_config.h"            // the types
 //     #include "iotdata_node_config_cart.h"       // this block
-//     #define IOTDATA_CONFIG_ENTRIES(X)
+//     #define IOTDATA_NODE_CONFIG_ENTRIES(X)
 //         X(...this app's own...)
-//         IOTDATA_CONFIG_ENTRIES_CART(X)
+//         IOTDATA_NODE_CONFIG_ENTRIES_CART(X)
 //     #include "iotdata_node_config.h"            // expand
-//     #include "iotdata_node_config_cart.h"       // and now iotdata_config_cart_apply()
+//     #include "iotdata_node_config_cart.h"       // and now iotdata_node_config_cart_apply()
 //
 // 0x0D0-0x0DF, and never reused.
 //
@@ -39,55 +39,67 @@
 // more place to be wrong.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_CART_ENABLE
-#define IOTDATA_CONFIG_CART_ENABLE false
+#define IOTDATA_NODE_CFGID_CART_ENABLE       0x0D0
+#define IOTDATA_NODE_CFGID_CART_INTERVAL_MIN 0x0D1
+#define IOTDATA_NODE_CFGID_CART_BOOT_S       0x0D2
+#define IOTDATA_NODE_CFGID_CART_SILENT_S     0x0D3
+#define IOTDATA_NODE_CFGID_CART_SETTLE_S     0x0D4
+#define IOTDATA_NODE_CFGID_CART_LIMIT_MIN    0x0D5
+#define IOTDATA_NODE_CFGID_CART_RETRY_MIN    0x0D6
+#define IOTDATA_NODE_CFGID_CART_RETRY_MAX    0x0D7
+
+#ifndef IOTDATA_NODE_CONFIG_CART_ENABLE
+#define IOTDATA_NODE_CONFIG_CART_ENABLE false
 #endif
-#ifndef IOTDATA_CONFIG_CART_INTERVAL_MIN
-#define IOTDATA_CONFIG_CART_INTERVAL_MIN (12u * 60u) /* twice a day */
+#ifndef IOTDATA_NODE_CONFIG_CART_INTERVAL_MIN
+#define IOTDATA_NODE_CONFIG_CART_INTERVAL_MIN (12u * 60u) /* twice a day */
 #endif
-#ifndef IOTDATA_CONFIG_CART_BOOT_S
-#define IOTDATA_CONFIG_CART_BOOT_S 120u
+#ifndef IOTDATA_NODE_CONFIG_CART_BOOT_S
+#define IOTDATA_NODE_CONFIG_CART_BOOT_S 120u
 #endif
-#ifndef IOTDATA_CONFIG_CART_SILENT_S
-#define IOTDATA_CONFIG_CART_SILENT_S 15u
+#ifndef IOTDATA_NODE_CONFIG_CART_SILENT_S
+#define IOTDATA_NODE_CONFIG_CART_SILENT_S 15u
 #endif
-#ifndef IOTDATA_CONFIG_CART_SETTLE_S
-#define IOTDATA_CONFIG_CART_SETTLE_S 30u
+#ifndef IOTDATA_NODE_CONFIG_CART_SETTLE_S
+#define IOTDATA_NODE_CONFIG_CART_SETTLE_S 30u
 #endif
-#ifndef IOTDATA_CONFIG_CART_LIMIT_MIN
-#define IOTDATA_CONFIG_CART_LIMIT_MIN 120u
+#ifndef IOTDATA_NODE_CONFIG_CART_LIMIT_MIN
+#define IOTDATA_NODE_CONFIG_CART_LIMIT_MIN 120u
 #endif
-#ifndef IOTDATA_CONFIG_CART_RETRY_MIN
-#define IOTDATA_CONFIG_CART_RETRY_MIN (12u * 60u)
+#ifndef IOTDATA_NODE_CONFIG_CART_RETRY_MIN
+#define IOTDATA_NODE_CONFIG_CART_RETRY_MIN (12u * 60u)
 #endif
-#ifndef IOTDATA_CONFIG_CART_RETRY_MAX
-#define IOTDATA_CONFIG_CART_RETRY_MAX 4u
+#ifndef IOTDATA_NODE_CONFIG_CART_RETRY_MAX
+#define IOTDATA_NODE_CONFIG_CART_RETRY_MAX 4u
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static bool iotdata_config_cart_boot_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
-static bool iotdata_config_cart_limit_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+static bool iotdata_node_config_cart_boot_ok(const iotdata_node_config_row_t *row, const iotdata_node_config_value_t *v, const struct iotdata_node_config_update *u);
+static bool iotdata_node_config_cart_limit_ok(const iotdata_node_config_row_t *row, const iotdata_node_config_value_t *v, const struct iotdata_node_config_update *u);
 
-#ifndef IOTDATA_CONFIG_CART_NOTIFY
-static inline bool iotdata_config_cart_changed(__attribute__((unused)) const iotdata_config_row_t *const row, __attribute__((unused)) const iotdata_config_value_t *const was,
-                                               __attribute__((unused)) const iotdata_config_info_t *const info) {
+#ifndef IOTDATA_NODE_CONFIG_CART_NOTIFY
+static inline bool iotdata_node_config_cart_changed(__attribute__((unused)) const iotdata_node_config_row_t *const row, __attribute__((unused)) const iotdata_node_config_value_t *const was,
+                                                    __attribute__((unused)) const iotdata_node_config_info_t *const info) {
     return false;
 }
-#define IOTDATA_CONFIG_CART_NOTIFY iotdata_config_cart_changed
+#define IOTDATA_NODE_CONFIG_CART_NOTIFY iotdata_node_config_cart_changed
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_CONFIG_ENTRIES_CART(X) \
-    X(CART_ENABLE, 0x0D0, BOOL, 0, 1, IOTDATA_CONFIG_CART_ENABLE, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "enabled") \
-    X(CART_INTERVAL_MIN, 0x0D1, U16, 1, 10080, IOTDATA_CONFIG_CART_INTERVAL_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "period between windows, measured from the last cut") \
-    X(CART_BOOT_S, 0x0D2, U16, 5, 3600, IOTDATA_CONFIG_CART_BOOT_S, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_cart_boot_ok, IOTDATA_CONFIG_CART_NOTIFY, "time to hear the first cartbeat before giving up on the boot") \
-    X(CART_SILENT_S, 0x0D3, U16, 1, 3600, IOTDATA_CONFIG_CART_SILENT_S, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "time without a cartbeat before believing it has stopped") \
-    X(CART_SETTLE_S, 0x0D4, U16, 0, 3600, IOTDATA_CONFIG_CART_SETTLE_S, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "time the shutdown gets after that, before the rail goes down") \
-    X(CART_LIMIT_MIN, 0x0D5, U16, 1, 1440, IOTDATA_CONFIG_CART_LIMIT_MIN, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_cart_limit_ok, IOTDATA_CONFIG_CART_NOTIFY, "time until a still-beating cart is cut anyway, safety backstop") \
-    X(CART_RETRY_MIN, 0x0D6, U16, 0, 10080, IOTDATA_CONFIG_CART_RETRY_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "time added to the interval per consecutive failed window") \
-    X(CART_RETRY_MAX, 0x0D7, U8, 0, 60, IOTDATA_CONFIG_CART_RETRY_MAX, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_CART_NOTIFY, "failures that back-off keeps stretching for")
+#define IOTDATA_NODE_CONFIG_ENTRIES_CART(X) \
+    X(CART_ENABLE, IOTDATA_NODE_CFGID_CART_ENABLE, BOOL, 0, 1, IOTDATA_NODE_CONFIG_CART_ENABLE, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CART_NOTIFY, "enabled") \
+    X(CART_INTERVAL_MIN, IOTDATA_NODE_CFGID_CART_INTERVAL_MIN, U16, 1, 10080, IOTDATA_NODE_CONFIG_CART_INTERVAL_MIN, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CART_NOTIFY, \
+      "period between windows, measured from the last cut") \
+    X(CART_BOOT_S, IOTDATA_NODE_CFGID_CART_BOOT_S, U16, 5, 3600, IOTDATA_NODE_CONFIG_CART_BOOT_S, IOTDATA_NODE_CONFIG_FLAG_NONE, iotdata_node_config_cart_boot_ok, IOTDATA_NODE_CONFIG_CART_NOTIFY, \
+      "time to hear the first cartbeat before giving up on the boot") \
+    X(CART_SILENT_S, IOTDATA_NODE_CFGID_CART_SILENT_S, U16, 1, 3600, IOTDATA_NODE_CONFIG_CART_SILENT_S, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CART_NOTIFY, "time without a cartbeat before believing it has stopped") \
+    X(CART_SETTLE_S, IOTDATA_NODE_CFGID_CART_SETTLE_S, U16, 0, 3600, IOTDATA_NODE_CONFIG_CART_SETTLE_S, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CART_NOTIFY, "time the shutdown gets after that, before the rail goes down") \
+    X(CART_LIMIT_MIN, IOTDATA_NODE_CFGID_CART_LIMIT_MIN, U16, 1, 1440, IOTDATA_NODE_CONFIG_CART_LIMIT_MIN, IOTDATA_NODE_CONFIG_FLAG_NONE, iotdata_node_config_cart_limit_ok, IOTDATA_NODE_CONFIG_CART_NOTIFY, \
+      "time until a still-beating cart is cut anyway, safety backstop") \
+    X(CART_RETRY_MIN, IOTDATA_NODE_CFGID_CART_RETRY_MIN, U16, 0, 10080, IOTDATA_NODE_CONFIG_CART_RETRY_MIN, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CART_NOTIFY, "time added to the interval per consecutive failed window") \
+    X(CART_RETRY_MAX, IOTDATA_NODE_CFGID_CART_RETRY_MAX, U8, 0, 60, IOTDATA_NODE_CONFIG_CART_RETRY_MAX, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CART_NOTIFY, "failures that back-off keeps stretching for")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -103,30 +115,37 @@ static inline bool iotdata_config_cart_changed(__attribute__((unused)) const iot
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static bool iotdata_config_cart_boot_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
-    iotdata_config_value_t limit;
-    return iotdata_config_update_peek(u, 0x0D5, &limit) && v->u < limit.u * 60u;
+static bool iotdata_node_config_cart_boot_ok(__attribute__((unused)) const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v, const struct iotdata_node_config_update *const u) {
+    iotdata_node_config_value_t limit;
+    return iotdata_node_config_update_peek(u, IOTDATA_NODE_CFGID_CART_LIMIT_MIN, &limit) && v->u < limit.u * 60u;
 }
-static bool iotdata_config_cart_limit_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
-    iotdata_config_value_t boot;
-    return iotdata_config_update_peek(u, 0x0D2, &boot) && v->u * 60u > boot.u;
+static bool iotdata_node_config_cart_limit_ok(__attribute__((unused)) const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v, const struct iotdata_node_config_update *const u) {
+    iotdata_node_config_value_t boot;
+    return iotdata_node_config_update_peek(u, IOTDATA_NODE_CFGID_CART_BOOT_S, &boot) && v->u * 60u > boot.u;
 }
 
-static inline void iotdata_config_cart_apply(cart_config_t *const c, const gpio_num_t pin_power, const gpio_num_t pin_live) {
+/* APPLY NEEDS THE DRIVER, the validators do not. Separating them lets a host compose this block --
+   id and bounds checks, which is what iotdata-common/tests/test_node_config_blocks.c does -- without
+   dragging in an ESP-IDF header that cannot compile there. Define IOTDATA_NODE_CONFIG_NO_APPLY to take the
+   rows and leave the hardware. */
+#ifndef IOTDATA_NODE_CONFIG_NO_APPLY
+
+static inline void iotdata_node_config_cart_apply(cart_config_t *const c, const gpio_num_t pin_power, const gpio_num_t pin_live) {
     if (c == NULL)
         return;
     c->pin_power = pin_power;
     c->pin_live = pin_live;
-    c->interval_ms = (uint32_t)iotdata_config_u16(CART_INTERVAL_MIN) * 60u * 1000u;
-    c->boot_ms = (uint32_t)iotdata_config_u16(CART_BOOT_S) * 1000u;
-    c->silent_ms = (uint32_t)iotdata_config_u16(CART_SILENT_S) * 1000u;
-    c->settle_ms = (uint32_t)iotdata_config_u16(CART_SETTLE_S) * 1000u;
-    c->limit_ms = (uint32_t)iotdata_config_u16(CART_LIMIT_MIN) * 60u * 1000u;
-    c->retry_ms = (uint32_t)iotdata_config_u16(CART_RETRY_MIN) * 60u * 1000u;
-    c->retry_max = iotdata_config_u8(CART_RETRY_MAX);
+    c->interval_ms = (uint32_t)iotdata_node_config_u16(CART_INTERVAL_MIN) * 60u * 1000u;
+    c->boot_ms = (uint32_t)iotdata_node_config_u16(CART_BOOT_S) * 1000u;
+    c->silent_ms = (uint32_t)iotdata_node_config_u16(CART_SILENT_S) * 1000u;
+    c->settle_ms = (uint32_t)iotdata_node_config_u16(CART_SETTLE_S) * 1000u;
+    c->limit_ms = (uint32_t)iotdata_node_config_u16(CART_LIMIT_MIN) * 60u * 1000u;
+    c->retry_ms = (uint32_t)iotdata_node_config_u16(CART_RETRY_MIN) * 60u * 1000u;
+    c->retry_max = iotdata_node_config_u8(CART_RETRY_MAX);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
+#endif /* !IOTDATA_NODE_CONFIG_NO_APPLY */
 
 #endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_CART_APPLIED */

@@ -17,7 +17,8 @@
 # flash at the other end with nothing to reassemble by hand.
 #
 # WHAT GOES IN comes from the manifest, not from a glob, so a release packages exactly the files it
-# declares — a stray .bin left in bin/ by a half-finished copy cannot ride along unnoticed.
+# declares — a stray .bin left in bin/ by a half-finished copy cannot ride along unnoticed. An esp32
+# release is the whole flash set; a linux release is one executable; the manifest says which.
 #
 # ARCHIVES ARE REPRODUCIBLE: sorted entries, no owner, and every file's mtime pinned to the
 # release's own staged_utc, so packaging the same release twice gives identical bytes and a bundle
@@ -53,8 +54,10 @@ RELEASE ?=
 MANIFEST = $(BIN)/$(RELEASE).json
 STAGE    = $(PKG)/.stage/$(RELEASE)
 # the files the release declares, and the instant it was staged — both straight out of the manifest
-FILES    = $$(python3 -c "import json;print(' '.join('$(BIN)/'+f for f in sorted(set(json.load(open('$(MANIFEST)'))['flash_files'].values()))))")
-WANT     = $$(python3 -c "import json;print(len(set(json.load(open('$(MANIFEST)'))['flash_files'].values()))+1)")
+# From iotdata.files, which BOTH platform shapes have -- flash_files is an esp32-only thing, and
+# reading it here is what quietly broke packaging for a linux release.
+FILES    = $$(python3 -c "import json;print(' '.join('$(BIN)/'+f for f in sorted(json.load(open('$(MANIFEST)'))['iotdata']['files'])))")
+WANT     = $$(python3 -c "import json;print(len(json.load(open('$(MANIFEST)'))['iotdata']['files'])+1)")
 STAMP    = $$(python3 -c "import json;print(json.load(open('$(MANIFEST)'))['iotdata']['staged_utc'])")
 
 _REL_MK_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
@@ -115,11 +118,18 @@ _report:
 	 got=$$(stat -c %s $(PKG)/$(F)); \
 	 echo "  $(F)  $$got B  ($$((100*$$got/$$raw))% of $$raw B raw)"
 
+## The closing hint is platform-aware because the two ends differ: an esp32 bundle is flashed by a
+## tool that reads the manifest, a linux bundle is a binary somebody installs. Printing the esp32
+## line for a linux release would be telling you to do something that cannot work.
 package: txz tgz zip
 	@echo ""
-	@echo "  unpack and flash at the far end:"
+	@echo "  at the far end:"
 	@echo "    tar xf $(RELEASE).tar.xz   # or: unzip $(RELEASE).zip"
-	@echo "    esp32-tool deploy -b $(RELEASE) -f $(RELEASE)"
+	@if python3 -c "import json,sys; sys.exit(0 if 'flash_files' in json.load(open('$(MANIFEST)')) else 1)"; then \
+	   echo "    esp32-tool deploy -b $(RELEASE) -f $(RELEASE)"; \
+	 else \
+	   echo "    $(RELEASE)/$(RELEASE).app   # install it however this host installs things"; \
+	 fi
 
 ## ---- ota: one blob, or the matrix ----------------------------------------
 ota-target: _check

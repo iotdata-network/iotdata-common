@@ -20,44 +20,51 @@
 //
 //     #include "iotdata_node_config.h"      // the types
 //     #include "iotdata_node_config_down.h" // the row block
-//     #define IOTDATA_CONFIG_ENTRIES(X)  IOTDATA_CONFIG_ENTRIES_DOWN(X)
+//     #define IOTDATA_NODE_CONFIG_ENTRIES(X)  IOTDATA_NODE_CONFIG_ENTRIES_DOWN(X)
 //     #include "iotdata_node_config.h"      // expand
-//     #include "iotdata_node_config_down.h" // now iotdata_config_down_apply()
+//     #include "iotdata_node_config_down.h" // now iotdata_node_config_down_apply()
 //
-// Requires iotdata_node_down.h, for iotdata_down_t and the defaults below.
+// Requires iotdata_node_down.h, for iotdata_node_down_t and the defaults below.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_DOWN_MIN_MAX
-#define IOTDATA_CONFIG_DOWN_MIN_MAX (IOTDATA_DOWN_TTL_MS_MAX / 60000UL)
+#define IOTDATA_NODE_CFGID_DOWN_TTL_MIN       0x020
+#define IOTDATA_NODE_CFGID_DOWN_TTL_BCAST_MIN 0x021
+#define IOTDATA_NODE_CFGID_DOWN_REPEAT_MIN    0x022
+
+#ifndef IOTDATA_NODE_CONFIG_DOWN_MIN_MAX
+#define IOTDATA_NODE_CONFIG_DOWN_MIN_MAX (IOTDATA_NODE_DOWN_TTL_MS_MAX / 60000UL)
 #endif
-#ifndef IOTDATA_CONFIG_DOWN_TTL_MIN
-#define IOTDATA_CONFIG_DOWN_TTL_MIN (IOTDATA_DOWN_TTL_MS_DEFAULT / 60000UL)
+#ifndef IOTDATA_NODE_CONFIG_DOWN_TTL_MIN
+#define IOTDATA_NODE_CONFIG_DOWN_TTL_MIN (IOTDATA_NODE_DOWN_TTL_MS_DEFAULT / 60000UL)
 #endif
-#ifndef IOTDATA_CONFIG_DOWN_TTL_BCAST_MIN
-#define IOTDATA_CONFIG_DOWN_TTL_BCAST_MIN (IOTDATA_DOWN_TTL_BCAST_MS_DEFAULT / 60000UL)
+#ifndef IOTDATA_NODE_CONFIG_DOWN_TTL_BCAST_MIN
+#define IOTDATA_NODE_CONFIG_DOWN_TTL_BCAST_MIN (IOTDATA_NODE_DOWN_TTL_BCAST_MS_DEFAULT / 60000UL)
 #endif
-#ifndef IOTDATA_CONFIG_DOWN_REPEAT_MIN
-#define IOTDATA_CONFIG_DOWN_REPEAT_MIN (IOTDATA_DOWN_REPEAT_MS_DEFAULT / 60000UL)
+#ifndef IOTDATA_NODE_CONFIG_DOWN_REPEAT_MIN
+#define IOTDATA_NODE_CONFIG_DOWN_REPEAT_MIN (IOTDATA_NODE_DOWN_REPEAT_MS_DEFAULT / 60000UL)
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_DOWN_NOTIFY
-static inline bool iotdata_config_down_changed(__attribute__((unused)) const iotdata_config_row_t *const row, __attribute__((unused)) const iotdata_config_value_t *const was,
-                                               __attribute__((unused)) const iotdata_config_info_t *const info) {
+#ifndef IOTDATA_NODE_CONFIG_DOWN_NOTIFY
+static inline bool iotdata_node_config_down_changed(__attribute__((unused)) const iotdata_node_config_row_t *const row, __attribute__((unused)) const iotdata_node_config_value_t *const was,
+                                                    __attribute__((unused)) const iotdata_node_config_info_t *const info) {
     return false;
 }
-#define IOTDATA_CONFIG_DOWN_NOTIFY iotdata_config_down_changed
+#define IOTDATA_NODE_CONFIG_DOWN_NOTIFY iotdata_node_config_down_changed
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* 0 is a real value and means "never expire", which the store already understands -- so the floor is
    0 and not 1, and an operator who wants a command to wait indefinitely can say so. */
-#define IOTDATA_CONFIG_ENTRIES_DOWN(X) \
-    X(DOWN_TTL_MIN, 0x020, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "time to hold a unicast frame waiting for a node (0 = indefinite)") \
-    X(DOWN_TTL_BCAST_MIN, 0x021, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_TTL_BCAST_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "time to hold a broadcast frame") \
-    X(DOWN_REPEAT_MIN, 0x022, U32, 0, IOTDATA_CONFIG_DOWN_MIN_MAX, IOTDATA_CONFIG_DOWN_REPEAT_MIN, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_DOWN_NOTIFY, "period to repeat a frame to a node")
+#define IOTDATA_NODE_CONFIG_ENTRIES_DOWN(X) \
+    X(DOWN_TTL_MIN, IOTDATA_NODE_CFGID_DOWN_TTL_MIN, U32, 0, IOTDATA_NODE_CONFIG_DOWN_MIN_MAX, IOTDATA_NODE_CONFIG_DOWN_TTL_MIN, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_DOWN_NOTIFY, \
+      "time to hold a unicast frame waiting for a node (0 = indefinite)") \
+    X(DOWN_TTL_BCAST_MIN, IOTDATA_NODE_CFGID_DOWN_TTL_BCAST_MIN, U32, 0, IOTDATA_NODE_CONFIG_DOWN_MIN_MAX, IOTDATA_NODE_CONFIG_DOWN_TTL_BCAST_MIN, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_DOWN_NOTIFY, \
+      "time to hold a broadcast frame") \
+    X(DOWN_REPEAT_MIN, IOTDATA_NODE_CFGID_DOWN_REPEAT_MIN, U32, 0, IOTDATA_NODE_CONFIG_DOWN_MIN_MAX, IOTDATA_NODE_CONFIG_DOWN_REPEAT_MIN, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_DOWN_NOTIFY, \
+      "period to repeat a frame to a node")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -73,12 +80,12 @@ static inline bool iotdata_config_down_changed(__attribute__((unused)) const iot
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void iotdata_config_down_apply(iotdata_down_t *const ds) {
+static inline void iotdata_node_config_down_apply(iotdata_node_down_t *const ds) {
     if (ds == NULL)
         return;
-    iotdata_down_set_ttl_ms(ds, iotdata_config_u32(DOWN_TTL_MIN) * 60000UL);
-    iotdata_down_set_ttl_bcast_ms(ds, iotdata_config_u32(DOWN_TTL_BCAST_MIN) * 60000UL);
-    iotdata_down_set_repeat_ms(ds, iotdata_config_u32(DOWN_REPEAT_MIN) * 60000UL);
+    iotdata_node_down_set_ttl_ms(ds, iotdata_node_config_u32(DOWN_TTL_MIN) * 60000UL);
+    iotdata_node_down_set_ttl_bcast_ms(ds, iotdata_node_config_u32(DOWN_TTL_BCAST_MIN) * 60000UL);
+    iotdata_node_down_set_repeat_ms(ds, iotdata_node_config_u32(DOWN_REPEAT_MIN) * 60000UL);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

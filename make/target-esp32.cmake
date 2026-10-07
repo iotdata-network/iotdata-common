@@ -24,13 +24,13 @@ endif()
 # timestamp the compiler invents is precisely what makes a build unreproducible. As an explicit
 # build INPUT it is compatible with reproducibility -- pass a fixed stamp and the binary is
 # reproducible; pass `date -u` and it records when it was built.
-foreach(_v IOTDATA_VERSION_APP IOTDATA_VERSION_SEMVER IOTDATA_VERSION_STAMP)
+foreach(_v IOTDATA_NODE_VERSION_APP IOTDATA_NODE_VERSION_SEMVER IOTDATA_NODE_VERSION_STAMP)
     if(DEFINED ${_v} AND NOT "${${_v}}" STREQUAL "")
         target_compile_definitions(${COMPONENT_LIB} PRIVATE ${_v}="${${_v}}")
     endif()
 endforeach()
-if(DEFINED IOTDATA_VERSION_APP AND NOT "${IOTDATA_VERSION_APP}" STREQUAL "")
-    message(STATUS "app: version = ${IOTDATA_VERSION_APP}/${IOTDATA_VERSION_SEMVER}/${IOTDATA_VERSION_STAMP}")
+if(DEFINED IOTDATA_NODE_VERSION_APP AND NOT "${IOTDATA_NODE_VERSION_APP}" STREQUAL "")
+    message(STATUS "app: version = ${IOTDATA_NODE_VERSION_APP}/${IOTDATA_NODE_VERSION_SEMVER}/${IOTDATA_NODE_VERSION_STAMP}")
 endif()
 
 # --- strict warnings ---

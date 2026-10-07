@@ -30,29 +30,29 @@ static int fails = 0;
         } \
     } while (0)
 
-static const iotdata_control_command_t *argv_find(iotdata_control_args_t *const a, int *const used, int argc, ...) {
+static const iotdata_node_control_command_t *argv_find(iotdata_node_control_args_t *const a, int *const used, int argc, ...) {
     char *v[8];
     va_list ap;
     va_start(ap, argc);
     for (int i = 0; i < argc && i < 8; i++)
         v[i] = va_arg(ap, char *);
     va_end(ap);
-    return iotdata_control_from_argv(argc, v, a, used);
+    return iotdata_node_control_from_argv(argc, v, a, used);
 }
 
 static void test_vocabulary(void) {
     printf("the vocabulary: one set of words, whoever is asking\n");
-    CHECK(iotdata_control_find("vers") != NULL, "a four-letter primary resolves");
-    CHECK(iotdata_control_find("mesh-peers-update") != NULL, "and a mesh command");
-    CHECK(iotdata_control_find("no-such-command") == NULL, "an unknown name does not");
-    CHECK(iotdata_control_find(NULL) == NULL, "nor NULL");
+    CHECK(iotdata_node_control_find("vers") != NULL, "a four-letter primary resolves");
+    CHECK(iotdata_node_control_find("mesh-peers-update") != NULL, "and a mesh command");
+    CHECK(iotdata_node_control_find("no-such-command") == NULL, "an unknown name does not");
+    CHECK(iotdata_node_control_find(NULL) == NULL, "nor NULL");
 
     /* every row must name a key the key table knows, or a manager cannot decode what it built */
     for (uint8_t i = 0;; i++) {
-        const iotdata_control_command_t *const c = iotdata_control_at(i);
+        const iotdata_node_control_command_t *const c = iotdata_node_control_at(i);
         if (c == NULL)
             break;
-        if (c->arg == IOTDATA_CONTROL_ARG_REPORTS)
+        if (c->arg == IOTDATA_NODE_CONTROL_ARG_REPORTS)
             continue; /* not one key */
         if (iotdata_node_tlv_key_name(IOTDATA_NODE_TLV_CONTROL, c->key) == NULL) {
             printf("  FAIL: %s emits key 0x%02X, which is not in the key table\n", c->name, c->key);
@@ -63,24 +63,24 @@ static void test_vocabulary(void) {
 
 static void test_app_commands(void) {
     printf("a device adds its own, and cannot take a word that is taken\n");
-    static const iotdata_control_command_t app[] = {
+    static const iotdata_node_control_command_t app[] = {
         /* a TSA's own, on a proprietary SUBJECT -- which the old derived scheme could not reach */
-        { "calibrate", IOTDATA_NODE_CONTROL_CONTROL, 0x80, 0x10, IOTDATA_CONTROL_ARG_NONE, 0 },
-        { "boot", IOTDATA_NODE_CONTROL_CONTROL, 0x80, 0x11, IOTDATA_CONTROL_ARG_NONE, 0 }, /* redefining a built-in */
+        { "calibrate", IOTDATA_NODE_CONTROL_CONTROL, 0x80, 0x10, IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+        { "boot", IOTDATA_NODE_CONTROL_CONTROL, 0x80, 0x11, IOTDATA_NODE_CONTROL_ARG_NONE, 0 }, /* redefining a built-in */
     };
-    iotdata_control_init(app, (uint8_t)(sizeof(app) / sizeof(app[0])));
+    iotdata_node_control_init(app, (uint8_t)(sizeof(app) / sizeof(app[0])));
 
-    const iotdata_control_command_t *const c = iotdata_control_find("calibrate");
+    const iotdata_node_control_command_t *const c = iotdata_node_control_find("calibrate");
     CHECK(c != NULL && c->subject == 0x80 && c->action == 0x10, "the device's own command is found");
     /* built-ins are searched FIRST: an application must not leave an operator holding a word that
        means something else on this node than on every other one */
-    const iotdata_control_command_t *const b = iotdata_control_find("boot");
+    const iotdata_node_control_command_t *const b = iotdata_node_control_find("boot");
     CHECK(b != NULL && b->subject == IOTDATA_NODE_SUBJECT_NODE && b->action == IOTDATA_NODE_ACTION_NODE_REBOOT, "and cannot shadow `boot`");
 
     /* the walk covers both, so help and completion see the device's commands too */
     bool saw_app = false, saw_builtin = false;
     for (uint8_t i = 0;; i++) {
-        const iotdata_control_command_t *const w = iotdata_control_at(i);
+        const iotdata_node_control_command_t *const w = iotdata_node_control_at(i);
         if (w == NULL)
             break;
         if (strcmp(w->name, "calibrate") == 0)
@@ -89,16 +89,16 @@ static void test_app_commands(void) {
             saw_builtin = true;
     }
     CHECK(saw_app && saw_builtin, "the walk yields built-ins and the device's own");
-    iotdata_control_init(NULL, 0);
-    CHECK(iotdata_control_find("calibrate") == NULL, "and they go when the device deregisters");
+    iotdata_node_control_init(NULL, 0);
+    CHECK(iotdata_node_control_find("calibrate") == NULL, "and they go when the device deregisters");
 }
 
 static void test_console(void) {
     printf("a console: argv joined, longest match first\n");
-    iotdata_control_args_t a;
+    iotdata_node_control_args_t a;
     int used = 0;
 
-    const iotdata_control_command_t *c = argv_find(&a, &used, 2, "diag", "enable");
+    const iotdata_node_control_command_t *c = argv_find(&a, &used, 2, "diag", "enable");
     CHECK(c != NULL && strcmp(c->name, "diag-enable") == 0, "`diag enable` is diag-enable");
     CHECK(used == 2, "both words were the name");
 
@@ -157,12 +157,12 @@ static void test_media_agree(void) {
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         cJSON *const root = cJSON_Parse(cases[i].json);
-        iotdata_control_args_t ja, ca;
-        const iotdata_control_command_t *const jc = iotdata_control_from_json(root, &ja);
+        iotdata_node_control_args_t ja, ca;
+        const iotdata_node_control_command_t *const jc = iotdata_node_control_from_json(root, &ja);
         char *v[5];
         for (int k = 0; k < cases[i].argc; k++)
             v[k] = (char *)(uintptr_t)cases[i].argv[k];
-        const iotdata_control_command_t *const cc = iotdata_control_from_argv(cases[i].argc, v, &ca, NULL);
+        const iotdata_node_control_command_t *const cc = iotdata_node_control_from_argv(cases[i].argc, v, &ca, NULL);
         if (jc == NULL || cc == NULL || jc != cc) {
             printf("  FAIL: %s resolved differently by the two media\n", cases[i].json);
             fails++;
@@ -173,8 +173,8 @@ static void test_media_agree(void) {
         iotdata_kvr_t jk, ck;
         iotdata_kvr_init(&jk, jb, sizeof(jb));
         iotdata_kvr_init(&ck, cb, sizeof(cb));
-        (void)iotdata_control_build(&jk, jc, &ja);
-        (void)iotdata_control_build(&ck, cc, &ca);
+        (void)iotdata_node_control_build(&jk, jc, &ja);
+        (void)iotdata_node_control_build(&ck, cc, &ca);
         if (jk.len != ck.len || memcmp(jb, cb, jk.len) != 0) {
             printf("  FAIL: %s built different bytes from the console form\n", cases[i].json);
             fails++;
@@ -193,8 +193,8 @@ static void test_report(void) {
     iotdata_kvr_t kv;
 
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    const iotdata_control_report_t plain = { .actions = NULL, .actions_count = 0 };
-    CHECK(iotdata_control_pack(&kv, &plain) > 0, "packed");
+    const iotdata_node_control_report_t plain = { .actions = NULL, .actions_count = 0 };
+    CHECK(iotdata_node_control_pack(&kv, &plain) > 0, "packed");
     /* the seven every node answers */
     uint8_t seen = 0;
     size_t cur = 0;
@@ -209,8 +209,8 @@ static void test_report(void) {
     /* The tables have no request keys of their own any more: asking for one is STATUS_REQUEST
        with a scope bit, so the inventory must carry STATUS_REQUEST and nothing table-shaped. */
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    const iotdata_control_report_t meshy = { .actions = own, .actions_count = (uint8_t)(sizeof(own) / 2u) };
-    CHECK(iotdata_control_pack(&kv, &meshy) > 0, "packed");
+    const iotdata_node_control_report_t meshy = { .actions = own, .actions_count = (uint8_t)(sizeof(own) / 2u) };
+    CHECK(iotdata_node_control_pack(&kv, &meshy) > 0, "packed");
     bool status = false, mine = false, reboot = false;
     cur = 0;
     while (iotdata_kvr_next(buf, kv.len, &cur, &key, &val, &vlen)) {
@@ -229,7 +229,7 @@ static void test_report(void) {
        node claiming less than it can do, which is a worse lie than claiming more */
     uint8_t small[4];
     iotdata_kvr_init(&kv, small, sizeof(small));
-    CHECK(iotdata_control_pack(&kv, &meshy) == -1, "a short buffer is an error");
+    CHECK(iotdata_node_control_pack(&kv, &meshy) == -1, "a short buffer is an error");
 }
 
 int main(void) {

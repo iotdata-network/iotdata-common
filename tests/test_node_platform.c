@@ -74,7 +74,7 @@ static size_t diag_cb(size_t *cursor, char *out, size_t outsize) { /* two record
     return (n < 0) ? 0 : (size_t)n;
 }
 /* what a sensor declares: the rest of VERSION is detected, so there is nothing else to stub */
-static iotdata_version_caps_t caps;
+static iotdata_node_version_caps_t caps;
 
 static int count_group(const uint8_t *raw, uint8_t rlen, int mesh) {
     size_t cur = 0;
@@ -99,30 +99,30 @@ static int count_group(const uint8_t *raw, uint8_t rlen, int mesh) {
 int main(void) {
     printf("iotdata_node_endpoint: status scoping, control advertisement, app hook, always-on\n\n");
     int fails = 0;
-    idep_node_t n;
+    iotdata_node_t n;
     uint8_t buf[IOTDATA_MAX_PACKET_SIZE];
     int len;
 
     /* a node that senses AND relays: both groups, scopable */
-    const idep_config_t both = { .caps = &caps, .status = both_cb, .tx = tx_cb, .control = ctl_cb, .control_actions = keys, .control_actions_count = 1, .receive_always = true };
-    idep_node_init(&n, 0x0537, NULL, 0u);
-    idep_node_attach(&n, &both);
-    len = idep_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), 0, NULL);
+    const iotdata_node_params_t both = { .caps = &caps, .status = both_cb, .tx = tx_cb, .control = ctl_cb, .control_actions = keys, .control_actions_count = 1, .receive_always = true };
+    iotdata_node_init(&n, 0x0537, NULL, 0u);
+    iotdata_node_attach(&n, &both);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), 0, NULL);
     CHECK(len > 0 && count_group(buf, (uint8_t)len, 0) > 0 && count_group(buf, (uint8_t)len, 1) > 0, "no scope = both groups");
-    len = idep_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
     CHECK(len > 0 && count_group(buf, (uint8_t)len, 0) == 0 && count_group(buf, (uint8_t)len, 1) > 0, "scope=mesh = mesh only");
-    len = idep_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_NODE, NULL);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_NODE, NULL);
     CHECK(len > 0 && count_group(buf, (uint8_t)len, 0) > 0 && count_group(buf, (uint8_t)len, 1) == 0, "scope=node = node only");
 
     /* a plain end device: in no mesh, so the mesh scope yields an EMPTY status, not the node group */
-    const idep_config_t plain = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = true };
-    idep_node_attach(&n, &plain);
-    len = idep_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
+    const iotdata_node_params_t plain = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = true };
+    iotdata_node_attach(&n, &plain);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_STATUS, buf, sizeof(buf), IOTDATA_NODE_STATUS_SCOPE_MESH, NULL);
     CHECK(len == 0, "a sensor asked for the mesh group answers empty, not the node group");
 
     /* CONTROL advertises what the app implements, and only that */
-    idep_node_attach(&n, &both);
-    len = idep_build(&n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
+    iotdata_node_attach(&n, &both);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
     bool adv = false, adv_plain = false;
     size_t cur = 0;
     uint8_t k, vl;
@@ -132,8 +132,8 @@ int main(void) {
         if (k == IOTDATA_NODE_CONTROL_CONTROL && vl == 2 && v[0] == IOTDATA_NODE_SUBJECT_MESH && v[1] == IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR)
             adv = true;
     CHECK(adv, "CONTROL advertises the app's action");
-    idep_node_attach(&n, &plain);
-    len = idep_build(&n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
+    iotdata_node_attach(&n, &plain);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_CONTROL, buf, sizeof(buf), 0, NULL);
     cur = 0;
     while (iotdata_kvr_next(buf, (uint8_t)len, &cur, &k, &v, &vl))
         if (k == IOTDATA_NODE_CONTROL_CONTROL && vl == 2 && v[0] == IOTDATA_NODE_SUBJECT_MESH)
@@ -143,9 +143,9 @@ int main(void) {
     /* VARIANT: a node that produces telemetry says which fields sit in which presence slot. Two
        repeated keys, ENTRY and NAMES, each carrying the variant number in its value -- and the
        DEFAULT answer is entries alone, because the names cost several times as much. */
-    iotdata_partial_t vp = { 0 };
-    idep_node_attach(&n, &both);
-    len = idep_build(&n, IOTDATA_NODE_TLV_VARIANT, buf, sizeof(buf), 0, &vp);
+    iotdata_node_partial_t vp = { 0 };
+    iotdata_node_attach(&n, &both);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_VARIANT, buf, sizeof(buf), 0, &vp);
     CHECK(len > 0, "a variant suite was reported");
     cur = 0;
     bool v0 = false, named = false, sane = true;
@@ -171,7 +171,7 @@ int main(void) {
             CHECK(iotdata_node_variant_field_at(v, vl, 0) == iotdata_node_variant_field_id(d0->fields[0].type), "slot 0 is the field the build put there");
 
     /* ask for the names and they come, still keyed per variant */
-    len = idep_build(&n, IOTDATA_NODE_TLV_VARIANT, buf, sizeof(buf), IOTDATA_VARIANT_WANT_NAMES, &vp);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_VARIANT, buf, sizeof(buf), IOTDATA_NODE_VARIANT_WANT_NAMES, &vp);
     CHECK(len > 0, "names reported when asked for");
     cur = 0;
     bool got_name = false, got_entry = false;
@@ -186,14 +186,14 @@ int main(void) {
 
     /* SETTINGS: the protocol's own values, read and written as one TLV. A node with no settings
        block answers empty; one with a block reports what it holds. */
-    len = idep_build(&n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
     CHECK(len == 0, "no settings block: an empty report, which is still a report");
 
-    static iotdata_settings_t settings;
-    iotdata_settings_defaults(&settings, 0x0111);
-    const idep_config_t cfgset = { .caps = &caps, .status = st_cb, .tx = tx_cb, .settings = &settings, .receive_always = true };
-    idep_node_attach(&n, &cfgset);
-    len = idep_build(&n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
+    static iotdata_node_settings_t settings;
+    iotdata_node_settings_defaults(&settings, 0x0111);
+    const iotdata_node_params_t cfgset = { .caps = &caps, .status = st_cb, .tx = tx_cb, .settings = &settings, .receive_always = true };
+    iotdata_node_attach(&n, &cfgset);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_SETTINGS, buf, sizeof(buf), 0, NULL);
     CHECK(len > 0, "a settings block reports");
     cur = 0;
     bool saw_station = false, saw_receive = false;
@@ -215,64 +215,64 @@ int main(void) {
     iotdata_node_settings_put_u16(rep, 1, IOTDATA_NODE_REPORT_ON_PERIOD);
     iotdata_node_settings_put_u16(rep, 3, 600);
     iotdata_kvr_add(&wk, IOTDATA_NODE_SETTINGS_REPORT, rep, (uint8_t)sizeof(rep));
-    CHECK(iotdata_settings_apply(&settings, wbuf, wk.len), "the write took");
+    CHECK(iotdata_node_settings_apply(&settings, wbuf, wk.len), "the write took");
     CHECK(settings.station == 0x0537, "station assigned");
-    const iotdata_settings_report_t *const got = iotdata_settings_report_find(&settings, IOTDATA_NODE_TLV_STATUS);
+    const iotdata_node_settings_report_t *const got = iotdata_node_settings_report_find(&settings, IOTDATA_NODE_TLV_STATUS);
     CHECK(got != NULL && got->period_s == 600 && (got->flags & IOTDATA_NODE_REPORT_ON_PERIOD) != 0, "and the schedule with it");
-    CHECK(!iotdata_settings_apply(&settings, wbuf, wk.len), "the same write again changes nothing");
+    CHECK(!iotdata_node_settings_apply(&settings, wbuf, wk.len), "the same write again changes nothing");
 
     /* a station outside the usable range does NOT take: 0 is unassignable and MAX is broadcast */
     iotdata_kvr_init(&wk, wbuf, sizeof(wbuf));
     iotdata_kvr_add_u16(&wk, IOTDATA_NODE_SETTINGS_STATION, IOTDATA_STATION_MAX);
-    CHECK(!iotdata_settings_apply(&settings, wbuf, wk.len), "broadcast is not a station");
+    CHECK(!iotdata_node_settings_apply(&settings, wbuf, wk.len), "broadcast is not a station");
     CHECK(settings.station == 0x0537, "and the old value stands, which the read-back reports");
 
     /* a subject that cannot be reported cannot be scheduled either */
-    iotdata_settings_report_t bad = { .subject = IOTDATA_NODE_TLV_DISCRIMINATOR, .flags = IOTDATA_NODE_REPORT_ON_PERIOD };
-    CHECK(!iotdata_settings_report_set(&settings, &bad), "a modifier has nothing to report");
+    iotdata_node_settings_report_t bad = { .subject = IOTDATA_NODE_TLV_DISCRIMINATOR, .flags = IOTDATA_NODE_REPORT_ON_PERIOD };
+    CHECK(!iotdata_node_settings_report_set(&settings, &bad), "a modifier has nothing to report");
     bad.subject = 0x2A; /* a vendor's own type: schedulable with no coordination at all */
-    CHECK(iotdata_settings_report_set(&settings, &bad), "a proprietary subject is schedulable");
+    CHECK(iotdata_node_settings_report_set(&settings, &bad), "a proprietary subject is schedulable");
 
     /* A written schedule OVERRIDES the node's default; an absent entry DEFERS to it. That is the
        whole composition rule, and it is why every reader takes the default as a parameter. */
-    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 600, "a written period wins");
-    CHECK(iotdata_settings_period_s(NULL, IOTDATA_NODE_TLV_STATUS) == 0, "and a node with no block at all schedules nothing");
+    CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 600, "a written period wins");
+    CHECK(iotdata_node_settings_period_s(NULL, IOTDATA_NODE_TLV_STATUS) == 0, "and a node with no block at all schedules nothing");
     /* a stated entry with ON_PERIOD clear says NEVER, which is an answer and not an absence */
-    iotdata_settings_report_t never = { .subject = IOTDATA_NODE_TLV_VERSION, .flags = IOTDATA_NODE_REPORT_AT_STARTUP };
-    CHECK(iotdata_settings_report_set(&settings, &never), "stated");
-    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_VERSION) == 0, "ON_PERIOD clear says NEVER, and never is a value");
-    CHECK(iotdata_settings_at_startup(&settings, IOTDATA_NODE_TLV_VERSION), "and its startup flag is honoured");
+    iotdata_node_settings_report_t never = { .subject = IOTDATA_NODE_TLV_VERSION, .flags = IOTDATA_NODE_REPORT_AT_STARTUP };
+    CHECK(iotdata_node_settings_report_set(&settings, &never), "stated");
+    CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_VERSION) == 0, "ON_PERIOD clear says NEVER, and never is a value");
+    CHECK(iotdata_node_settings_at_startup(&settings, IOTDATA_NODE_TLV_VERSION), "and its startup flag is honoured");
 
     /* the station a node comes up as: seeded from what the hardware derived, replaced by a write */
-    CHECK(iotdata_settings_station(&settings) == 0x0537, "a written station wins");
-    iotdata_settings_t fresh;
-    iotdata_settings_defaults(&fresh, 0x0111);
-    CHECK(iotdata_settings_station(&fresh) == 0x0111, "an uncommissioned node comes up as what its hardware says");
+    CHECK(iotdata_node_settings_station(&settings) == 0x0537, "a written station wins");
+    iotdata_node_settings_t fresh;
+    iotdata_node_settings_defaults(&fresh, 0x0111);
+    CHECK(iotdata_node_settings_station(&fresh) == 0x0111, "an uncommissioned node comes up as what its hardware says");
 
     /* and it is seeded DENSE: every reportable subject has a record, so a report never leaves the
        far end guessing which default this particular build happens to hold */
     for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT; t++)
         if (iotdata_node_tlv_is_reportable(t))
-            CHECK(iotdata_settings_report_find(&fresh, t) != NULL, iotdata_node_tlv_name(t));
-    CHECK(iotdata_settings_period_s(&fresh, IOTDATA_NODE_TLV_STATUS) == IOTDATA_SETTINGS_DEFAULT_PERIOD_STATUS_S, "status keeps its heartbeat");
-    CHECK(iotdata_settings_at_startup(&fresh, IOTDATA_NODE_TLV_VERSION), "and a node announces what it is on coming up");
+            CHECK(iotdata_node_settings_report_find(&fresh, t) != NULL, iotdata_node_tlv_name(t));
+    CHECK(iotdata_node_settings_period_s(&fresh, IOTDATA_NODE_TLV_STATUS) == IOTDATA_NODE_SETTINGS_DEFAULT_PERIOD_STATUS_S, "status keeps its heartbeat");
+    CHECK(iotdata_node_settings_at_startup(&fresh, IOTDATA_NODE_TLV_VERSION), "and a node announces what it is on coming up");
 
     /* adopting one restarts the stream: ONE STATION ONE SEQUENCE means a new id is a new sequence */
-    idep_node_init(&n, 0x0111, NULL, 0u);
+    iotdata_node_init(&n, 0x0111, NULL, 0u);
     n.sequence = 42;
-    CHECK(idep_node_adopt_station(&n, 0x0537), "adopted");
-    CHECK(idep_station(&n) == 0x0537 && n.sequence == 0, "identity and sequence move together");
-    CHECK(!idep_node_adopt_station(&n, 0x0537), "adopting the same one changes nothing");
-    CHECK(!idep_node_adopt_station(&n, IOTDATA_STATION_MAX), "and broadcast is not a station");
+    CHECK(iotdata_node_adopt_station(&n, 0x0537), "adopted");
+    CHECK(iotdata_node_station(&n) == 0x0537 && n.sequence == 0, "identity and sequence move together");
+    CHECK(!iotdata_node_adopt_station(&n, 0x0537), "adopting the same one changes nothing");
+    CHECK(!iotdata_node_adopt_station(&n, IOTDATA_STATION_MAX), "and broadcast is not a station");
 
     /* DIAGNOSTICS is advertised by every node unconditionally, so every node must answer it. A
        device with no recorder answers EMPTY -- absent would look exactly like being ignored. */
-    idep_node_attach(&n, &plain);
-    len = idep_build(&n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
+    iotdata_node_attach(&n, &plain);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
     CHECK(len == 0, "no recorder: an empty report, which is still a report");
-    const idep_config_t recorder = { .caps = &caps, .status = st_cb, .tx = tx_cb, .diag = diag_cb, .receive_always = true };
-    idep_node_attach(&n, &recorder);
-    len = idep_build(&n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
+    const iotdata_node_params_t recorder = { .caps = &caps, .status = st_cb, .tx = tx_cb, .diag = diag_cb, .receive_always = true };
+    iotdata_node_attach(&n, &recorder);
+    len = iotdata_node_build(&n, IOTDATA_NODE_TLV_DIAGNOSTICS, buf, sizeof(buf), 0, NULL);
     int records = 0;
     bool typed = false;
     cur = 0;
@@ -285,7 +285,7 @@ int main(void) {
     CHECK(typed && records == 2, "a recorder: the type, then every record it had");
 
     /* the hook receives an unknown key; a key it refuses is counted unknown */
-    idep_node_init(&n, 0x0537, NULL, 0u);
+    iotdata_node_init(&n, 0x0537, NULL, 0u);
     uint8_t kv[8];
     iotdata_kvr_t b;
     iotdata_kvr_init(&b, kv, sizeof(kv));
@@ -296,8 +296,8 @@ int main(void) {
     const uint8_t theirs[2] = { IOTDATA_NODE_SUBJECT_MESH, 0x7F };
     iotdata_kvr_add(&b, IOTDATA_NODE_CONTROL_CONTROL, theirs, (uint8_t)sizeof(theirs));
     bool reboot = false;
-    idep_node_attach(&n, &both);
-    idep_process_control(&n, kv, b.len, &reboot);
+    iotdata_node_attach(&n, &both);
+    iotdata_node_process_control(&n, kv, b.len, &reboot);
     CHECK(seen_key == IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR, "the hook got the action it claims");
     CHECK(n.stat_commands == 1, "a claimed action is a command");
     CHECK(n.stat_unknown == 1, "a refused action is unknown");
@@ -305,23 +305,23 @@ int main(void) {
     /* always listening: nothing is ever scheduled or advertised (a DOWN frame is transmitted
        before it is held, so such a node hears the immediate copy), yet the receiver counts as
        open at every instant */
-    idep_node_init(&n, 0x0537, NULL, 0u);
-    idep_node_attach(&n, &both);
-    CHECK(!idep_window_advance(&n, 10u * 60u * 1000u), "an always-on node never becomes due");
-    CHECK(!idep_window_pending(&n), "and so never advertises");
-    CHECK(idep_window_active(&n, 123456u), "but is always active");
+    iotdata_node_init(&n, 0x0537, NULL, 0u);
+    iotdata_node_attach(&n, &both);
+    CHECK(!iotdata_node_window_advance(&n, 10u * 60u * 1000u), "an always-on node never becomes due");
+    CHECK(!iotdata_node_window_pending(&n), "and so never advertises");
+    CHECK(iotdata_node_window_active(&n, 123456u), "but is always active");
 
     /* a sleeping node still schedules and advertises normally */
-    const idep_config_t sleeper = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = false, .receive_every_ms = 60000u, .receive_window_ms = 30000u };
-    idep_node_init(&n, 0x0538, NULL, 0u);
-    idep_node_attach(&n, &sleeper);
-    CHECK(!idep_window_advance(&n, 1000u), "not due yet");
-    CHECK(idep_window_advance(&n, 60000u), "due after the cadence");
-    CHECK(idep_window_pending(&n), "and pending an advertisement");
-    CHECK(!idep_window_active(&n, 1000u), "not active until the window opens");
-    idep_window_begin(&n, 1000u);
-    CHECK(idep_window_active(&n, 2000u), "active inside the window");
-    CHECK(!idep_window_active(&n, 1000u + 30000u), "and closed after it");
+    const iotdata_node_params_t sleeper = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = false, .receive_every_ms = 60000u, .receive_window_ms = 30000u };
+    iotdata_node_init(&n, 0x0538, NULL, 0u);
+    iotdata_node_attach(&n, &sleeper);
+    CHECK(!iotdata_node_window_advance(&n, 1000u), "not due yet");
+    CHECK(iotdata_node_window_advance(&n, 60000u), "due after the cadence");
+    CHECK(iotdata_node_window_pending(&n), "and pending an advertisement");
+    CHECK(!iotdata_node_window_active(&n, 1000u), "not active until the window opens");
+    iotdata_node_window_begin(&n, 1000u);
+    CHECK(iotdata_node_window_active(&n, 2000u), "active inside the window");
+    CHECK(!iotdata_node_window_active(&n, 1000u + 30000u), "and closed after it");
 
     printf(fails ? "\nFAILED (%d)\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

@@ -100,7 +100,7 @@ static void test_one_shape(void) {
     for (size_t d = 0; d < sizeof(devices) / sizeof(devices[0]); d++) {
         devices[d](&s);
         iotdata_kvr_init(&kv, buf, sizeof(buf));
-        CHECK(iotdata_status_pack(&kv, &s, 0) > 0, "packed");
+        CHECK(iotdata_node_status_pack(&kv, &s, 0) > 0, "packed");
         size_t cur = 0;
         uint8_t key, vlen, last = 0;
         const uint8_t *val;
@@ -122,7 +122,7 @@ static void test_one_shape(void) {
     for (size_t d = 0; d < sizeof(devices) / sizeof(devices[0]); d++) {
         devices[d](&s);
         iotdata_kvr_init(&kv, buf, sizeof(buf));
-        (void)iotdata_status_pack(&kv, &s, 0);
+        (void)iotdata_node_status_pack(&kv, &s, 0);
         if (!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_UPTIME) || !has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_REASON))
             printf("  FAIL: %s omitted uptime or reason\n", names[d]), fails++;
     }
@@ -138,7 +138,7 @@ static void test_presence(void) {
        reads as a flat battery or an exhausted heap, which is a fault report, not a silence. */
     a_gateway(&s);
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    (void)iotdata_status_pack(&kv, &s, 0);
+    (void)iotdata_node_status_pack(&kv, &s, 0);
     CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_SUPPLY), "no supply reading, no supply key");
     CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_HEAP_FREE), "no heap figure, no heap key");
     CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_RESTARTS), "and no restart count");
@@ -147,7 +147,7 @@ static void test_presence(void) {
     a_sensor(&s);
     s.supply_mv = 0;
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    (void)iotdata_status_pack(&kv, &s, 0);
+    (void)iotdata_node_status_pack(&kv, &s, 0);
     CHECK(has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_SUPPLY), "a declared zero IS reported");
 }
 
@@ -159,45 +159,45 @@ static void test_scope(void) {
     a_relay(&s);
 
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    (void)iotdata_status_pack(&kv, &s, 0);
+    (void)iotdata_node_status_pack(&kv, &s, 0);
     CHECK(count_keys(buf, (uint8_t)kv.len, false) > 0 && count_keys(buf, (uint8_t)kv.len, true) > 0, "no scope = both groups");
 
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    (void)iotdata_status_pack(&kv, &s, IOTDATA_NODE_STATUS_SCOPE_MESH);
+    (void)iotdata_node_status_pack(&kv, &s, IOTDATA_NODE_STATUS_SCOPE_MESH);
     CHECK(count_keys(buf, (uint8_t)kv.len, false) == 0 && count_keys(buf, (uint8_t)kv.len, true) > 0, "scope=mesh = mesh only");
 
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    (void)iotdata_status_pack(&kv, &s, IOTDATA_NODE_STATUS_SCOPE_NODE);
+    (void)iotdata_node_status_pack(&kv, &s, IOTDATA_NODE_STATUS_SCOPE_NODE);
     CHECK(count_keys(buf, (uint8_t)kv.len, true) == 0, "scope=node = node only");
 
     /* a sensor asked for the mesh group answers EMPTY -- it is in no mesh -- rather than sending
        the node group it was not asked for. Empty is an answer; -1 would be a failure. */
     a_sensor(&s);
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    CHECK(iotdata_status_pack(&kv, &s, IOTDATA_NODE_STATUS_SCOPE_MESH) == 0, "no mesh, mesh scope: empty, not an error");
+    CHECK(iotdata_node_status_pack(&kv, &s, IOTDATA_NODE_STATUS_SCOPE_MESH) == 0, "no mesh, mesh scope: empty, not an error");
 
     /* a buffer too small is an error, not a truncated report */
     uint8_t small[3];
     a_relay(&s);
     iotdata_kvr_init(&kv, small, sizeof(small));
-    CHECK(iotdata_status_pack(&kv, &s, 0) == -1, "a short buffer is an error");
+    CHECK(iotdata_node_status_pack(&kv, &s, 0) == -1, "a short buffer is an error");
 }
 
 static void test_words(void) {
     printf("the scope words, and the values a decoder meets\n");
     char b[16];
-    CHECK(iotdata_status_scope_from_name("mesh") == IOTDATA_NODE_STATUS_SCOPE_MESH, "`mesh`");
-    CHECK(iotdata_status_scope_from_name("node") == IOTDATA_NODE_STATUS_SCOPE_NODE, "`node`");
-    CHECK(iotdata_status_scope_from_name("node,mesh") == (IOTDATA_NODE_STATUS_SCOPE_NODE | IOTDATA_NODE_STATUS_SCOPE_MESH), "both");
-    CHECK(iotdata_status_scope_from_name("stations") == IOTDATA_NODE_STATUS_SCOPE_STATIONS, "`stations`");
-    CHECK(iotdata_status_scope_from_name("filters") == IOTDATA_NODE_STATUS_SCOPE_FILTERS, "`filters`");
-    CHECK(iotdata_status_scope_from_name("peers") == IOTDATA_NODE_STATUS_SCOPE_MESH_PEERS, "`peers`");
+    CHECK(iotdata_node_status_scope_from_name("mesh") == IOTDATA_NODE_STATUS_SCOPE_MESH, "`mesh`");
+    CHECK(iotdata_node_status_scope_from_name("node") == IOTDATA_NODE_STATUS_SCOPE_NODE, "`node`");
+    CHECK(iotdata_node_status_scope_from_name("node,mesh") == (IOTDATA_NODE_STATUS_SCOPE_NODE | IOTDATA_NODE_STATUS_SCOPE_MESH), "both");
+    CHECK(iotdata_node_status_scope_from_name("stations") == IOTDATA_NODE_STATUS_SCOPE_STATIONS, "`stations`");
+    CHECK(iotdata_node_status_scope_from_name("filters") == IOTDATA_NODE_STATUS_SCOPE_FILTERS, "`filters`");
+    CHECK(iotdata_node_status_scope_from_name("peers") == IOTDATA_NODE_STATUS_SCOPE_MESH_PEERS, "`peers`");
     /* `all` is a real value now, not 0: 0 means the scalars, so everything needs a word of its own */
-    CHECK((iotdata_status_scope_from_name("all") & IOTDATA_NODE_STATUS_SCOPE_STATIONS) != 0, "`all` includes the tables");
-    CHECK(iotdata_status_scope_is_name("all") && !iotdata_status_scope_is_name("sideways"), "a word is ours, or it is not");
+    CHECK((iotdata_node_status_scope_from_name("all") & IOTDATA_NODE_STATUS_SCOPE_STATIONS) != 0, "`all` includes the tables");
+    CHECK(iotdata_node_status_scope_is_name("all") && !iotdata_node_status_scope_is_name("sideways"), "a word is ours, or it is not");
     /* round trip, so a console can echo back what it understood */
-    CHECK(strcmp(iotdata_status_scope_name(IOTDATA_NODE_STATUS_SCOPE_MESH, b, sizeof(b)), "mesh") == 0, "renders back");
-    CHECK(strcmp(iotdata_status_scope_name(0, b, sizeof(b)), "node,mesh") == 0, "and 0 renders as the scalars");
+    CHECK(strcmp(iotdata_node_status_scope_name(IOTDATA_NODE_STATUS_SCOPE_MESH, b, sizeof(b)), "mesh") == 0, "renders back");
+    CHECK(strcmp(iotdata_node_status_scope_name(0, b, sizeof(b)), "node,mesh") == 0, "and 0 renders as the scalars");
 
     CHECK(strcmp(iotdata_node_tlv_status_reason_str(IOTDATA_NODE_REASON_WATCHDOG), "watchdog") == 0, "a reason has a name");
     CHECK(strcmp(iotdata_node_tlv_status_reason_str(0xEE), "unknown") == 0, "an unassigned one is unknown");
@@ -207,24 +207,24 @@ static void test_words(void) {
 
 static void test_render(void) {
     printf("one line, for a console\n");
-    char line[IOTDATA_STATUS_STR_MAX];
+    char line[IOTDATA_NODE_STATUS_STR_MAX];
     iotdata_node_status_t s;
 
     a_relay(&s);
-    (void)iotdata_status_str(&s, line, sizeof(line));
+    (void)iotdata_node_status_str(&s, line, sizeof(line));
     printf("    relay:   %s\n", line);
     CHECK(strstr(line, "up=4242s") != NULL && strstr(line, "reason=power_on") != NULL, "the two every node has");
     CHECK(strstr(line, "mesh=joined") != NULL && strstr(line, "parent=0537@-71dBm") != NULL, "the mesh it is in");
     CHECK(strstr(line, "supply=") == NULL, "and nothing it did not report");
 
     a_sensor(&s);
-    (void)iotdata_status_str(&s, line, sizeof(line));
+    (void)iotdata_node_status_str(&s, line, sizeof(line));
     printf("    sensor:  %s\n", line);
     CHECK(strstr(line, "supply=3742mV") != NULL && strstr(line, "restarts=991") != NULL, "what it did report");
     CHECK(strstr(line, "mesh=") == NULL, "no mesh, nothing said about one");
 
     a_gateway(&s);
-    (void)iotdata_status_str(&s, line, sizeof(line));
+    (void)iotdata_node_status_str(&s, line, sizeof(line));
     printf("    gateway: %s\n", line);
     CHECK(strstr(line, "mesh=gateway") != NULL && strstr(line, "parent=") == NULL, "a root has no parent to name");
     CHECK(strstr(line, "cost=0") != NULL, "but it does have a distance to itself");
@@ -233,7 +233,7 @@ static void test_render(void) {
     a_relay(&s);
     s.mesh.state = IOTDATA_NODE_STATUS_MESH_STATE_SEARCHING;
     s.mesh.cost = 0xFF;
-    (void)iotdata_status_str(&s, line, sizeof(line));
+    (void)iotdata_node_status_str(&s, line, sizeof(line));
     printf("    orphan:  %s\n", line);
     CHECK(strstr(line, "cost=") == NULL && strstr(line, "parent=") == NULL, "searching: no place in the tree to report");
     CHECK(strstr(line, "peers=3") != NULL, "though it does have neighbours");
@@ -242,7 +242,7 @@ static void test_render(void) {
     char tiny[12];
     memset(tiny, 'X', sizeof(tiny));
     a_relay(&s);
-    (void)iotdata_status_str(&s, tiny, sizeof(tiny));
+    (void)iotdata_node_status_str(&s, tiny, sizeof(tiny));
     CHECK(memchr(tiny, '\0', sizeof(tiny)) != NULL, "a tiny buffer is still terminated");
 }
 
@@ -252,13 +252,13 @@ static void test_json(void) {
     cJSON *const o = cJSON_CreateObject();
     const uint8_t reason = IOTDATA_NODE_REASON_BROWNOUT, state = IOTDATA_NODE_STATUS_MESH_STATE_ORPHANED, yes = 1, uptime[4] = { 0, 0, 0, 9 };
 
-    CHECK(iotdata_status_json_key(o, "reason", IOTDATA_NODE_STATUS_REASON, &reason, 1), "reason is ours");
-    CHECK(iotdata_status_json_key(o, "mesh-state", IOTDATA_NODE_STATUS_MESH_STATE, &state, 1), "mesh state is ours");
-    CHECK(iotdata_status_json_key(o, "accepting", IOTDATA_NODE_STATUS_MESH_ACCEPTING, &yes, 1), "accepting is ours");
+    CHECK(iotdata_node_status_json_key(o, "reason", IOTDATA_NODE_STATUS_REASON, &reason, 1), "reason is ours");
+    CHECK(iotdata_node_status_json_key(o, "mesh-state", IOTDATA_NODE_STATUS_MESH_STATE, &state, 1), "mesh state is ours");
+    CHECK(iotdata_node_status_json_key(o, "accepting", IOTDATA_NODE_STATUS_MESH_ACCEPTING, &yes, 1), "accepting is ours");
     /* a counter is left to the generic renderer: it IS its value */
-    CHECK(!iotdata_status_json_key(o, "uptime", IOTDATA_NODE_STATUS_UPTIME, uptime, 4), "a counter is not ours");
+    CHECK(!iotdata_node_status_json_key(o, "uptime", IOTDATA_NODE_STATUS_UPTIME, uptime, 4), "a counter is not ours");
     /* malformed: the wrong width is handed back rather than guessed at */
-    CHECK(!iotdata_status_json_key(o, "reason", IOTDATA_NODE_STATUS_REASON, uptime, 4), "a mis-sized enum is not ours either");
+    CHECK(!iotdata_node_status_json_key(o, "reason", IOTDATA_NODE_STATUS_REASON, uptime, 4), "a mis-sized enum is not ours either");
 
     char *const out = cJSON_PrintUnformatted(o);
     printf("    %s\n", out);

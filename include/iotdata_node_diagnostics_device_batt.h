@@ -34,33 +34,33 @@
 static uint8_t power_chem_of(const battery_type_t type) {
     switch (type) {
     case BATTERY_TYPE_LIPO:
-        return IOTDATA_BB_PW_CHEM_LIPO;
+        return IOTDATA_NODE_BB_PW_CHEM_LIPO;
     case BATTERY_TYPE_LIFEPO4:
-        return IOTDATA_BB_PW_CHEM_LIFEPO4;
+        return IOTDATA_NODE_BB_PW_CHEM_LIFEPO4;
     case BATTERY_TYPE_LIION:
     default:
-        return IOTDATA_BB_PW_CHEM_LIION;
+        return IOTDATA_NODE_BB_PW_CHEM_LIION;
     }
 }
-static iotdata_bb_pw_event_t power_event_of(const uint32_t cycles, const int16_t was_mv, const uint8_t now_pct) {
+static iotdata_node_bb_pw_event_t power_event_of(const uint32_t cycles, const int16_t was_mv, const uint8_t now_pct) {
     if (cycles <= 1u)
-        return IOTDATA_BB_PW_BOOT;
+        return IOTDATA_NODE_BB_PW_BOOT;
     if (was_mv > 0) {
         const uint8_t was_pct = battery_percent_of(was_mv, battery_profile(), false, false);
         if (now_pct < BATTERY_PCT_CRITICAL && was_pct >= BATTERY_PCT_CRITICAL)
-            return IOTDATA_BB_PW_CRITICAL;
+            return IOTDATA_NODE_BB_PW_CRITICAL;
         if (now_pct <= BATTERY_PCT_LOW && was_pct > BATTERY_PCT_LOW)
-            return IOTDATA_BB_PW_LOW;
+            return IOTDATA_NODE_BB_PW_LOW;
     }
-    return IOTDATA_BB_PW_SAMPLE;
+    return IOTDATA_NODE_BB_PW_SAMPLE;
 }
 
 static void power_startup(const int16_t now_mv) {
-    iotdata_bb_power_event_t pre = IOTDATA_BB_POWER_EVENT_INIT(PW_RAIL_PACK);
-    pre.event = IOTDATA_BB_PW_BROWNOUT_PRE;
+    iotdata_node_bb_power_event_t pre = IOTDATA_NODE_BB_POWER_EVENT_INIT(PW_RAIL_PACK);
+    pre.event = IOTDATA_NODE_BB_PW_BROWNOUT_PRE;
     pre.mv = now_mv;
-    pre.flags = (uint8_t)(IOTDATA_BB_PW_FLAG_PRESENT | IOTDATA_BB_PW_FLAG_CRITICAL);
-    iotdata_diagnostics_power(&pre);
+    pre.flags = (uint8_t)(IOTDATA_NODE_BB_PW_FLAG_PRESENT | IOTDATA_NODE_BB_PW_FLAG_CRITICAL);
+    iotdata_node_diagnostics_power(&pre);
 }
 
 static void power_describe(const bool battery_present) {
@@ -69,7 +69,7 @@ static void power_describe(const bool battery_present) {
         const battery_profile_t *const prof = battery_profile();
         int min_mv = 0, max_mv = 0;
         battery_range_mv(prof, false, false, &min_mv, &max_mv);
-        iotdata_bb_power_source_t pack = IOTDATA_BB_POWER_SOURCE_INIT(PW_RAIL_PACK, IOTDATA_BB_PW_TYPE_BATTERY);
+        iotdata_node_bb_power_source_t pack = IOTDATA_NODE_BB_POWER_SOURCE_INIT(PW_RAIL_PACK, IOTDATA_NODE_BB_PW_TYPE_BATTERY);
         pack.chem = power_chem_of(prof->type);
         pack.cells = 1; /* 1S only: a series pack reads plausibly and gauges nonsense -- see the profile */
         pack.min_mv = min_mv;
@@ -77,24 +77,24 @@ static void power_describe(const bool battery_present) {
         pack.capacity_mah = prof->capacity_mah;
         pack.ratio_x100 = BATTERY_DIVIDER_RATIO_X100;
         pack.offset_mv = prof->offset_mv;
-        iotdata_diagnostics_power_source(&pack);
-        iotdata_diagnostics_power_detail(PW_RAIL_PACK, "adc", snprintf_inline(buf, sizeof(buf), "gpio%d/%dnf", (int)PIN_BATTERY_ADC, BATTERY_DIVIDER_C1_NF));
+        iotdata_node_diagnostics_power_source(&pack);
+        iotdata_node_diagnostics_power_detail(PW_RAIL_PACK, "adc", snprintf_inline(buf, sizeof(buf), "gpio%d/%dnf", (int)PIN_BATTERY_ADC, BATTERY_DIVIDER_C1_NF));
     }
-    iotdata_bb_power_source_t supply = IOTDATA_BB_POWER_SOURCE_INIT(PW_RAIL_SUPPLY, IOTDATA_BB_PW_TYPE_REGULATED);
-    supply.from_rail = battery_present ? PW_RAIL_PACK : IOTDATA_BB_PW_NO_RAIL;
+    iotdata_node_bb_power_source_t supply = IOTDATA_NODE_BB_POWER_SOURCE_INIT(PW_RAIL_SUPPLY, IOTDATA_NODE_BB_PW_TYPE_REGULATED);
+    supply.from_rail = battery_present ? PW_RAIL_PACK : IOTDATA_NODE_BB_PW_NO_RAIL;
     supply.nominal_mv = 3300;
-    iotdata_diagnostics_power_source(&supply);
+    iotdata_node_diagnostics_power_source(&supply);
 #if defined(CONFIG_ESP_BROWNOUT_DET_LVL)
     /* The brownout detector watches THIS rail, not the pack, and it is what decides when the node
        stops -- so the floor is a property of the regulator and this number, not of the cell. */
-    iotdata_diagnostics_power_detail(PW_RAIL_SUPPLY, "bod", snprintf_inline(buf, sizeof(buf), "lvl%d", CONFIG_ESP_BROWNOUT_DET_LVL));
+    iotdata_node_diagnostics_power_detail(PW_RAIL_SUPPLY, "bod", snprintf_inline(buf, sizeof(buf), "lvl%d", CONFIG_ESP_BROWNOUT_DET_LVL));
 #endif
 }
 
 /* `ambient_c` is NULL when nothing measured one. A pointer rather than a value so that absent
    stays distinguishable from a genuine 0 degC -- the same reason ua and mw are left out below. */
 static void power_sample(const battery_reading_t *const r, const float *const ambient_c, const uint32_t cycles, const int16_t was_mv, const uint8_t now_pct) {
-    iotdata_bb_power_event_t s = IOTDATA_BB_POWER_EVENT_INIT(PW_RAIL_PACK);
+    iotdata_node_bb_power_event_t s = IOTDATA_NODE_BB_POWER_EVENT_INIT(PW_RAIL_PACK);
     s.event = power_event_of(cycles, was_mv, now_pct);
     s.mv = r->voltage_mv;
     s.pct = r->percent;
@@ -102,9 +102,9 @@ static void power_sample(const battery_reading_t *const r, const float *const am
        where a zero would lie. */
     if (ambient_c != NULL) /* in the same housing -- the closest thing to the pack's own temperature */
         s.degc = (int8_t)lrintf(*ambient_c);
-    s.flags = (uint8_t)(IOTDATA_BB_PW_FLAG_PRESENT | (r->charging ? IOTDATA_BB_PW_FLAG_CHARGING : IOTDATA_BB_PW_FLAG_DISCHARGING) | (r->percent <= BATTERY_PCT_LOW ? IOTDATA_BB_PW_FLAG_LOW : 0u) |
-                        (r->percent < BATTERY_PCT_CRITICAL ? IOTDATA_BB_PW_FLAG_CRITICAL : 0u));
-    iotdata_diagnostics_power(&s);
+    s.flags = (uint8_t)(IOTDATA_NODE_BB_PW_FLAG_PRESENT | (r->charging ? IOTDATA_NODE_BB_PW_FLAG_CHARGING : IOTDATA_NODE_BB_PW_FLAG_DISCHARGING) | (r->percent <= BATTERY_PCT_LOW ? IOTDATA_NODE_BB_PW_FLAG_LOW : 0u) |
+                        (r->percent < BATTERY_PCT_CRITICAL ? IOTDATA_NODE_BB_PW_FLAG_CRITICAL : 0u));
+    iotdata_node_diagnostics_power(&s);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

@@ -24,7 +24,7 @@
    and capture what it says. The emit being a PARAMETER is what makes this possible at all -- a
    handler that reached for a global would have to be linked against the real console to be tested. */
 #define IOTDATA_NODE_CONSOLE_H
-typedef void (*iotdata_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+typedef void (*iotdata_node_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static char g_out[4096];
 static size_t g_out_len = 0;
 __attribute__((format(printf, 1, 2))) static void test_emit(const char *fmt, ...) {
@@ -52,30 +52,30 @@ static int fails = 0;
         } \
     } while (0)
 
-#define IOTDATA_CONFIG_ENTRIES(X) \
+#define IOTDATA_NODE_CONFIG_ENTRIES(X) \
     /*  NAME          id     TYPE min   max    default flags                        validate notify */ \
     X(TX_PERIOD_S, 0x001, U16, 10, 3600, 60, 0, NULL, NULL, "how often a reading goes out") \
     X(TRIM_MV, 0x002, I16, -500, 500, 0, 0, NULL, NULL, "a signed calibration offset") \
     X(RADIO_ON, 0x003, BOOL, 0, 1, 1, 0, NULL, NULL, "whether the radio is powered") \
     X(GAIN, 0x004, FLOAT, 0.0f, 10.0f, 1.5f, 0, NULL, NULL, "the input gain") \
-    X(SERIAL_NO, 0x005, U32, 0, 0xFFFFFFFF, 7, IOTDATA_CONFIG_FLAG_READONLY, NULL, NULL, "the unit's serial number, which is a fact and not a setting") \
-    X(DEBUG_MS, 0x006, U16, 1, 60000, 500, IOTDATA_CONFIG_FLAG_LOCAL, NULL, NULL, "how often the debug line prints") \
-    X(CPU_MHZ, 0x007, U8, 10, 160, 80, IOTDATA_CONFIG_FLAG_REBOOT, NULL, NULL, "the CPU clock")
+    X(SERIAL_NO, 0x005, U32, 0, 0xFFFFFFFF, 7, IOTDATA_NODE_CONFIG_FLAG_READONLY, NULL, NULL, "the unit's serial number, which is a fact and not a setting") \
+    X(DEBUG_MS, 0x006, U16, 1, 60000, 500, IOTDATA_NODE_CONFIG_FLAG_LOCAL, NULL, NULL, "how often the debug line prints") \
+    X(CPU_MHZ, 0x007, U8, 10, 160, 80, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, NULL, "the CPU clock")
 
 #include "iotdata_node_config.h" /* expand -- and with the guard set, the console handler too */
 
 static void conf(const char *a, const char *b) {
     char *argv[3] = { (char *)(uintptr_t)"conf", (char *)(uintptr_t)a, (char *)(uintptr_t)b };
     out_reset();
-    iotdata_config_console(test_emit, b != NULL ? 3 : (a != NULL ? 2 : 1), argv);
+    iotdata_node_config_console(test_emit, b != NULL ? 3 : (a != NULL ? 2 : 1), argv);
 }
 
 int main(void) {
     printf("the `conf` console command: names, types, and what it refuses\n\n");
     datastore_t ds;
     assert(datastore_open(&ds, "/tmp/iotdata-cfg-console-test"));
-    iotdata_config_defaults();
-    iotdata_config_console_attach(&ds);
+    iotdata_node_config_defaults();
+    iotdata_node_config_console_attach(&ds);
 
     printf("with no argument: the whole table\n");
     conf(NULL, NULL);
@@ -105,56 +105,56 @@ int main(void) {
     printf("\nsetting: parsed against the ROW's type\n");
     conf("tx_period_s", "120");
     CHECK(said("TX_PERIOD_S") && said("120"), "an integer");
-    CHECK(iotdata_config_u16(TX_PERIOD_S) == 120, "took");
+    CHECK(iotdata_node_config_u16(TX_PERIOD_S) == 120, "took");
     conf("trim_mv", "-250");
-    CHECK(iotdata_config_i16(TRIM_MV) == -250, "a negative one, where the type is signed");
+    CHECK(iotdata_node_config_i16(TRIM_MV) == -250, "a negative one, where the type is signed");
     conf("radio_on", "off");
-    CHECK(!iotdata_config_bool(RADIO_ON), "off/on, not just 0/1");
+    CHECK(!iotdata_node_config_bool(RADIO_ON), "off/on, not just 0/1");
     conf("radio_on", "yes");
-    CHECK(iotdata_config_bool(RADIO_ON), "and the other way");
+    CHECK(iotdata_node_config_bool(RADIO_ON), "and the other way");
     conf("gain", "2.75");
-    CHECK(iotdata_config_float(GAIN) > 2.7f && iotdata_config_float(GAIN) < 2.8f, "a float");
+    CHECK(iotdata_node_config_float(GAIN) > 2.7f && iotdata_node_config_float(GAIN) < 2.8f, "a float");
 
     printf("\nwhat it refuses, and what it says about it\n");
     conf("trim_mv", "banana");
     CHECK(said("is not a i16"), "a word where a number goes");
-    CHECK(iotdata_config_i16(TRIM_MV) == -250, "and nothing moved");
+    CHECK(iotdata_node_config_i16(TRIM_MV) == -250, "and nothing moved");
     conf("tx_period_s", "-5");
     CHECK(said("is not a u16"), "a negative into an unsigned: caught, not wrapped to 65531");
     conf("tx_period_s", "5");
     CHECK(said("refused") && said("range=10..3600"), "out of range: refused, with the range shown");
-    CHECK(iotdata_config_u16(TX_PERIOD_S) == 120, "and still what it was");
+    CHECK(iotdata_node_config_u16(TX_PERIOD_S) == 120, "and still what it was");
     conf("serial_no", "9");
     CHECK(said("refused") && said("read-only"), "read-only: refused whoever is asking");
-    CHECK(iotdata_config_u32(SERIAL_NO) == 7, "unmoved");
+    CHECK(iotdata_node_config_u32(SERIAL_NO) == 7, "unmoved");
 
     printf("\na console write is LOCAL, which is the whole point of the flag\n");
     conf("debug_ms", "2000");
-    CHECK(iotdata_config_u16(DEBUG_MS) == 2000, "settable here");
+    CHECK(iotdata_node_config_u16(DEBUG_MS) == 2000, "settable here");
     { /* the same row, off the air */
         uint8_t w[4];
-        const uint16_t rec = iotdata_config_rec(IOTDATA_CFG_DEBUG_MS, IOTDATA_CONFIG_TYPE_U16);
+        const uint16_t rec = iotdata_node_config_rec(IOTDATA_NODE_CFG_DEBUG_MS, IOTDATA_NODE_CONFIG_TYPE_U16);
         w[0] = (uint8_t)(rec >> 8);
         w[1] = (uint8_t)rec;
         w[2] = 0x0B;
         w[3] = 0xB8; /* 3000 */
-        CHECK(!iotdata_config_apply(w, sizeof(w), &ds, NULL), "and refused from the radio");
-        CHECK(iotdata_config_u16(DEBUG_MS) == 2000, "unmoved");
+        CHECK(!iotdata_node_config_apply(w, sizeof(w), &ds, NULL), "and refused from the radio");
+        CHECK(iotdata_node_config_u16(DEBUG_MS) == 2000, "unmoved");
     }
 
     printf("\na restart-needed row says so, once it has taken\n");
     conf("cpu_mhz", "40");
-    CHECK(iotdata_config_u8(CPU_MHZ) == 40 && said("requires restart"), "applied, and announced");
+    CHECK(iotdata_node_config_u8(CPU_MHZ) == 40 && said("requires restart"), "applied, and announced");
 
     printf("\nand it persists, because the console attached a store\n");
-    iotdata_config_defaults();
-    CHECK(iotdata_config_load(&ds), "loaded");
-    CHECK(iotdata_config_u16(TX_PERIOD_S) == 120 && iotdata_config_u8(CPU_MHZ) == 40, "what the console wrote came back");
+    iotdata_node_config_defaults();
+    CHECK(iotdata_node_config_load(&ds), "loaded");
+    CHECK(iotdata_node_config_u16(TX_PERIOD_S) == 120 && iotdata_node_config_u8(CPU_MHZ) == 40, "what the console wrote came back");
 
     printf("\nwithout a store it still applies, and does not pretend otherwise\n");
-    iotdata_config_console_attach(NULL);
+    iotdata_node_config_console_attach(NULL);
     conf("tx_period_s", "300");
-    CHECK(iotdata_config_u16(TX_PERIOD_S) == 300, "applied");
+    CHECK(iotdata_node_config_u16(TX_PERIOD_S) == 300, "applied");
     CHECK(said("not persisted"), "and says it will not survive a restart");
 
     datastore_close(&ds);

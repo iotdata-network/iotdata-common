@@ -33,8 +33,8 @@
 // listen-before-transmit, is a self-collision storm. So a report returns "more remains" and the
 // caller sends the next chunk on its own transmit cadence:
 //
-//     iotdata_partial_t p = { 0 };
-//     do { ok = idep_report_paged(n, IOTDATA_NODE_TLV_VARIANT, 0, &p); } while (ok && p.more);
+//     iotdata_node_partial_t p = { 0 };
+//     do { ok = iotdata_node_report_paged(n, IOTDATA_NODE_TLV_VARIANT, 0, &p); } while (ok && p.more);
 //                                                           ^ one per cycle, not one per loop pass
 //
 // `cursor` is the BUILDER's, `index`/`total`/`more` are the loop's and the wire's. Keeping them
@@ -53,7 +53,7 @@ typedef struct {
                         as wide as the widest thing a builder resumes by -- a variant id, a table
                         row, a byte offset into a recorder. */
     bool more;       /* the builder found records it could not fit */
-} iotdata_partial_t;
+} iotdata_node_partial_t;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -61,7 +61,7 @@ typedef struct {
 /* Whether this chunk needs a marker at all. NOT `total > 1`: a report of five records that all fit
    in one frame is complete and says so by carrying no marker. Only a chunk that is missing
    something -- before it, after it, or both -- is partial. */
-static inline bool iotdata_partial_needed(const iotdata_partial_t *const p) {
+static inline bool iotdata_node_partial_needed(const iotdata_node_partial_t *const p) {
     return p != NULL && (p->more || p->index > 0);
 }
 
@@ -71,7 +71,7 @@ static inline bool iotdata_partial_needed(const iotdata_partial_t *const p) {
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline int iotdata_partial_pack(uint8_t *const buf, const size_t size, const iotdata_partial_t *const p) {
+static inline int iotdata_node_partial_pack(uint8_t *const buf, const size_t size, const iotdata_node_partial_t *const p) {
     if (buf == NULL || p == NULL || size < IOTDATA_NODE_PARTIAL_SIZE)
         return -1;
     buf[0] = (uint8_t)(p->id >> 8);
@@ -83,10 +83,10 @@ static inline int iotdata_partial_pack(uint8_t *const buf, const size_t size, co
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline bool iotdata_partial_unpack(const uint8_t *const val, const size_t vlen, iotdata_partial_t *const out) {
+static inline bool iotdata_node_partial_unpack(const uint8_t *const val, const size_t vlen, iotdata_node_partial_t *const out) {
     if (val == NULL || out == NULL || vlen < IOTDATA_NODE_PARTIAL_SIZE)
         return false;
-    *out = (iotdata_partial_t){ 0 };
+    *out = (iotdata_node_partial_t){ 0 };
     out->id = (uint16_t)(((uint16_t)val[0] << 8) | (uint16_t)val[1]);
     out->total = val[2];
     out->index = val[3];
@@ -97,9 +97,9 @@ static inline bool iotdata_partial_unpack(const uint8_t *const val, const size_t
 
 /* Add the marker to a frame under construction. MUST be called immediately before the TLV it
    describes -- the binding is positional, so anything emitted between them would steal it. */
-static inline bool iotdata_partial_emit(iotdata_encoder_t *const enc, const iotdata_partial_t *const p) {
+static inline bool iotdata_node_partial_emit(iotdata_encoder_t *const enc, const iotdata_node_partial_t *const p) {
     uint8_t buf[IOTDATA_NODE_PARTIAL_SIZE];
-    if (iotdata_partial_pack(buf, sizeof(buf), p) < 0)
+    if (iotdata_node_partial_pack(buf, sizeof(buf), p) < 0)
         return false;
     return iotdata_encode_tlv(enc, IOTDATA_TLV_TYPE_PARTIAL, buf, (uint8_t)sizeof(buf)) == IOTDATA_OK;
 }
@@ -111,7 +111,7 @@ static inline bool iotdata_partial_emit(iotdata_encoder_t *const enc, const iotd
 
 /* Is this decoded entry a marker rather than a report? Anything iterating dec->tlv[] and acting on
    system types needs this, or it will publish a PARTIAL as though it were a report of its own. */
-static inline bool iotdata_partial_is(const iotdata_decoder_tlv_t *const t) {
+static inline bool iotdata_node_partial_is(const iotdata_decoder_tlv_t *const t) {
     return t != NULL && t->type == IOTDATA_TLV_TYPE_PARTIAL && t->format == IOTDATA_TLV_FMT_RAW && t->length >= IOTDATA_NODE_PARTIAL_SIZE;
 }
 
@@ -120,13 +120,13 @@ static inline bool iotdata_partial_is(const iotdata_decoder_tlv_t *const t) {
 /* The marker describing entry `idx`, if one precedes it. False means the report is complete, which
    is the answer for everything that does not page -- and is only safe to read that way because
    understanding PARTIAL is mandatory across the system type range. */
-static inline bool iotdata_partial_of(const iotdata_decoder_t *const dec, const uint8_t idx, iotdata_partial_t *const out) {
+static inline bool iotdata_node_partial_of(const iotdata_decoder_t *const dec, const uint8_t idx, iotdata_node_partial_t *const out) {
     if (dec == NULL || idx == 0 || idx >= dec->tlv_count)
         return false;
     const iotdata_decoder_tlv_t *const prev = &dec->tlv[idx - 1];
-    if (!iotdata_partial_is(prev))
+    if (!iotdata_node_partial_is(prev))
         return false;
-    return iotdata_partial_unpack(prev->raw, prev->length, out);
+    return iotdata_node_partial_unpack(prev->raw, prev->length, out);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -135,7 +135,7 @@ static inline bool iotdata_partial_of(const iotdata_decoder_t *const dec, const 
    (nothing walked yet) gets an identifier, a continuing one keeps the one it started with, so
    every chunk of one report carries the same tag. A builder with a real generation -- config --
    overwrites it, which is what makes cross-attempt assembly work there. */
-static inline void iotdata_partial_begin(iotdata_partial_t *const p, const uint16_t fallback_id) {
+static inline void iotdata_node_partial_begin(iotdata_node_partial_t *const p, const uint16_t fallback_id) {
     if (p == NULL)
         return;
     if (p->cursor == 0 && p->index == 0)
@@ -149,7 +149,7 @@ static inline void iotdata_partial_begin(iotdata_partial_t *const p, const uint1
    skip records whenever the radio refused the frame, and there is no acknowledgement here to
    notice it. A report that has run out resets, so the next call begins a fresh one with a fresh
    identifier rather than continuing a finished report forever. */
-static inline void iotdata_partial_sent(iotdata_partial_t *const p) {
+static inline void iotdata_node_partial_sent(iotdata_node_partial_t *const p) {
     if (p == NULL)
         return;
     if (p->more) {

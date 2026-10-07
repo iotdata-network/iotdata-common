@@ -20,9 +20,9 @@
 //
 //     #include "iotdata_node_config.h"            // the types
 //     #include "iotdata_node_config_mqtt.h"       // this block
-//     #define IOTDATA_CONFIG_ENTRIES(X)
+//     #define IOTDATA_NODE_CONFIG_ENTRIES(X)
 //         X(...this app's own...)
-//         IOTDATA_CONFIG_ENTRIES_MQTT(X)
+//         IOTDATA_NODE_CONFIG_ENTRIES_MQTT(X)
 //     #include "iotdata_node_config.h"            // expand
 //
 // 0x080-0x08F, and never reused. The low realms are the SHARED ones: an id there means the same
@@ -36,58 +36,68 @@
 // may legitimately want to slow a node that is hammering a broker.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_MQTT_CLIENT
-#define IOTDATA_CONFIG_MQTT_CLIENT "iotdata"
+#define IOTDATA_NODE_CFGID_MQTT_CLIENT                0x080
+#define IOTDATA_NODE_CFGID_MQTT_SERVER                0x081
+#define IOTDATA_NODE_CFGID_MQTT_TLS_INSECURE          0x082
+#define IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S     0x083
+#define IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S_MAX 0x084
+#define IOTDATA_NODE_CFGID_MQTT_TOPIC_PREFIX          0x085
+#define IOTDATA_NODE_CFGID_MQTT_DEBUG                 0x086
+
+#ifndef IOTDATA_NODE_CONFIG_MQTT_CLIENT
+#define IOTDATA_NODE_CONFIG_MQTT_CLIENT "iotdata"
 #endif
-#ifndef IOTDATA_CONFIG_MQTT_SERVER
-#define IOTDATA_CONFIG_MQTT_SERVER "mqtt://localhost"
+#ifndef IOTDATA_NODE_CONFIG_MQTT_SERVER
+#define IOTDATA_NODE_CONFIG_MQTT_SERVER "mqtt://localhost"
 #endif
-#ifndef IOTDATA_CONFIG_MQTT_TOPIC_PREFIX
-#define IOTDATA_CONFIG_MQTT_TOPIC_PREFIX "iotdata"
+#ifndef IOTDATA_NODE_CONFIG_MQTT_TOPIC_PREFIX
+#define IOTDATA_NODE_CONFIG_MQTT_TOPIC_PREFIX "iotdata"
 #endif
-#ifndef IOTDATA_CONFIG_MQTT_TLS_INSECURE
-#define IOTDATA_CONFIG_MQTT_TLS_INSECURE false
+#ifndef IOTDATA_NODE_CONFIG_MQTT_TLS_INSECURE
+#define IOTDATA_NODE_CONFIG_MQTT_TLS_INSECURE false
 #endif
-#ifndef IOTDATA_CONFIG_MQTT_RECONNECT_DELAY
-#define IOTDATA_CONFIG_MQTT_RECONNECT_DELAY 5u
+#ifndef IOTDATA_NODE_CONFIG_MQTT_RECONNECT_DELAY
+#define IOTDATA_NODE_CONFIG_MQTT_RECONNECT_DELAY 5u
 #endif
-#ifndef IOTDATA_CONFIG_MQTT_RECONNECT_DELAY_MAX
-#define IOTDATA_CONFIG_MQTT_RECONNECT_DELAY_MAX 60u
+#ifndef IOTDATA_NODE_CONFIG_MQTT_RECONNECT_DELAY_MAX
+#define IOTDATA_NODE_CONFIG_MQTT_RECONNECT_DELAY_MAX 60u
 #endif
-#ifndef IOTDATA_CONFIG_MQTT_DEBUG
-#define IOTDATA_CONFIG_MQTT_DEBUG false
+#ifndef IOTDATA_NODE_CONFIG_MQTT_DEBUG
+#define IOTDATA_NODE_CONFIG_MQTT_DEBUG false
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_MQTT_SERVER_MAX
-#define IOTDATA_CONFIG_MQTT_SERVER_MAX 191
+#ifndef IOTDATA_NODE_CONFIG_MQTT_SERVER_MAX
+#define IOTDATA_NODE_CONFIG_MQTT_SERVER_MAX 191
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static bool iotdata_config_mqtt_reconnect_delay_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
-static bool iotdata_config_mqtt_reconnect_delay_max_ok(const iotdata_config_row_t *row, const iotdata_config_value_t *v, const struct iotdata_config_update *u);
+static bool iotdata_node_config_mqtt_reconnect_delay_ok(const iotdata_node_config_row_t *row, const iotdata_node_config_value_t *v, const struct iotdata_node_config_update *u);
+static bool iotdata_node_config_mqtt_reconnect_delay_max_ok(const iotdata_node_config_row_t *row, const iotdata_node_config_value_t *v, const struct iotdata_node_config_update *u);
 
-#ifndef IOTDATA_CONFIG_MQTT_NOTIFY
-static inline bool iotdata_config_mqtt_changed(__attribute__((unused)) const iotdata_config_row_t *const row, __attribute__((unused)) const iotdata_config_value_t *const was,
-                                               __attribute__((unused)) const iotdata_config_info_t *const info) {
+#ifndef IOTDATA_NODE_CONFIG_MQTT_NOTIFY
+static inline bool iotdata_node_config_mqtt_changed(__attribute__((unused)) const iotdata_node_config_row_t *const row, __attribute__((unused)) const iotdata_node_config_value_t *const was,
+                                                    __attribute__((unused)) const iotdata_node_config_info_t *const info) {
     return false;
 }
-#define IOTDATA_CONFIG_MQTT_NOTIFY iotdata_config_mqtt_changed
+#define IOTDATA_NODE_CONFIG_MQTT_NOTIFY iotdata_node_config_mqtt_changed
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_CONFIG_ENTRIES_MQTT(X) \
-    X(MQTT_CLIENT, 0x080, STRING, 1, 63, IOTDATA_CONFIG_MQTT_CLIENT, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_MQTT_NOTIFY, "client id to use with the broker") \
-    X(MQTT_SERVER, 0x081, STRING, 1, IOTDATA_CONFIG_MQTT_SERVER_MAX, IOTDATA_CONFIG_MQTT_SERVER, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_MQTT_NOTIFY, "broker URL") \
-    X(MQTT_TLS_INSECURE, 0x082, BOOL, 0, 1, IOTDATA_CONFIG_MQTT_TLS_INSECURE, IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_MQTT_NOTIFY, "broker certificate verification skipping (testing, not deployment)") \
-    X(MQTT_RECONNECT_DELAY_S, 0x083, U16, 1, 3600, IOTDATA_CONFIG_MQTT_RECONNECT_DELAY, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_mqtt_reconnect_delay_ok, IOTDATA_CONFIG_MQTT_NOTIFY, "broker reconnection delay (first attempt)") \
-    X(MQTT_RECONNECT_DELAY_S_MAX, 0x084, U16, 1, 3600, IOTDATA_CONFIG_MQTT_RECONNECT_DELAY_MAX, IOTDATA_CONFIG_FLAG_NONE, iotdata_config_mqtt_reconnect_delay_max_ok, IOTDATA_CONFIG_MQTT_NOTIFY, \
-      "broker reconnection ceiling (after multiple attempts)") \
-    X(MQTT_TOPIC_PREFIX, 0x085, STRING, 1, 63, IOTDATA_CONFIG_MQTT_TOPIC_PREFIX, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_MQTT_NOTIFY, "topic prefix for all published messages") \
-    X(MQTT_DEBUG, 0x086, BOOL, 0, 1, IOTDATA_CONFIG_MQTT_DEBUG, IOTDATA_CONFIG_FLAG_LOCAL, NULL, IOTDATA_CONFIG_MQTT_NOTIFY, "debug: log all broker interaction")
+#define IOTDATA_NODE_CONFIG_ENTRIES_MQTT(X) \
+    X(MQTT_CLIENT, IOTDATA_NODE_CFGID_MQTT_CLIENT, STRING, 1, 63, IOTDATA_NODE_CONFIG_MQTT_CLIENT, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_MQTT_NOTIFY, "client id to use with the broker") \
+    X(MQTT_SERVER, IOTDATA_NODE_CFGID_MQTT_SERVER, STRING, 1, IOTDATA_NODE_CONFIG_MQTT_SERVER_MAX, IOTDATA_NODE_CONFIG_MQTT_SERVER, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_MQTT_NOTIFY, "broker URL") \
+    X(MQTT_TLS_INSECURE, IOTDATA_NODE_CFGID_MQTT_TLS_INSECURE, BOOL, 0, 1, IOTDATA_NODE_CONFIG_MQTT_TLS_INSECURE, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_MQTT_NOTIFY, \
+      "broker certificate verification skipping (testing, not deployment)") \
+    X(MQTT_RECONNECT_DELAY_S, IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S, U16, 1, 3600, IOTDATA_NODE_CONFIG_MQTT_RECONNECT_DELAY, IOTDATA_NODE_CONFIG_FLAG_NONE, iotdata_node_config_mqtt_reconnect_delay_ok, IOTDATA_NODE_CONFIG_MQTT_NOTIFY, \
+      "broker reconnection delay (first attempt)") \
+    X(MQTT_RECONNECT_DELAY_S_MAX, IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S_MAX, U16, 1, 3600, IOTDATA_NODE_CONFIG_MQTT_RECONNECT_DELAY_MAX, IOTDATA_NODE_CONFIG_FLAG_NONE, iotdata_node_config_mqtt_reconnect_delay_max_ok, \
+      IOTDATA_NODE_CONFIG_MQTT_NOTIFY, "broker reconnection ceiling (after multiple attempts)") \
+    X(MQTT_TOPIC_PREFIX, IOTDATA_NODE_CFGID_MQTT_TOPIC_PREFIX, STRING, 1, 63, IOTDATA_NODE_CONFIG_MQTT_TOPIC_PREFIX, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_MQTT_NOTIFY, "topic prefix for all published messages") \
+    X(MQTT_DEBUG, IOTDATA_NODE_CFGID_MQTT_DEBUG, BOOL, 0, 1, IOTDATA_NODE_CONFIG_MQTT_DEBUG, IOTDATA_NODE_CONFIG_FLAG_LOCAL, NULL, IOTDATA_NODE_CONFIG_MQTT_NOTIFY, "debug: log all broker interaction")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -103,13 +113,13 @@ static inline bool iotdata_config_mqtt_changed(__attribute__((unused)) const iot
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static bool iotdata_config_mqtt_reconnect_delay_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
-    iotdata_config_value_t mx;
-    return iotdata_config_update_peek(u, 0x084, &mx) && v->u <= mx.u;
+static bool iotdata_node_config_mqtt_reconnect_delay_ok(__attribute__((unused)) const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v, const struct iotdata_node_config_update *const u) {
+    iotdata_node_config_value_t mx;
+    return iotdata_node_config_update_peek(u, IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S_MAX, &mx) && v->u <= mx.u;
 }
-static bool iotdata_config_mqtt_reconnect_delay_max_ok(__attribute__((unused)) const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
-    iotdata_config_value_t mn;
-    return iotdata_config_update_peek(u, 0x083, &mn) && v->u >= mn.u;
+static bool iotdata_node_config_mqtt_reconnect_delay_max_ok(__attribute__((unused)) const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v, const struct iotdata_node_config_update *const u) {
+    iotdata_node_config_value_t mn;
+    return iotdata_node_config_update_peek(u, IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S, &mn) && v->u >= mn.u;
 }
 
 #endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_MQTT_APPLIED */

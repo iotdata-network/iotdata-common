@@ -7,10 +7,10 @@
 // FOUR GROUPS, AND EACH IS ONE ROW. Split along two axes that really are independent -- WHERE the
 // numbers go (shown locally, or published somewhere), and WHICH numbers they are:
 //
-//     IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY(X)       show the node's own execution stats, and how often
-//     IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH(X)       publish them, and how often
-//     IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_MQTT(X)  ...when the publish path is MQTT: where to
-//     IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY_NETW(X)  show the stations this node knows of, and how often
+//     IOTDATA_NODE_CONFIG_ENTRIES_STAT_DISPLAY(X)       show the node's own execution stats, and how often
+//     IOTDATA_NODE_CONFIG_ENTRIES_STAT_PUBLISH(X)       publish them, and how often
+//     IOTDATA_NODE_CONFIG_ENTRIES_STAT_PUBLISH_MQTT(X)  ...when the publish path is MQTT: where to
+//     IOTDATA_NODE_CONFIG_ENTRIES_STAT_DISPLAY_NETW(X)  show the stations this node knows of, and how often
 //
 // The groups exist because the capabilities are genuinely separable. Everything with a log can
 // display; only a node with a transport can publish; only one whose transport is MQTT needs a
@@ -28,10 +28,10 @@
 //
 //     #include "iotdata_node_config.h"            // the types
 //     #include "iotdata_node_config_stat.h"       // the row blocks
-//     #define IOTDATA_CONFIG_ENTRIES(X)
+//     #define IOTDATA_NODE_CONFIG_ENTRIES(X)
 //         X(...this app's own...)
-//         IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY(X)
-//         IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH(X)
+//         IOTDATA_NODE_CONFIG_ENTRIES_STAT_DISPLAY(X)
+//         IOTDATA_NODE_CONFIG_ENTRIES_STAT_PUBLISH(X)
 //     #include "iotdata_node_config.h"            // expand
 //
 // 0x0C0-0x0CF, one realm for all four groups. A realm holds sixteen and this uses four, so there is
@@ -40,60 +40,66 @@
 // it today.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_STAT_INTERVAL
-#define IOTDATA_CONFIG_STAT_INTERVAL 300u
+#define IOTDATA_NODE_CFGID_STAT_DISPLAY_INTERVAL_S        0x0C0
+#define IOTDATA_NODE_CFGID_STAT_PUBLISH_INTERVAL_S        0x0C1
+#define IOTDATA_NODE_CFGID_STAT_PUBLISH_MQTT_TOPIC_PREFIX 0x0C2
+#define IOTDATA_NODE_CFGID_STAT_DISPLAY_NETW_INTERVAL_S   0x0C3
+#define IOTDATA_NODE_CFGID_STAT_PUBLISH_NETW_INTERVAL_S   0x0C4
+
+#ifndef IOTDATA_NODE_CONFIG_STAT_INTERVAL
+#define IOTDATA_NODE_CONFIG_STAT_INTERVAL 300u
 #endif
-#ifndef IOTDATA_CONFIG_STAT_DISPLAY_INTERVAL
-#define IOTDATA_CONFIG_STAT_DISPLAY_INTERVAL IOTDATA_CONFIG_STAT_INTERVAL
+#ifndef IOTDATA_NODE_CONFIG_STAT_DISPLAY_INTERVAL
+#define IOTDATA_NODE_CONFIG_STAT_DISPLAY_INTERVAL IOTDATA_NODE_CONFIG_STAT_INTERVAL
 #endif
-#ifndef IOTDATA_CONFIG_STAT_PUBLISH_INTERVAL
-#define IOTDATA_CONFIG_STAT_PUBLISH_INTERVAL IOTDATA_CONFIG_STAT_INTERVAL
+#ifndef IOTDATA_NODE_CONFIG_STAT_PUBLISH_INTERVAL
+#define IOTDATA_NODE_CONFIG_STAT_PUBLISH_INTERVAL IOTDATA_NODE_CONFIG_STAT_INTERVAL
 #endif
-#ifndef IOTDATA_CONFIG_STAT_DISPLAY_NETW_INTERVAL
-#define IOTDATA_CONFIG_STAT_DISPLAY_NETW_INTERVAL IOTDATA_CONFIG_STAT_INTERVAL
+#ifndef IOTDATA_NODE_CONFIG_STAT_DISPLAY_NETW_INTERVAL
+#define IOTDATA_NODE_CONFIG_STAT_DISPLAY_NETW_INTERVAL IOTDATA_NODE_CONFIG_STAT_INTERVAL
 #endif
-#ifndef IOTDATA_CONFIG_STAT_PUBLISH_NETW_INTERVAL
-#define IOTDATA_CONFIG_STAT_PUBLISH_NETW_INTERVAL 900u
+#ifndef IOTDATA_NODE_CONFIG_STAT_PUBLISH_NETW_INTERVAL
+#define IOTDATA_NODE_CONFIG_STAT_PUBLISH_NETW_INTERVAL 900u
 #endif
-#ifndef IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC
-#define IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC "iotdata/stats"
+#ifndef IOTDATA_NODE_CONFIG_STAT_PUBLISH_MQTT_TOPIC
+#define IOTDATA_NODE_CONFIG_STAT_PUBLISH_MQTT_TOPIC "iotdata/stats"
 #endif
-#ifndef IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX
-#define IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX 63
+#ifndef IOTDATA_NODE_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX
+#define IOTDATA_NODE_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX 63
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_STAT_INTERVAL_MAX
-#define IOTDATA_CONFIG_STAT_INTERVAL_MAX 3600
+#ifndef IOTDATA_NODE_CONFIG_STAT_INTERVAL_MAX
+#define IOTDATA_NODE_CONFIG_STAT_INTERVAL_MAX 3600
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_STAT_NOTIFY
-static inline bool iotdata_config_stat_changed(__attribute__((unused)) const iotdata_config_row_t *const row, __attribute__((unused)) const iotdata_config_value_t *const was,
-                                               __attribute__((unused)) const iotdata_config_info_t *const info) {
+#ifndef IOTDATA_NODE_CONFIG_STAT_NOTIFY
+static inline bool iotdata_node_config_stat_changed(__attribute__((unused)) const iotdata_node_config_row_t *const row, __attribute__((unused)) const iotdata_node_config_value_t *const was,
+                                                    __attribute__((unused)) const iotdata_node_config_info_t *const info) {
     return false;
 }
-#define IOTDATA_CONFIG_STAT_NOTIFY iotdata_config_stat_changed
+#define IOTDATA_NODE_CONFIG_STAT_NOTIFY iotdata_node_config_stat_changed
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Anything with somewhere to write a line. */
-#define IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY(X) \
-    X(STAT_DISPLAY_INTERVAL_S, 0x0C0, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
+#define IOTDATA_NODE_CONFIG_ENTRIES_STAT_DISPLAY(X) \
+    X(STAT_DISPLAY_INTERVAL_S, IOTDATA_NODE_CFGID_STAT_DISPLAY_INTERVAL_S, U16, 0, IOTDATA_NODE_CONFIG_STAT_INTERVAL_MAX, IOTDATA_NODE_CONFIG_STAT_DISPLAY_INTERVAL, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_STAT_NOTIFY, \
       "how often to show this node's own counters, in seconds (0 = never)")
 /* Anything with a transport to send them over. */
-#define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH(X) \
-    X(STAT_PUBLISH_INTERVAL_S, 0x0C1, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_PUBLISH_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
+#define IOTDATA_NODE_CONFIG_ENTRIES_STAT_PUBLISH(X) \
+    X(STAT_PUBLISH_INTERVAL_S, IOTDATA_NODE_CFGID_STAT_PUBLISH_INTERVAL_S, U16, 0, IOTDATA_NODE_CONFIG_STAT_INTERVAL_MAX, IOTDATA_NODE_CONFIG_STAT_PUBLISH_INTERVAL, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_STAT_NOTIFY, \
       "how often to publish this node's own counters, in seconds (0 = never)")
 /* ...when that transport is MQTT. Separate from PUBLISH because the cadence is a decision about
    how much you want to know and the topic is a decision about a broker's namespace; a node that
    publishes over something else keeps the first and has no use for the second. */
-#define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_MQTT(X) \
-    X(STAT_PUBLISH_MQTT_TOPIC_PREFIX, 0x0C2, STRING, 1, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX, IOTDATA_CONFIG_STAT_PUBLISH_MQTT_TOPIC, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
-      "the topic the counters are published under")
+#define IOTDATA_NODE_CONFIG_ENTRIES_STAT_PUBLISH_MQTT(X) \
+    X(STAT_PUBLISH_MQTT_TOPIC_PREFIX, IOTDATA_NODE_CFGID_STAT_PUBLISH_MQTT_TOPIC_PREFIX, STRING, 1, IOTDATA_NODE_CONFIG_STAT_PUBLISH_MQTT_TOPIC_MAX, IOTDATA_NODE_CONFIG_STAT_PUBLISH_MQTT_TOPIC, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, \
+      IOTDATA_NODE_CONFIG_STAT_NOTIFY, "the topic the counters are published under")
 /* Only a node with a table of other stations to show. NETW rather than MESH because the table also
  * carries plain sensors that never mesh -- it is the network as this node sees it, not the tree.
  *
@@ -102,14 +108,14 @@ static inline bool iotdata_config_stat_changed(__attribute__((unused)) const iot
  * receptions as well as its own. A relay has no such source: it knows its own beacon peers and its
  * own receptions, and nothing of the far side of the tree, so it shows those two separately. Both
  * are "the network from here"; one is simply a smaller answer. */
-#define IOTDATA_CONFIG_ENTRIES_STAT_DISPLAY_NETW(X) \
-    X(STAT_DISPLAY_NETW_INTERVAL_S, 0x0C3, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_DISPLAY_NETW_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
-      "how often to show the stations this node knows about, in seconds (0 = never)")
+#define IOTDATA_NODE_CONFIG_ENTRIES_STAT_DISPLAY_NETW(X) \
+    X(STAT_DISPLAY_NETW_INTERVAL_S, IOTDATA_NODE_CFGID_STAT_DISPLAY_NETW_INTERVAL_S, U16, 0, IOTDATA_NODE_CONFIG_STAT_INTERVAL_MAX, IOTDATA_NODE_CONFIG_STAT_DISPLAY_NETW_INTERVAL, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, \
+      IOTDATA_NODE_CONFIG_STAT_NOTIFY, "how often to show the stations this node knows about, in seconds (0 = never)")
 /* Only a node that can both hold that table and send it somewhere. Separate from the display for
    the same reason PUBLISH is separate from DISPLAY above: one is for watching, one is for keeping. */
-#define IOTDATA_CONFIG_ENTRIES_STAT_PUBLISH_NETW(X) \
-    X(STAT_PUBLISH_NETW_INTERVAL_S, 0x0C4, U16, 0, IOTDATA_CONFIG_STAT_INTERVAL_MAX, IOTDATA_CONFIG_STAT_PUBLISH_NETW_INTERVAL, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_STAT_NOTIFY, \
-      "how often to publish the network table, in seconds (0 = never)")
+#define IOTDATA_NODE_CONFIG_ENTRIES_STAT_PUBLISH_NETW(X) \
+    X(STAT_PUBLISH_NETW_INTERVAL_S, IOTDATA_NODE_CFGID_STAT_PUBLISH_NETW_INTERVAL_S, U16, 0, IOTDATA_NODE_CONFIG_STAT_INTERVAL_MAX, IOTDATA_NODE_CONFIG_STAT_PUBLISH_NETW_INTERVAL, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, \
+      IOTDATA_NODE_CONFIG_STAT_NOTIFY, "how often to publish the network table, in seconds (0 = never)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

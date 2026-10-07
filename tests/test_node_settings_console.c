@@ -23,7 +23,7 @@
 
 /* stand in for the console */
 #define IOTDATA_NODE_CONSOLE_H
-typedef void (*iotdata_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+typedef void (*iotdata_node_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static char g_out[8192];
 static size_t g_out_len = 0;
 __attribute__((format(printf, 1, 2))) static void test_emit(const char *fmt, ...) {
@@ -55,7 +55,7 @@ static void node(const char *a, const char *b, const char *c, const char *d) {
     const int argc = (d != NULL) ? 5 : (c != NULL) ? 4 : (b != NULL) ? 3 : (a != NULL) ? 2 : 1;
     g_out[0] = '\0';
     g_out_len = 0;
-    iotdata_settings_console(test_emit, argc, argv);
+    iotdata_node_settings_console(test_emit, argc, argv);
 }
 
 int main(void) {
@@ -63,11 +63,11 @@ int main(void) {
     datastore_t ds;
     assert(datastore_open(&ds, "/tmp/iotdata-node-console-test"));
     static iotdata_node_state_t state;
-    static iotdata_settings_t settings;
-    iotdata_state_init(&state, &ds, "state");
-    iotdata_settings_defaults(&settings, DERIVED_STATION);
-    assert(iotdata_settings_attach(&settings, &state));
-    iotdata_settings_console_attach(&settings, &state);
+    static iotdata_node_settings_t settings;
+    iotdata_node_state_init(&state, &ds, "state");
+    iotdata_node_settings_defaults(&settings, DERIVED_STATION);
+    assert(iotdata_node_settings_attach(&settings, &state));
+    iotdata_node_settings_console_attach(&settings, &state);
 
     printf("as built: every value stated, and nothing flagged because nothing differs\n");
     node(NULL, NULL, NULL, NULL);
@@ -80,44 +80,44 @@ int main(void) {
     printf("\nwriting one shows what it was, which is the only way back to it\n");
     node("station", "10", NULL, NULL);
     CHECK(said("station") && said("10") && said("default 1335"), "the write answers with what is true, and with what it was");
-    CHECK(iotdata_settings_station(&settings) == 10, "and the reader agrees");
+    CHECK(iotdata_node_settings_station(&settings) == 10, "and the reader agrees");
     node("station", "1335", NULL, NULL);
-    CHECK(iotdata_settings_station(&settings) == DERIVED_STATION, "stating the default is how you get back to it");
+    CHECK(iotdata_node_settings_station(&settings) == DERIVED_STATION, "stating the default is how you get back to it");
     node("station", "unset", NULL, NULL);
     CHECK(said("is not a number"), "and 'unset' is not a value, so it is not a setting");
-    CHECK(iotdata_settings_station(&settings) == DERIVED_STATION, "nothing having changed");
+    CHECK(iotdata_node_settings_station(&settings) == DERIVED_STATION, "nothing having changed");
 
     printf("\nthe protocol's own rule, not just the field's width\n");
     node("station", "0", NULL, NULL);
     CHECK(said("not assignable"), "0 is not a station");
     node("station", "4095", NULL, NULL);
     CHECK(said("not assignable"), "nor is the broadcast id");
-    CHECK(iotdata_settings_station(&settings) == DERIVED_STATION, "and neither took");
+    CHECK(iotdata_node_settings_station(&settings) == DERIVED_STATION, "and neither took");
 
     printf("\na report schedule, by type name\n");
     node("report", "STATUS", "period", "3600");
-    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 3600, "the period took");
+    CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 3600, "the period took");
     node("report", "STATUS", "at-startup", "on");
-    CHECK(iotdata_settings_at_startup(&settings, IOTDATA_NODE_TLV_STATUS), "at-startup too");
-    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 3600, "and changing one did not clear the other");
+    CHECK(iotdata_node_settings_at_startup(&settings, IOTDATA_NODE_TLV_STATUS), "at-startup too");
+    CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 3600, "and changing one did not clear the other");
     node("report", "STATUS", "period", "off");
-    CHECK(iotdata_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 0, "'off' means NEVER, which is a value -- the flag carries it, not a sentinel");
-    CHECK(iotdata_settings_at_startup(&settings, IOTDATA_NODE_TLV_STATUS), "and still says nothing about at-startup");
+    CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 0, "'off' means NEVER, which is a value -- the flag carries it, not a sentinel");
+    CHECK(iotdata_node_settings_at_startup(&settings, IOTDATA_NODE_TLV_STATUS), "and still says nothing about at-startup");
     node("report", "nonesuch", "period", "10");
     CHECK(said("not a reportable type"), "an unknown subject is named");
 
     printf("\nit persists, because the state block is where settings live\n");
     node("station", "0x123", NULL, NULL);
-    CHECK(iotdata_settings_station(&settings) == 0x123, "hex accepted");
+    CHECK(iotdata_node_settings_station(&settings) == 0x123, "hex accepted");
     {
         static iotdata_node_state_t s2;
-        static iotdata_settings_t back;
-        iotdata_state_init(&s2, &ds, "state");
-        iotdata_settings_defaults(&back, DERIVED_STATION);
-        assert(iotdata_settings_attach(&back, &s2));
-        (void)iotdata_state_load(&s2);
-        CHECK(iotdata_settings_station(&back) == 0x123, "and came back after a restart");
-        CHECK(iotdata_settings_period_s(&back, IOTDATA_NODE_TLV_STATUS) == 0, "with the rest of it");
+        static iotdata_node_settings_t back;
+        iotdata_node_state_init(&s2, &ds, "state");
+        iotdata_node_settings_defaults(&back, DERIVED_STATION);
+        assert(iotdata_node_settings_attach(&back, &s2));
+        (void)iotdata_node_state_load(&s2);
+        CHECK(iotdata_node_settings_station(&back) == 0x123, "and came back after a restart");
+        CHECK(iotdata_node_settings_period_s(&back, IOTDATA_NODE_TLV_STATUS) == 0, "with the rest of it");
     }
 
     printf("\nMANY BLOCKS ON ONE NODE: its own tag, and its own defaults to go back to\n");
@@ -126,38 +126,38 @@ int main(void) {
            one tag would register both under the same name, and one frozen defaults image would
            hand BOTH blocks the last one's values on a restore. */
         static iotdata_node_state_t s3;
-        static iotdata_settings_t a, b, a_dflt, b_dflt;
-        iotdata_state_init(&s3, &ds, "fleet");
-        iotdata_settings_defaults(&a, 0x101);
-        iotdata_settings_defaults(&b, 0x202);
-        CHECK(iotdata_settings_attach_as(&a, &s3, 0x53530101u, &a_dflt), "one");
-        CHECK(iotdata_settings_attach_as(&b, &s3, 0x53530202u, &b_dflt), "and another");
+        static iotdata_node_settings_t a, b, a_dflt, b_dflt;
+        iotdata_node_state_init(&s3, &ds, "fleet");
+        iotdata_node_settings_defaults(&a, 0x101);
+        iotdata_node_settings_defaults(&b, 0x202);
+        CHECK(iotdata_node_settings_attach_as(&a, &s3, 0x53530101u, &a_dflt), "one");
+        CHECK(iotdata_node_settings_attach_as(&b, &s3, 0x53530202u, &b_dflt), "and another");
         CHECK(a_dflt.station == 0x101 && b_dflt.station == 0x202, "each froze ITS OWN defaults, not the last one's");
 
         a.station = 0x111;
         b.station = 0x222;
-        CHECK(iotdata_settings_commit(&a, &s3), "written");
+        CHECK(iotdata_node_settings_commit(&a, &s3), "written");
         {
             static iotdata_node_state_t s4;
-            static iotdata_settings_t a2, b2, a2_dflt, b2_dflt;
-            iotdata_state_init(&s4, &ds, "fleet");
-            iotdata_settings_defaults(&a2, 0x101);
-            iotdata_settings_defaults(&b2, 0x202);
-            CHECK(iotdata_settings_attach_as(&a2, &s4, 0x53530101u, &a2_dflt), "re-attached");
-            CHECK(iotdata_settings_attach_as(&b2, &s4, 0x53530202u, &b2_dflt), "both");
-            (void)iotdata_state_load(&s4);
-            CHECK(iotdata_settings_station(&a2) == 0x111, "each came back as itself");
-            CHECK(iotdata_settings_station(&b2) == 0x222, "and not as the other");
+            static iotdata_node_settings_t a2, b2, a2_dflt, b2_dflt;
+            iotdata_node_state_init(&s4, &ds, "fleet");
+            iotdata_node_settings_defaults(&a2, 0x101);
+            iotdata_node_settings_defaults(&b2, 0x202);
+            CHECK(iotdata_node_settings_attach_as(&a2, &s4, 0x53530101u, &a2_dflt), "re-attached");
+            CHECK(iotdata_node_settings_attach_as(&b2, &s4, 0x53530202u, &b2_dflt), "both");
+            (void)iotdata_node_state_load(&s4);
+            CHECK(iotdata_node_settings_station(&a2) == 0x111, "each came back as itself");
+            CHECK(iotdata_node_settings_station(&b2) == 0x222, "and not as the other");
         }
     }
 
     printf("\nand a node with nowhere to write says so rather than pretending\n");
-    iotdata_settings_console_attach(&settings, NULL);
+    iotdata_node_settings_console_attach(&settings, NULL);
     node(NULL, NULL, NULL, NULL);
     CHECK(said("NOT PERSISTED"), "the listing warns");
     node("station", "11", NULL, NULL);
     CHECK(said("not persisted"), "and so does a write");
-    CHECK(iotdata_settings_station(&settings) == 11, "which still applied");
+    CHECK(iotdata_node_settings_station(&settings) == 11, "which still applied");
 
     datastore_close(&ds);
     printf("\n%s\n", fails == 0 ? "all ok" : "FAILED");

@@ -32,11 +32,11 @@ FORMAT ?= clang-format-19
 # declares itself the same way whichever platform it targets. NAME is the name the node REPORTS --
 # distinct from TARGET, the binary name. VERSION is the release line, hand-set at a release point.
 # The stamp is regenerated on EVERY invocation, so a build cannot inherit an earlier one's; pass a
-# fixed IOTDATA_VERSION_STAMP for a reproducible binary.
+# fixed IOTDATA_NODE_VERSION_STAMP for a reproducible binary.
 NAME           ?= $(TARGET)
 VERSION        ?= 0.0.0
 VERSION_STAMP  ?= $(shell date -u +%Y%m%d%H%M)
-CFLAGS_DEFINES += -DIOTDATA_VERSION_APP='"$(NAME)"' -DIOTDATA_VERSION_SEMVER='"$(VERSION)"' -DIOTDATA_VERSION_STAMP='"$(VERSION_STAMP)"'
+CFLAGS_DEFINES += -DIOTDATA_NODE_VERSION_APP='"$(NAME)"' -DIOTDATA_NODE_VERSION_SEMVER='"$(VERSION)"' -DIOTDATA_NODE_VERSION_STAMP='"$(VERSION_STAMP)"'
 
 # Staging, the same shape the esp32 rule uses: one release tree, one subtree per platform, one
 # manifest format. See iotdata-common/tools/ota-stage.

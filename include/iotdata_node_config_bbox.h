@@ -7,8 +7,8 @@
 // TWO GROUPS, SPLIT BY BACKEND rather than by role -- which is the same idea the mesh header uses
 // and a different cut of it:
 //
-//     IOTDATA_CONFIG_ENTRIES_BBOX(X)        what EVERY recorder has, whatever it writes to
-//     IOTDATA_CONFIG_ENTRIES_BBOX_FILE(X)   what only a FILE-backed one has
+//     IOTDATA_NODE_CONFIG_ENTRIES_BBOX(X)        what EVERY recorder has, whatever it writes to
+//     IOTDATA_NODE_CONFIG_ENTRIES_BBOX_FILE(X)   what only a FILE-backed one has
 //
 // The general group is the store itself: whether it runs, how much it keeps, and how long a record
 // may sit in RAM before it is written down. None of that depends on where "written down" goes, so a
@@ -22,10 +22,10 @@
 //
 //     #include "iotdata_node_config.h"            // the types
 //     #include "iotdata_node_config_bbox.h"       // the row blocks
-//     #define IOTDATA_CONFIG_ENTRIES(X)
+//     #define IOTDATA_NODE_CONFIG_ENTRIES(X)
 //         X(...this app's own...)
-//         IOTDATA_CONFIG_ENTRIES_BBOX(X)
-//         IOTDATA_CONFIG_ENTRIES_BBOX_FILE(X)
+//         IOTDATA_NODE_CONFIG_ENTRIES_BBOX(X)
+//         IOTDATA_NODE_CONFIG_ENTRIES_BBOX_FILE(X)
 //     #include "iotdata_node_config.h"            // expand
 //
 // 0x0A0 general, 0x0B0 file, and never reused.
@@ -40,53 +40,65 @@
 // with a disk, and it needs to be expressible without a second flag beside each number.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_BBOX_ENABLED
-#define IOTDATA_CONFIG_BBOX_ENABLED false
+#define IOTDATA_NODE_CFGID_BLACKBOX_ENABLED          0x0A0
+#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_RECORDS      0x0A1
+#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_SECONDS      0x0A2
+#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_BYTES        0x0A3
+
+#define IOTDATA_NODE_CFGID_BLACKBOX_FILE_DIRECTORY   0x0B0
+#define IOTDATA_NODE_CFGID_BLACKBOX_FILE_GENERATIONS 0x0B1
+
+#ifndef IOTDATA_NODE_CONFIG_BBOX_ENABLED
+#define IOTDATA_NODE_CONFIG_BBOX_ENABLED false
 #endif
-#ifndef IOTDATA_CONFIG_BBOX_MAX_RECORDS
-#define IOTDATA_CONFIG_BBOX_MAX_RECORDS 0u
+#ifndef IOTDATA_NODE_CONFIG_BBOX_MAX_RECORDS
+#define IOTDATA_NODE_CONFIG_BBOX_MAX_RECORDS 0u
 #endif
-#ifndef IOTDATA_CONFIG_BBOX_MAX_SECONDS
-#define IOTDATA_CONFIG_BBOX_MAX_SECONDS 0u /* 0 = WRITE-THROUGH: every record is persisted as it is made. */
+#ifndef IOTDATA_NODE_CONFIG_BBOX_MAX_SECONDS
+#define IOTDATA_NODE_CONFIG_BBOX_MAX_SECONDS 0u /* 0 = WRITE-THROUGH: every record is persisted as it is made. */
 #endif
-#ifndef IOTDATA_CONFIG_BBOX_MAX_BYTES
-#define IOTDATA_CONFIG_BBOX_MAX_BYTES 0u
+#ifndef IOTDATA_NODE_CONFIG_BBOX_MAX_BYTES
+#define IOTDATA_NODE_CONFIG_BBOX_MAX_BYTES 0u
 #endif
-#ifndef IOTDATA_CONFIG_BBOX_FILE_DIRECTORY
-#define IOTDATA_CONFIG_BBOX_FILE_DIRECTORY "."
+#ifndef IOTDATA_NODE_CONFIG_BBOX_FILE_DIRECTORY
+#define IOTDATA_NODE_CONFIG_BBOX_FILE_DIRECTORY "."
 #endif
-#ifndef IOTDATA_CONFIG_BBOX_FILE_GENERATIONS
-#define IOTDATA_CONFIG_BBOX_FILE_GENERATIONS 10u
+#ifndef IOTDATA_NODE_CONFIG_BBOX_FILE_GENERATIONS
+#define IOTDATA_NODE_CONFIG_BBOX_FILE_GENERATIONS 10u
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_BBOX_FILE_DIRECTORY_MAX
-#define IOTDATA_CONFIG_BBOX_FILE_DIRECTORY_MAX 127
+#ifndef IOTDATA_NODE_CONFIG_BBOX_FILE_DIRECTORY_MAX
+#define IOTDATA_NODE_CONFIG_BBOX_FILE_DIRECTORY_MAX 127
 #endif
 
-#ifndef IOTDATA_CONFIG_BBOX_NOTIFY
-static inline bool iotdata_config_bbox_changed(__attribute__((unused)) const iotdata_config_row_t *const row, __attribute__((unused)) const iotdata_config_value_t *const was,
-                                               __attribute__((unused)) const iotdata_config_info_t *const info) {
+#ifndef IOTDATA_NODE_CONFIG_BBOX_NOTIFY
+static inline bool iotdata_node_config_bbox_changed(__attribute__((unused)) const iotdata_node_config_row_t *const row, __attribute__((unused)) const iotdata_node_config_value_t *const was,
+                                                    __attribute__((unused)) const iotdata_node_config_info_t *const info) {
     return false;
 }
-#define IOTDATA_CONFIG_BBOX_NOTIFY iotdata_config_bbox_changed
+#define IOTDATA_NODE_CONFIG_BBOX_NOTIFY iotdata_node_config_bbox_changed
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* 0x0A0-0x0AF -- every recorder, whatever backend it writes to */
-#define IOTDATA_CONFIG_ENTRIES_BBOX(X) \
-    X(BLACKBOX_ENABLED, 0x0A0, BOOL, 0, 1, IOTDATA_CONFIG_BBOX_ENABLED, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "enabled") \
-    X(BLACKBOX_MAX_RECORDS, 0x0A1, U32, 0, 1000000, IOTDATA_CONFIG_BBOX_MAX_RECORDS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records to keep before the oldest goes (0 = unbounded)") \
-    X(BLACKBOX_MAX_SECONDS, 0x0A2, U32, 0, 31536000, IOTDATA_CONFIG_BBOX_MAX_SECONDS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records time to keep in RAM until flush/evict (0 = write through)") \
-    X(BLACKBOX_MAX_BYTES, 0x0A3, U32, 0, 0xFFFFFFFF, IOTDATA_CONFIG_BBOX_MAX_BYTES, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records bytes to keep in RAM before flush/evict (0 = unbounded)")
+#define IOTDATA_NODE_CONFIG_ENTRIES_BBOX(X) \
+    X(BLACKBOX_ENABLED, IOTDATA_NODE_CFGID_BLACKBOX_ENABLED, BOOL, 0, 1, IOTDATA_NODE_CONFIG_BBOX_ENABLED, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_BBOX_NOTIFY, "enabled") \
+    X(BLACKBOX_MAX_RECORDS, IOTDATA_NODE_CFGID_BLACKBOX_MAX_RECORDS, U32, 0, 1000000, IOTDATA_NODE_CONFIG_BBOX_MAX_RECORDS, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_BBOX_NOTIFY, \
+      "records to keep before the oldest goes (0 = unbounded)") \
+    X(BLACKBOX_MAX_SECONDS, IOTDATA_NODE_CFGID_BLACKBOX_MAX_SECONDS, U32, 0, 31536000, IOTDATA_NODE_CONFIG_BBOX_MAX_SECONDS, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_BBOX_NOTIFY, \
+      "records time to keep in RAM until flush/evict (0 = write through)") \
+    X(BLACKBOX_MAX_BYTES, IOTDATA_NODE_CFGID_BLACKBOX_MAX_BYTES, U32, 0, 0xFFFFFFFF, IOTDATA_NODE_CONFIG_BBOX_MAX_BYTES, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_BBOX_NOTIFY, \
+      "records bytes to keep in RAM before flush/evict (0 = unbounded)")
 
 /* 0x0B0-0x0BF -- only when the backend is a filesystem */
-#define IOTDATA_CONFIG_ENTRIES_BBOX_FILE(X) \
-    X(BLACKBOX_FILE_DIRECTORY, 0x0B0, STRING, 1, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY_MAX, IOTDATA_CONFIG_BBOX_FILE_DIRECTORY, IOTDATA_CONFIG_FLAG_LOCAL | IOTDATA_CONFIG_FLAG_REBOOT, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, \
-      "records file directory") \
-    X(BLACKBOX_FILE_GENERATIONS, 0x0B1, U8, 0, 255, IOTDATA_CONFIG_BBOX_FILE_GENERATIONS, IOTDATA_CONFIG_FLAG_NONE, NULL, IOTDATA_CONFIG_BBOX_NOTIFY, "records file generations (behind active) (0 = overwrite)")
+#define IOTDATA_NODE_CONFIG_ENTRIES_BBOX_FILE(X) \
+    X(BLACKBOX_FILE_DIRECTORY, IOTDATA_NODE_CFGID_BLACKBOX_FILE_DIRECTORY, STRING, 1, IOTDATA_NODE_CONFIG_BBOX_FILE_DIRECTORY_MAX, IOTDATA_NODE_CONFIG_BBOX_FILE_DIRECTORY, IOTDATA_NODE_CONFIG_FLAG_LOCAL | IOTDATA_NODE_CONFIG_FLAG_REBOOT, \
+      NULL, IOTDATA_NODE_CONFIG_BBOX_NOTIFY, "records file directory") \
+    X(BLACKBOX_FILE_GENERATIONS, IOTDATA_NODE_CFGID_BLACKBOX_FILE_GENERATIONS, U8, 0, 255, IOTDATA_NODE_CONFIG_BBOX_FILE_GENERATIONS, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_BBOX_NOTIFY, \
+      "records file generations (behind active) (0 = overwrite)")
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

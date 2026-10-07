@@ -69,13 +69,13 @@ static void test_first_boot_defaults(void) {
     block_a_t a;
     block_b_t b;
     iotdata_node_state_t s;
-    iotdata_state_init(&s, &ds, "state");
-    CHECK(iotdata_state_insert(&s, TAG_A, 1u, &a, sizeof(a), &A_DEFAULTS), "insert a");
-    CHECK(iotdata_state_insert(&s, TAG_B, 1u, &b, sizeof(b), NULL), "insert b");
-    CHECK(!iotdata_state_load(&s), "nothing to restore");
+    iotdata_node_state_init(&s, &ds, "state");
+    CHECK(iotdata_node_state_insert(&s, TAG_A, 1u, &a, sizeof(a), &A_DEFAULTS), "insert a");
+    CHECK(iotdata_node_state_insert(&s, TAG_B, 1u, &b, sizeof(b), NULL), "insert b");
+    CHECK(!iotdata_node_state_load(&s), "nothing to restore");
     CHECK(a.cycles == 7u && a.battery_mv == 4200u, "a took its defaults");
     CHECK(b.flags == 0u, "b zero-filled with no defaults given");
-    CHECK(!iotdata_state_insert(&s, TAG_C, 1u, &b, sizeof(b), NULL), "insert after load is refused");
+    CHECK(!iotdata_node_state_insert(&s, TAG_C, 1u, &b, sizeof(b), NULL), "insert after load is refused");
     datastore_close(&ds);
 }
 
@@ -88,23 +88,23 @@ static void test_round_trip(void) {
     block_a_t a = { 0 };
     block_b_t b = { 0 };
     iotdata_node_state_t s;
-    iotdata_state_init(&s, &ds, "state");
-    (void)iotdata_state_insert(&s, TAG_A, 1u, &a, sizeof(a), NULL);
-    (void)iotdata_state_insert(&s, TAG_B, 1u, &b, sizeof(b), NULL);
-    (void)iotdata_state_load(&s);
+    iotdata_node_state_init(&s, &ds, "state");
+    (void)iotdata_node_state_insert(&s, TAG_A, 1u, &a, sizeof(a), NULL);
+    (void)iotdata_node_state_insert(&s, TAG_B, 1u, &b, sizeof(b), NULL);
+    (void)iotdata_node_state_load(&s);
     a.cycles = 1234u;
     a.battery_mv = 3900u;
     b.flags = 0xA5u;
-    CHECK(iotdata_state_flush(&s), "flushed");
+    CHECK(iotdata_node_state_flush(&s), "flushed");
 
     /* a restart: same registrations, different memory */
     block_a_t a2 = { 0 };
     block_b_t b2 = { 0 };
     iotdata_node_state_t s2;
-    iotdata_state_init(&s2, &ds, "state");
-    (void)iotdata_state_insert(&s2, TAG_A, 1u, &a2, sizeof(a2), NULL);
-    (void)iotdata_state_insert(&s2, TAG_B, 1u, &b2, sizeof(b2), NULL);
-    CHECK(iotdata_state_load(&s2), "restored something");
+    iotdata_node_state_init(&s2, &ds, "state");
+    (void)iotdata_node_state_insert(&s2, TAG_A, 1u, &a2, sizeof(a2), NULL);
+    (void)iotdata_node_state_insert(&s2, TAG_B, 1u, &b2, sizeof(b2), NULL);
+    CHECK(iotdata_node_state_load(&s2), "restored something");
     CHECK(a2.cycles == 1234u && a2.battery_mv == 3900u, "a came back");
     CHECK(b2.flags == 0xA5u, "b came back");
     datastore_close(&ds);
@@ -119,14 +119,14 @@ static void test_registration_changes(void) {
     block_a_t a;
     block_b_t b;
     iotdata_node_state_t s;
-    iotdata_state_init(&s, &ds, "state");
-    (void)iotdata_state_insert(&s, TAG_A, 1u, &a, sizeof(a), NULL);
-    (void)iotdata_state_insert(&s, TAG_B, 1u, &b, sizeof(b), NULL);
-    (void)iotdata_state_load(&s); /* defaults everything: values have to be set AFTER it */
+    iotdata_node_state_init(&s, &ds, "state");
+    (void)iotdata_node_state_insert(&s, TAG_A, 1u, &a, sizeof(a), NULL);
+    (void)iotdata_node_state_insert(&s, TAG_B, 1u, &b, sizeof(b), NULL);
+    (void)iotdata_node_state_load(&s); /* defaults everything: values have to be set AFTER it */
     a.cycles = 99u;
     a.battery_mv = 3300u;
     b.flags = 0x11u;
-    CHECK(iotdata_state_flush(&s), "flushed both");
+    CHECK(iotdata_node_state_flush(&s), "flushed both");
 
     /* the new firmware: A unchanged, B GREW, C is new and was never persisted */
     typedef struct {
@@ -137,11 +137,11 @@ static void test_registration_changes(void) {
     block_b_grown_t b2 = { .flags = 0xEE, .added_field = 0xDEADBEEF };
     uint8_t c2 = 0x77u;
     iotdata_node_state_t s2;
-    iotdata_state_init(&s2, &ds, "state");
-    (void)iotdata_state_insert(&s2, TAG_A, 1u, &a2, sizeof(a2), NULL);
-    (void)iotdata_state_insert(&s2, TAG_B, 1u, &b2, sizeof(b2), NULL);
-    (void)iotdata_state_insert(&s2, TAG_C, 1u, &c2, sizeof(c2), NULL);
-    (void)iotdata_state_load(&s2);
+    iotdata_node_state_init(&s2, &ds, "state");
+    (void)iotdata_node_state_insert(&s2, TAG_A, 1u, &a2, sizeof(a2), NULL);
+    (void)iotdata_node_state_insert(&s2, TAG_B, 1u, &b2, sizeof(b2), NULL);
+    (void)iotdata_node_state_insert(&s2, TAG_C, 1u, &c2, sizeof(c2), NULL);
+    (void)iotdata_node_state_load(&s2);
 
     CHECK(a2.cycles == 99u && a2.battery_mv == 3300u, "the UNCHANGED block still came back");
     CHECK(b2.flags == 0u && b2.added_field == 0u, "the RESIZED block defaulted, not reinterpreted");
@@ -151,9 +151,9 @@ static void test_registration_changes(void) {
     /* and back again: a firmware that DROPS B must not disturb A */
     block_a_t a3 = { 0 };
     iotdata_node_state_t s3;
-    iotdata_state_init(&s3, &ds, "state");
-    (void)iotdata_state_insert(&s3, TAG_A, 1u, &a3, sizeof(a3), NULL);
-    (void)iotdata_state_load(&s3);
+    iotdata_node_state_init(&s3, &ds, "state");
+    (void)iotdata_node_state_insert(&s3, TAG_A, 1u, &a3, sizeof(a3), NULL);
+    (void)iotdata_node_state_load(&s3);
     CHECK(a3.cycles == 99u, "an unknown tag in the image is skipped, not fatal");
     datastore_close(&ds);
 }
@@ -166,16 +166,16 @@ static void test_tick_gating(void) {
 
     block_a_t a = { 0 };
     iotdata_node_state_t s;
-    iotdata_state_init(&s, &ds, "state");
-    (void)iotdata_state_insert(&s, TAG_A, 1u, &a, sizeof(a), NULL);
-    (void)iotdata_state_load(&s);
+    iotdata_node_state_init(&s, &ds, "state");
+    (void)iotdata_node_state_insert(&s, TAG_A, 1u, &a, sizeof(a), NULL);
+    (void)iotdata_node_state_load(&s);
 
-    CHECK(!iotdata_state_tick(&s, 1000u), "nothing dirty, nothing written");
-    iotdata_state_touch(&s);
-    CHECK(iotdata_state_tick(&s, 1000u), "first dirty tick writes");
-    iotdata_state_touch(&s);
-    CHECK(!iotdata_state_tick(&s, 1000u + IOTDATA_STATE_SAVE_MS - 1u), "too soon: held back");
-    CHECK(iotdata_state_tick(&s, 1000u + IOTDATA_STATE_SAVE_MS), "interval elapsed: written");
+    CHECK(!iotdata_node_state_tick(&s, 1000u), "nothing dirty, nothing written");
+    iotdata_node_state_touch(&s);
+    CHECK(iotdata_node_state_tick(&s, 1000u), "first dirty tick writes");
+    iotdata_node_state_touch(&s);
+    CHECK(!iotdata_node_state_tick(&s, 1000u + IOTDATA_NODE_STATE_SAVE_MS - 1u), "too soon: held back");
+    CHECK(iotdata_node_state_tick(&s, 1000u + IOTDATA_NODE_STATE_SAVE_MS), "interval elapsed: written");
     CHECK(!s.dirty, "clean after a write");
     datastore_close(&ds);
 }

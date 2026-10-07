@@ -20,9 +20,9 @@
    is the default, which is ENTRY alone -- the ids are what make telemetry readable, and the names
    are several times their size, the same trade STATUS makes by leaving the tables out of its
    default scope. */
-#define IOTDATA_VARIANT_WANT_ENTRY   (1u << IOTDATA_NODE_VARIANT_ENTRY)
-#define IOTDATA_VARIANT_WANT_NAMES   (1u << IOTDATA_NODE_VARIANT_NAMES)
-#define IOTDATA_VARIANT_WANT_DEFAULT IOTDATA_VARIANT_WANT_ENTRY
+#define IOTDATA_NODE_VARIANT_WANT_ENTRY   (1u << IOTDATA_NODE_VARIANT_ENTRY)
+#define IOTDATA_NODE_VARIANT_WANT_NAMES   (1u << IOTDATA_NODE_VARIANT_NAMES)
+#define IOTDATA_NODE_VARIANT_WANT_DEFAULT IOTDATA_NODE_VARIANT_WANT_ENTRY
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -41,11 +41,11 @@
  * pair's PRESENCE is the declaration that the variant exists, so dropping it would say something
  * different -- that the node does not define it.
  */
-static inline int iotdata_variant_pack(uint8_t *const buf, const size_t size, const uint8_t want, iotdata_partial_t *const p) {
+static inline int iotdata_node_variant_pack(uint8_t *const buf, const size_t size, const uint8_t want, iotdata_node_partial_t *const p) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    const uint8_t sel = (want == 0u) ? (uint8_t)IOTDATA_VARIANT_WANT_DEFAULT : want;
-    const bool entries = (sel & IOTDATA_VARIANT_WANT_ENTRY) != 0u, names = (sel & IOTDATA_VARIANT_WANT_NAMES) != 0u;
+    const uint8_t sel = (want == 0u) ? (uint8_t)IOTDATA_NODE_VARIANT_WANT_DEFAULT : want;
+    const bool entries = (sel & IOTDATA_NODE_VARIANT_WANT_ENTRY) != 0u, names = (sel & IOTDATA_NODE_VARIANT_WANT_NAMES) != 0u;
     uint8_t total = 0;
     for (uint8_t v = 0; v <= IOTDATA_VARIANT_MAX; v++)
         if (iotdata_get_variant(v) != NULL)
@@ -82,7 +82,7 @@ static inline int iotdata_variant_pack(uint8_t *const buf, const size_t size, co
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline int iotdata_variant_pack_none(uint8_t *const buf, const size_t size) {
+static inline int iotdata_node_variant_pack_none(uint8_t *const buf, const size_t size) {
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
     return kv.overflow ? -1 : (int)kv.len;

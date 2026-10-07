@@ -162,9 +162,9 @@ static inline uint8_t iotdata_node_reason_reset(void) {
 typedef struct {
     uint16_t key;  /* what the list is ordered by -- a station id */
     uint16_t slot; /* the table slot that entry lives in */
-} iotdata_order_t;
+} iotdata_node_order_t;
 
-static inline int iotdata_order_insert(iotdata_order_t *const ord, const int n, const int max, const uint16_t key, const uint16_t slot) {
+static inline int iotdata_node_order_insert(iotdata_node_order_t *const ord, const int n, const int max, const uint16_t key, const uint16_t slot) {
     if (ord == NULL || n >= max)
         return n;
     int pos = n;

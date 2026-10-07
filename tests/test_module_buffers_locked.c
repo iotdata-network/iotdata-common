@@ -39,10 +39,10 @@ static int fails = 0;
         } \
     } while (0)
 
-#define TEST_STRIDE  64u
-#define TEST_COUNT   8u
-#define THREADS      4
-#define ITERATIONS   20000
+#define TEST_STRIDE 64u
+#define TEST_COUNT  8u
+#define THREADS     4
+#define ITERATIONS  20000
 
 BUFFER_POOL_DECLARE(g_pool, TEST_COUNT, TEST_STRIDE);
 
@@ -85,13 +85,13 @@ static void *worker(void *arg) {
 
    Note what is NOT claimed: the queue guards each CALL, so a compound sequence still belongs to
    the caller. This producer needs no such sequence, which is why it needs no mutex. */
-#define HANDOFFS     5000
-#define QUEUE_DEPTH  4
-#define TAG_COMMAND  1
+#define HANDOFFS    5000
+#define QUEUE_DEPTH 4
+#define TAG_COMMAND 1
 
 BUFFER_QUEUE_DECLARE(g_queue, QUEUE_DEPTH);
 
-static uint32_t g_queued = 0, g_refused = 0; /* producer side */
+static uint32_t g_queued = 0, g_refused = 0;   /* producer side */
 static uint32_t g_received = 0, g_corrupt = 0; /* consumer side */
 static volatile bool g_producer_done = false;
 static bool g_consumer_gave_up = false;
@@ -118,7 +118,7 @@ static void *producer(__attribute__((unused)) void *arg) {
         if (buffer_queue_add(&g_queue, h, 0, 0, TAG_COMMAND, (uint32_t)i))
             g_queued++;
         else
-            g_refused++; /* queue full: told, not silently superseded */
+            g_refused++;          /* queue full: told, not silently superseded */
         buffer_unref(&g_pool, h); /* the queue took its own reference */
     }
     g_producer_done = true;

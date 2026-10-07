@@ -17,7 +17,7 @@
 // MODULES REGISTER THEIR OWN BLOCKS and keep their own memory:
 //
 //     static _RTC_DATA_STRUCT my_persist_t my_persist;   /* survives deep sleep by itself */
-//     iotdata_state_insert(s, MY_TAG, MY_VERSION, &my_persist, sizeof(my_persist), &MY_DEFAULTS);
+//     iotdata_node_state_insert(s, MY_TAG, MY_VERSION, &my_persist, sizeof(my_persist), &MY_DEFAULTS);
 //
 // so nothing owns a central struct that every module has to edit, and RTC placement stays a
 // per-module decision. The store holds pointers and serialises on demand.
@@ -35,9 +35,9 @@
 //
 // TWO WRITE PATTERNS, AND CONFLATING THEM IS A BUG:
 //
-//   iotdata_state_touch()  write-behind. The tick persists it later. For counters, cursors and
+//   iotdata_node_state_touch()  write-behind. The tick persists it later. For counters, cursors and
 //                          anything where coming back a little stale is merely lossy.
-//   iotdata_state_flush()  write-through, now. For anything where coming back BEHIND is unsafe.
+//   iotdata_node_state_flush()  write-through, now. For anything where coming back BEHIND is unsafe.
 //
 // A sequence number is the second kind, and the asymmetry is the whole reason this module exists:
 // GAPS ARE SAFE, REPEATS ARE NOT. A gap is how a receiver detects loss and the protocol says so;
@@ -51,24 +51,24 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_STATE_BLOCKS_MAX
-#define IOTDATA_STATE_BLOCKS_MAX 8
+#ifndef IOTDATA_NODE_STATE_BLOCKS_MAX
+#define IOTDATA_NODE_STATE_BLOCKS_MAX 8
 #endif
-#ifndef IOTDATA_STATE_BYTES_MAX
-#define IOTDATA_STATE_BYTES_MAX 512 /* the serialised image: every block plus its record headers */
+#ifndef IOTDATA_NODE_STATE_BYTES_MAX
+#define IOTDATA_NODE_STATE_BYTES_MAX 512 /* the serialised image: every block plus its record headers */
 #endif
-#ifndef IOTDATA_STATE_SAVE_MS
-#define IOTDATA_STATE_SAVE_MS 60000u /* how often the tick may write, when anything is dirty */
+#ifndef IOTDATA_NODE_STATE_SAVE_MS
+#define IOTDATA_NODE_STATE_SAVE_MS 60000u /* how often the tick may write, when anything is dirty */
 #endif
-#ifndef IOTDATA_STATE_KEY
-#define IOTDATA_STATE_KEY "state"
+#ifndef IOTDATA_NODE_STATE_KEY
+#define IOTDATA_NODE_STATE_KEY "state"
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_STATE_MAGIC   0x53544131UL /* "STA1" */
-#define IOTDATA_STATE_VERSION 1u
+#define IOTDATA_NODE_STATE_MAGIC   0x53544131UL /* "STA1" */
+#define IOTDATA_NODE_STATE_VERSION 1u
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -85,33 +85,33 @@ typedef struct {
 typedef struct {
     datastore_t *ds;
     const char *key;
-    iotdata_node_state_block_t block[IOTDATA_STATE_BLOCKS_MAX];
+    iotdata_node_state_block_t block[IOTDATA_NODE_STATE_BLOCKS_MAX];
     uint8_t count;
     bool dirty;
     bool loaded;
     uint32_t save_ms, save_last_ms;
     uint32_t stat_saved, stat_failed, stat_restored, stat_defaulted;
-    uint8_t _buffer[IOTDATA_STATE_BYTES_MAX];
+    uint8_t _buffer[IOTDATA_NODE_STATE_BYTES_MAX];
 } iotdata_node_state_t;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void iotdata_state_init(iotdata_node_state_t *const s, datastore_t *const ds, const char *const key) {
+static inline void iotdata_node_state_init(iotdata_node_state_t *const s, datastore_t *const ds, const char *const key) {
     *s = (iotdata_node_state_t){ 0 };
     s->ds = ds;
-    s->key = (key != NULL) ? key : IOTDATA_STATE_KEY;
-    s->save_ms = IOTDATA_STATE_SAVE_MS;
+    s->key = (key != NULL) ? key : IOTDATA_NODE_STATE_KEY;
+    s->save_ms = IOTDATA_NODE_STATE_SAVE_MS;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Register a block. Every insert must happen BEFORE iotdata_state_load(), because load is what
+/* Register a block. Every insert must happen BEFORE iotdata_node_state_load(), because load is what
    matches the persisted records against what is registered -- a block inserted afterwards has
    already missed its restore and is holding whatever the app left in it. */
-static inline bool iotdata_state_insert(iotdata_node_state_t *const s, const uint32_t tag, const uint16_t version, void *const data, const size_t size, const void *const defaults) {
-    if (s == NULL || data == NULL || size == 0 || size > IOTDATA_STATE_BYTES_MAX || s->count >= IOTDATA_STATE_BLOCKS_MAX || s->loaded)
+static inline bool iotdata_node_state_insert(iotdata_node_state_t *const s, const uint32_t tag, const uint16_t version, void *const data, const size_t size, const void *const defaults) {
+    if (s == NULL || data == NULL || size == 0 || size > IOTDATA_NODE_STATE_BYTES_MAX || s->count >= IOTDATA_NODE_STATE_BLOCKS_MAX || s->loaded)
         return false;
     for (uint8_t i = 0; i < s->count; i++)
         if (s->block[i].tag == tag)
@@ -123,7 +123,7 @@ static inline bool iotdata_state_insert(iotdata_node_state_t *const s, const uin
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void _iotdata_state_default(iotdata_node_state_block_t *const b) {
+static inline void _iotdata_node_state_default(iotdata_node_state_block_t *const b) {
     if (b->defaults != NULL)
         memcpy(b->data, b->defaults, b->size);
     else
@@ -134,10 +134,10 @@ static inline void _iotdata_state_default(iotdata_node_state_block_t *const b) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline bool iotdata_state_load(iotdata_node_state_t *const s) {
+static inline bool iotdata_node_state_load(iotdata_node_state_t *const s) {
     s->loaded = true;
     for (uint8_t i = 0; i < s->count; i++)
-        _iotdata_state_default(&s->block[i]);
+        _iotdata_node_state_default(&s->block[i]);
     if (s->ds == NULL)
         return false;
     uint8_t *const buf = s->_buffer;
@@ -145,7 +145,7 @@ static inline bool iotdata_state_load(iotdata_node_state_t *const s) {
     size_t len = 0;
     if (!datastore_read(s->ds, s->key, buf, buflen, &len) || len < 8u)
         return false;
-    if (((uint32_t)buf[0] << 24 | (uint32_t)buf[1] << 16 | (uint32_t)buf[2] << 8 | buf[3]) != IOTDATA_STATE_MAGIC || buf[4] != IOTDATA_STATE_VERSION)
+    if (((uint32_t)buf[0] << 24 | (uint32_t)buf[1] << 16 | (uint32_t)buf[2] << 8 | buf[3]) != IOTDATA_NODE_STATE_MAGIC || buf[4] != IOTDATA_NODE_STATE_VERSION)
         return false;
     size_t at = 8;
     while (at + 8u <= len) {
@@ -178,16 +178,16 @@ static inline bool iotdata_state_load(iotdata_node_state_t *const s) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline bool iotdata_state_flush(iotdata_node_state_t *const s) {
+static inline bool iotdata_node_state_flush(iotdata_node_state_t *const s) {
     if (s == NULL || s->ds == NULL)
         return false;
     uint8_t *const buf = s->_buffer;
     const size_t buflen = sizeof(s->_buffer);
-    buf[0] = (uint8_t)(IOTDATA_STATE_MAGIC >> 24);
-    buf[1] = (uint8_t)(IOTDATA_STATE_MAGIC >> 16);
-    buf[2] = (uint8_t)(IOTDATA_STATE_MAGIC >> 8);
-    buf[3] = (uint8_t)(IOTDATA_STATE_MAGIC & 0xFFu);
-    buf[4] = (uint8_t)IOTDATA_STATE_VERSION;
+    buf[0] = (uint8_t)(IOTDATA_NODE_STATE_MAGIC >> 24);
+    buf[1] = (uint8_t)(IOTDATA_NODE_STATE_MAGIC >> 16);
+    buf[2] = (uint8_t)(IOTDATA_NODE_STATE_MAGIC >> 8);
+    buf[3] = (uint8_t)(IOTDATA_NODE_STATE_MAGIC & 0xFFu);
+    buf[4] = (uint8_t)IOTDATA_NODE_STATE_VERSION;
     buf[5] = s->count;
     buf[6] = buf[7] = 0;
     size_t at = 8;
@@ -221,7 +221,7 @@ static inline bool iotdata_state_flush(iotdata_node_state_t *const s) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void iotdata_state_touch(iotdata_node_state_t *const s) {
+static inline void iotdata_node_state_touch(iotdata_node_state_t *const s) {
     if (s != NULL)
         s->dirty = true;
 }
@@ -229,13 +229,13 @@ static inline void iotdata_state_touch(iotdata_node_state_t *const s) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline bool iotdata_state_tick(iotdata_node_state_t *const s, const uint32_t now_ms) {
+static inline bool iotdata_node_state_tick(iotdata_node_state_t *const s, const uint32_t now_ms) {
     if (s == NULL || !s->dirty)
         return false;
     if (s->save_last_ms != 0u && (uint32_t)(now_ms - s->save_last_ms) < s->save_ms)
         return false;
     s->save_last_ms = now_ms;
-    return iotdata_state_flush(s);
+    return iotdata_node_state_flush(s);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

@@ -33,16 +33,16 @@ DEVICE       ?= /dev/ttyACM0
 # The stamp is regenerated on EVERY invocation, so a build can never inherit an earlier one's --
 # and because it is a build INPUT rather than something the compiler invents, it stays compatible
 # with CONFIG_APP_REPRODUCIBLE_BUILD, which leaves esp_app_desc_t.date/.time empty by design (pass
-# a fixed IOTDATA_VERSION_STAMP for a reproducible binary).
+# a fixed IOTDATA_NODE_VERSION_STAMP for a reproducible binary).
 VERSION      ?= 0.0.0
 VERSION_STAMP ?= $(shell date -u +%Y%m%d%H%M)
 
 BUILDER_DEFS ?=
 BUILDER_CFGS ?= build/build.ninja
 BUILDER_DEFS += \
-    -DIOTDATA_VERSION_APP=$(NAME) \
-    -DIOTDATA_VERSION_SEMVER=$(VERSION) \
-    -DIOTDATA_VERSION_STAMP=$(VERSION_STAMP)
+    -DIOTDATA_NODE_VERSION_APP=$(NAME) \
+    -DIOTDATA_NODE_VERSION_SEMVER=$(VERSION) \
+    -DIOTDATA_NODE_VERSION_STAMP=$(VERSION_STAMP)
 
 # The binary IDF actually writes, read out of CMakeLists.txt rather than guessed: project() names
 # do not follow from NAME (sds is sensor_depth_snow), and a TARGET that names a file which never
@@ -94,7 +94,7 @@ all: $(TARGET)
 # cache entries in a file and depending on it makes the option a real prerequisite in both
 # directions. The build stamp is excluded deliberately: it changes on every invocation, and
 # depending on it would rebuild the world every time.
-BUILDER_DEFS_TRACKED = $(filter-out -DIOTDATA_VERSION_STAMP=%,$(BUILDER_DEFS))
+BUILDER_DEFS_TRACKED = $(filter-out -DIOTDATA_NODE_VERSION_STAMP=%,$(BUILDER_DEFS))
 BUILDER_DEFS_FILE   ?= build/.builder-defs
 BUILDER_DEFS_DEP     =
 # Only once the project is CONFIGURED. The stamp lives in the build directory, and creating that

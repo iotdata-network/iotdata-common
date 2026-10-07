@@ -33,18 +33,8 @@ static void test_secs2str(void) {
         long sec;
         const char *want;
     } cases[] = {
-        { 0, "0" },
-        { 1, "1s" },
-        { 59, "59s" },
-        { 60, "1m" }, /* no trailing "0s": a skipped component, not a padded one */
-        { 501, "8m21s" },
-        { 3600, "1h" },
-        { 3661, "1h1m1s" },
-        { 86400, "1d" },
-        { 90061, "1d1h1m1s" },
-        { 86399, "23h59m59s" },
-        { -501, "-8m21s" },
-        { 999999999L, "11574d1h46m39s" },
+        { 0, "0" },       { 1, "1s" },    { 59, "59s" },      { 60, "1m" }, /* no trailing "0s": a skipped component, not a padded one */
+        { 501, "8m21s" }, { 3600, "1h" }, { 3661, "1h1m1s" }, { 86400, "1d" }, { 90061, "1d1h1m1s" }, { 86399, "23h59m59s" }, { -501, "-8m21s" }, { 999999999L, "11574d1h46m39s" },
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         char b[48];

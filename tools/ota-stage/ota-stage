@@ -77,9 +77,9 @@ function buildIdentity() {
         const out = {};
         if (fs.existsSync(p))
             for (const line of fs.readFileSync(p, 'utf8').split('\n'))
-                for (const k of ['IOTDATA_VERSION_APP', 'IOTDATA_VERSION_SEMVER', 'IOTDATA_VERSION_STAMP'])
+                for (const k of ['IOTDATA_NODE_VERSION_APP', 'IOTDATA_NODE_VERSION_SEMVER', 'IOTDATA_NODE_VERSION_STAMP'])
                     if (line.startsWith(k + ':') && line.includes('=')) out[k] = line.split('=', 2)[1].trim();
-        return { app: out.IOTDATA_VERSION_APP, semver: out.IOTDATA_VERSION_SEMVER, stamp: out.IOTDATA_VERSION_STAMP };
+        return { app: out.IOTDATA_NODE_VERSION_APP, semver: out.IOTDATA_NODE_VERSION_SEMVER, stamp: out.IOTDATA_NODE_VERSION_STAMP };
     }
     /* linux: a name=value file the link rule wrote beside the binary */
     const p = opt('stamp-file', APP + '.buildinfo');

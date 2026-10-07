@@ -121,7 +121,7 @@ static inline bool iotdata_node_status_scope_wants(const uint8_t scope, const ui
    INCLUDING the tables, which is the one way to ask for everything now that absent does not.
    Order matters: "peers" is tested before "mesh" only in that both may appear, and "stations"
    must not be swallowed by a substring of another word. */
-static inline uint8_t iotdata_status_scope_from_name(const char *const s) {
+static inline uint8_t iotdata_node_status_scope_from_name(const char *const s) {
     if (s == NULL)
         return 0;
     if (strcmp(s, "all") == 0)
@@ -149,14 +149,14 @@ static inline uint8_t iotdata_status_scope_from_name(const char *const s) {
    scope means the default -- which is right where a member name already said what the word was
    for, and wrong on a console, where an unrecognised trailing word is far likelier a mistyped
    command than a scope. */
-static inline bool iotdata_status_scope_is_name(const char *const s) {
-    return s != NULL && iotdata_status_scope_from_name(s) != 0;
+static inline bool iotdata_node_status_scope_is_name(const char *const s) {
+    return s != NULL && iotdata_node_status_scope_from_name(s) != 0;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline const char *iotdata_status_scope_name(const uint8_t scope, char *const out, const size_t size) {
+static inline const char *iotdata_node_status_scope_name(const uint8_t scope, char *const out, const size_t size) {
     if (out == NULL || size == 0)
         return "";
     static const struct {
@@ -185,7 +185,7 @@ static inline const char *iotdata_status_scope_name(const uint8_t scope, char *c
 // why, then how it feels.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void _iotdata_status_pack_node(iotdata_kvr_t *const kv, const iotdata_node_status_t *const s) {
+static inline void _iotdata_node_status_pack_node(iotdata_kvr_t *const kv, const iotdata_node_status_t *const s) {
     iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_UPTIME, s->uptime_s);
     if (s->has_lifetime)
         iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_LIFETIME, s->lifetime_s);
@@ -215,7 +215,7 @@ static inline void _iotdata_status_pack_node(iotdata_kvr_t *const kv, const iotd
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void _iotdata_status_pack_mesh(iotdata_kvr_t *const kv, const iotdata_node_status_mesh_t *const m) {
+static inline void _iotdata_node_status_pack_mesh(iotdata_kvr_t *const kv, const iotdata_node_status_mesh_t *const m) {
     if (!m->present)
         return;
     iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_MESH_STATE, m->state);
@@ -249,13 +249,13 @@ static inline void _iotdata_status_pack_mesh(iotdata_kvr_t *const kv, const iotd
  * group is correctly telling you it is in no mesh, and answering with the node group it was not
  * asked for would be worse than answering with nothing.
  */
-static inline int iotdata_status_pack(iotdata_kvr_t *const kv, const iotdata_node_status_t *const s, const uint8_t scope) {
+static inline int iotdata_node_status_pack(iotdata_kvr_t *const kv, const iotdata_node_status_t *const s, const uint8_t scope) {
     if (kv == NULL || s == NULL)
         return -1;
     if (iotdata_node_status_scope_wants(scope, IOTDATA_NODE_STATUS_SCOPE_NODE))
-        _iotdata_status_pack_node(kv, s);
+        _iotdata_node_status_pack_node(kv, s);
     if (iotdata_node_status_scope_wants(scope, IOTDATA_NODE_STATUS_SCOPE_MESH))
-        _iotdata_status_pack_mesh(kv, &s->mesh);
+        _iotdata_node_status_pack_mesh(kv, &s->mesh);
     return kv->overflow ? -1 : (int)kv->len;
 }
 
@@ -267,9 +267,9 @@ static inline int iotdata_status_pack(iotdata_kvr_t *const kv, const iotdata_nod
 // prettier form already has secs2str.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_STATUS_STR_MAX 200
+#define IOTDATA_NODE_STATUS_STR_MAX 200
 
-static inline const char *iotdata_status_str(const iotdata_node_status_t *const s, char *const out, const size_t size) {
+static inline const char *iotdata_node_status_str(const iotdata_node_status_t *const s, char *const out, const size_t size) {
     if (out == NULL || size == 0)
         return "";
     if (s == NULL) {
@@ -318,7 +318,7 @@ static inline const char *iotdata_status_str(const iotdata_node_status_t *const 
 //
 // The generic TLV renderer already turns a STATUS key into a number, which is right for a counter
 // and wrong for an enumeration: `reason: 3` and `mesh-state: 2` send a reader to the header file.
-// This is the same hook iotdata_version_json_key uses, for the same reason -- the keys that mean
+// This is the same hook iotdata_node_version_json_key uses, for the same reason -- the keys that mean
 // something other than their value.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -326,7 +326,7 @@ static inline const char *iotdata_status_str(const iotdata_node_status_t *const 
 
 #include <cjson/cJSON.h>
 
-static inline bool iotdata_status_json_key(cJSON *const obj, const char *const name, const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
+static inline bool iotdata_node_status_json_key(cJSON *const obj, const char *const name, const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
     if (vlen != 1)
         return false; /* both are u8; anything else is malformed, and the generic path can say so */
     switch (key) {

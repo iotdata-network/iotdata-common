@@ -12,12 +12,12 @@
 //
 //     #include "iotdata_node_config.h"     // the types, so a handler can be written
 //
-//     static bool on_channel(const iotdata_config_row_t *r, const iotdata_config_value_t *was,
-//                            const iotdata_config_info_t *i) { ... }
+//     static bool on_channel(const iotdata_node_config_row_t *r, const iotdata_node_config_value_t *was,
+//                            const iotdata_node_config_info_t *i) { ... }
 //
-//     #define IOTDATA_CONFIG_ENTRIES(X)
+//     #define IOTDATA_NODE_CONFIG_ENTRIES(X)
 //         X(SENSOR_TX_PERIOD_S, 0x001, U16, 10, 3600, 60, 0,                         NULL, NULL, "how often a reading goes out")
-//         X(LORA_CHANNEL,       0x002, U8,  0,  83,   23, IOTDATA_CONFIG_FLAG_REBOOT, NULL, on_channel, "the radio channel")
+//         X(LORA_CHANNEL,       0x002, U8,  0,  83,   23, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, on_channel, "the radio channel")
 //     #include "iotdata_node_config.h"     // now the table, the ids and the accessors
 //
 // (each X line ends with a backslash in real code; they are omitted here so this stays a comment)
@@ -28,7 +28,7 @@
 // it needs), which is what makes the compiled-in table affordable; an app that is not must put the
 // table in one file and reach it through accessors from the others.
 //
-// THE GENERATED NAMES ARE IOTDATA_CFG_*, not IOTDATA_CONFIG_*. The latter is already the
+// THE GENERATED NAMES ARE IOTDATA_NODE_CFG_*, not IOTDATA_NODE_CONFIG_*. The latter is already the
 // compile-time knob namespace (iotdata_config.h), and an entry named after one of those knobs --
 // LORA_CHANNEL, say -- would otherwise expand an existing #define into the middle of an enum.
 //
@@ -53,69 +53,69 @@
 // RECORD -- id(12) | type(4), one 16-bit word, and it is the SAME shape in the datastore and on the wire.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_CONFIG_TYPE_BOOL      0x0
-#define IOTDATA_CONFIG_TYPE_U8        0x1
-#define IOTDATA_CONFIG_TYPE_I8        0x2
-#define IOTDATA_CONFIG_TYPE_U16       0x3
-#define IOTDATA_CONFIG_TYPE_I16       0x4
-#define IOTDATA_CONFIG_TYPE_U32       0x5
-#define IOTDATA_CONFIG_TYPE_I32       0x6
-#define IOTDATA_CONFIG_TYPE_U64       0x7
-#define IOTDATA_CONFIG_TYPE_I64       0x8
-#define IOTDATA_CONFIG_TYPE_FLOAT     0x9
-#define IOTDATA_CONFIG_TYPE_STRING    0xA
-#define IOTDATA_CONFIG_TYPE_BLOB      0xB
+#define IOTDATA_NODE_CONFIG_TYPE_BOOL      0x0
+#define IOTDATA_NODE_CONFIG_TYPE_U8        0x1
+#define IOTDATA_NODE_CONFIG_TYPE_I8        0x2
+#define IOTDATA_NODE_CONFIG_TYPE_U16       0x3
+#define IOTDATA_NODE_CONFIG_TYPE_I16       0x4
+#define IOTDATA_NODE_CONFIG_TYPE_U32       0x5
+#define IOTDATA_NODE_CONFIG_TYPE_I32       0x6
+#define IOTDATA_NODE_CONFIG_TYPE_U64       0x7
+#define IOTDATA_NODE_CONFIG_TYPE_I64       0x8
+#define IOTDATA_NODE_CONFIG_TYPE_FLOAT     0x9
+#define IOTDATA_NODE_CONFIG_TYPE_STRING    0xA
+#define IOTDATA_NODE_CONFIG_TYPE_BLOB      0xB
 /* 0xC..0xF spare */
 
-#define IOTDATA_CONFIG_ID_MAX         0x0FFFu
-#define IOTDATA_CONFIG_ID_PROPRIETARY 0x0800u /* the upper half of the id space is the vendor's */
+#define IOTDATA_NODE_CONFIG_ID_MAX         0x0FFFu
+#define IOTDATA_NODE_CONFIG_ID_PROPRIETARY 0x0800u /* the upper half of the id space is the vendor's */
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline uint16_t iotdata_config_rec(const uint16_t id, const uint8_t type) {
-    return (uint16_t)(((id & IOTDATA_CONFIG_ID_MAX) << 4) | (type & 0x0Fu));
+static inline uint16_t iotdata_node_config_rec(const uint16_t id, const uint8_t type) {
+    return (uint16_t)(((id & IOTDATA_NODE_CONFIG_ID_MAX) << 4) | (type & 0x0Fu));
 }
-static inline uint16_t iotdata_config_rec_id(const uint16_t rec) {
+static inline uint16_t iotdata_node_config_rec_id(const uint16_t rec) {
     return (uint16_t)(rec >> 4);
 }
-static inline uint8_t iotdata_config_rec_type(const uint16_t rec) {
+static inline uint8_t iotdata_node_config_rec_type(const uint16_t rec) {
     return (uint8_t)(rec & 0x0Fu);
 }
 
-static inline uint8_t iotdata_config_type_size(const uint8_t type) {
+static inline uint8_t iotdata_node_config_type_size(const uint8_t type) {
     switch (type) {
-    case IOTDATA_CONFIG_TYPE_BOOL:
-    case IOTDATA_CONFIG_TYPE_U8:
-    case IOTDATA_CONFIG_TYPE_I8:
+    case IOTDATA_NODE_CONFIG_TYPE_BOOL:
+    case IOTDATA_NODE_CONFIG_TYPE_U8:
+    case IOTDATA_NODE_CONFIG_TYPE_I8:
         return 1;
-    case IOTDATA_CONFIG_TYPE_U16:
-    case IOTDATA_CONFIG_TYPE_I16:
+    case IOTDATA_NODE_CONFIG_TYPE_U16:
+    case IOTDATA_NODE_CONFIG_TYPE_I16:
         return 2;
-    case IOTDATA_CONFIG_TYPE_U32:
-    case IOTDATA_CONFIG_TYPE_I32:
-    case IOTDATA_CONFIG_TYPE_FLOAT:
+    case IOTDATA_NODE_CONFIG_TYPE_U32:
+    case IOTDATA_NODE_CONFIG_TYPE_I32:
+    case IOTDATA_NODE_CONFIG_TYPE_FLOAT:
         return 4;
-    case IOTDATA_CONFIG_TYPE_U64:
-    case IOTDATA_CONFIG_TYPE_I64:
+    case IOTDATA_NODE_CONFIG_TYPE_U64:
+    case IOTDATA_NODE_CONFIG_TYPE_I64:
         return 8;
     default:
         return 0; /* variable: string and blob */
     }
 }
 
-static inline bool iotdata_config_type_is_signed(const uint8_t type) {
-    return type == IOTDATA_CONFIG_TYPE_I8 || type == IOTDATA_CONFIG_TYPE_I16 || type == IOTDATA_CONFIG_TYPE_I32 || type == IOTDATA_CONFIG_TYPE_I64;
+static inline bool iotdata_node_config_type_is_signed(const uint8_t type) {
+    return type == IOTDATA_NODE_CONFIG_TYPE_I8 || type == IOTDATA_NODE_CONFIG_TYPE_I16 || type == IOTDATA_NODE_CONFIG_TYPE_I32 || type == IOTDATA_NODE_CONFIG_TYPE_I64;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // TABLE
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_CONFIG_FLAG_NONE     0x00u
-#define IOTDATA_CONFIG_FLAG_REBOOT   0x01u /* takes effect only after a restart                       */
-#define IOTDATA_CONFIG_FLAG_READONLY 0x02u /* reportable, not writable: a fact rather than a setting  */
-#define IOTDATA_CONFIG_FLAG_LOCAL    0x04u /* settable, but only from a local console/command line */
-#define IOTDATA_CONFIG_FLAG_STARTUP  0x08u /* read before the configuration, e.g. config file itself */
+#define IOTDATA_NODE_CONFIG_FLAG_NONE     0x00u
+#define IOTDATA_NODE_CONFIG_FLAG_REBOOT   0x01u /* takes effect only after a restart                       */
+#define IOTDATA_NODE_CONFIG_FLAG_READONLY 0x02u /* reportable, not writable: a fact rather than a setting  */
+#define IOTDATA_NODE_CONFIG_FLAG_LOCAL    0x04u /* settable, but only from a local console/command line */
+#define IOTDATA_NODE_CONFIG_FLAG_STARTUP  0x08u /* read before the configuration, e.g. config file itself */
 
 typedef union {
     bool b;
@@ -126,41 +126,41 @@ typedef union {
         const char *p;
         uint16_t len;
     } s;
-} iotdata_config_value_t;
+} iotdata_node_config_value_t;
 
-struct iotdata_config_row;
-struct iotdata_config_update;
+struct iotdata_node_config_row;
+struct iotdata_node_config_update;
 
 typedef struct {
     bool validation_only; /* a dry run: check, do not act                                   */
     bool version_changed; /* the persisted image was written by a different build           */
-} iotdata_config_info_t;
+} iotdata_node_config_info_t;
 
 /* Check one proposed value. NULL means "the standard check", which is the bounds. Runs on BOTH
    paths -- a value arriving typed over the air never parses, and must still be validated.
    It is handed the whole UPDATE, not just its own row, and that is what staging buys: "the minimum
    must not exceed the maximum" can only be checked once both proposed values are in hand. Use
-   iotdata_config_update_peek() to read another entry as it WILL BE, which is its staged value if
+   iotdata_node_config_update_peek() to read another entry as it WILL BE, which is its staged value if
    the same update touched it and its current one otherwise. `u` is NULL for a standalone check. */
-typedef bool (*iotdata_config_validate_fn)(const struct iotdata_config_row *row, const iotdata_config_value_t *proposed, const struct iotdata_config_update *u);
+typedef bool (*iotdata_node_config_validate_fn)(const struct iotdata_node_config_row *row, const iotdata_node_config_value_t *proposed, const struct iotdata_node_config_update *u);
 
 /* Told AFTER the whole set is committed and saved. Cannot veto -- that is what validate is for --
    and returns whether a reboot is needed to make it real. This is where a radio gets reconfigured.
    Separate from validate because they run on different paths and at different times: one may reject
    and must not act, the other may act and cannot reject. */
-typedef bool (*iotdata_config_notify_fn)(const struct iotdata_config_row *row, const iotdata_config_value_t *old, const iotdata_config_info_t *info);
+typedef bool (*iotdata_node_config_notify_fn)(const struct iotdata_node_config_row *row, const iotdata_node_config_value_t *old, const iotdata_node_config_info_t *info);
 
-typedef struct iotdata_config_row {
+typedef struct iotdata_node_config_row {
     uint16_t id;
     uint8_t type;
     uint8_t flags;
     const char *name;
-    iotdata_config_value_t min, max, dflt;
-    iotdata_config_validate_fn validate;
-    iotdata_config_notify_fn notify;
+    iotdata_node_config_value_t min, max, dflt;
+    iotdata_node_config_validate_fn validate;
+    iotdata_node_config_notify_fn notify;
     const char *help;
     uint16_t sidx; /* slot for STRING row */
-} iotdata_config_row_t;
+} iotdata_node_config_row_t;
 
 #endif /* IOTDATA_NODE_CONFIG_TYPES_H */
 
@@ -191,152 +191,153 @@ typedef struct iotdata_config_row {
 // BLOB is still refused: the same storage question with no caller to answer it.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#if defined(IOTDATA_CONFIG_ENTRIES) && !defined(IOTDATA_NODE_CONFIG_EXPANDED)
+#if defined(IOTDATA_NODE_CONFIG_ENTRIES) && !defined(IOTDATA_NODE_CONFIG_EXPANDED)
 #define IOTDATA_NODE_CONFIG_EXPANDED
 
 /* Bounds are always numeric -- a string's are its LENGTH -- so they need only the three families. */
-#define _CFG_B_BOOL(x)                                  { .u = (uint64_t)(x) }
-#define _CFG_B_U8(x)                                    { .u = (uint64_t)(x) }
-#define _CFG_B_U16(x)                                   { .u = (uint64_t)(x) }
-#define _CFG_B_U32(x)                                   { .u = (uint64_t)(x) }
-#define _CFG_B_U64(x)                                   { .u = (uint64_t)(x) }
-#define _CFG_B_I8(x)                                    { .i = (int64_t)(x) }
-#define _CFG_B_I16(x)                                   { .i = (int64_t)(x) }
-#define _CFG_B_I32(x)                                   { .i = (int64_t)(x) }
-#define _CFG_B_I64(x)                                   { .i = (int64_t)(x) }
-#define _CFG_B_FLOAT(x)                                 { .f = (float)(x) }
-#define _CFG_B_STRING(x)                                { .u = (uint64_t)(x) }
-#define _CFG_B_BLOB(x)                                  { .u = (uint64_t)(x) }
-#define _CFG_B(t, x)                                    _CFG_B_##t(x)
+#define _IOTDATA_NODE_CFG_B_BOOL(x)                                  { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_U8(x)                                    { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_U16(x)                                   { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_U32(x)                                   { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_U64(x)                                   { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_I8(x)                                    { .i = (int64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_I16(x)                                   { .i = (int64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_I32(x)                                   { .i = (int64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_I64(x)                                   { .i = (int64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_FLOAT(x)                                 { .f = (float)(x) }
+#define _IOTDATA_NODE_CFG_B_STRING(x)                                { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_B_BLOB(x)                                  { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_B(t, x)                                    _IOTDATA_NODE_CFG_B_##t(x)
 
-#define _CFG_D_BOOL(x)                                  { .b = (bool)(x) }
-#define _CFG_D_U8(x)                                    { .u = (uint64_t)(x) }
-#define _CFG_D_U16(x)                                   { .u = (uint64_t)(x) }
-#define _CFG_D_U32(x)                                   { .u = (uint64_t)(x) }
-#define _CFG_D_U64(x)                                   { .u = (uint64_t)(x) }
-#define _CFG_D_I8(x)                                    { .i = (int64_t)(x) }
-#define _CFG_D_I16(x)                                   { .i = (int64_t)(x) }
-#define _CFG_D_I32(x)                                   { .i = (int64_t)(x) }
-#define _CFG_D_I64(x)                                   { .i = (int64_t)(x) }
-#define _CFG_D_FLOAT(x)                                 { .f = (float)(x) }
-#define _CFG_D_STRING(x)                                { .s = { (x), 0 } }
-#define _CFG_D_BLOB(x)                                  { .s = { (x), 0 } }
-#define _CFG_D(t, x)                                    _CFG_D_##t(x)
+#define _IOTDATA_NODE_CFG_D_BOOL(x)                                  { .b = (bool)(x) }
+#define _IOTDATA_NODE_CFG_D_U8(x)                                    { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_D_U16(x)                                   { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_D_U32(x)                                   { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_D_U64(x)                                   { .u = (uint64_t)(x) }
+#define _IOTDATA_NODE_CFG_D_I8(x)                                    { .i = (int64_t)(x) }
+#define _IOTDATA_NODE_CFG_D_I16(x)                                   { .i = (int64_t)(x) }
+#define _IOTDATA_NODE_CFG_D_I32(x)                                   { .i = (int64_t)(x) }
+#define _IOTDATA_NODE_CFG_D_I64(x)                                   { .i = (int64_t)(x) }
+#define _IOTDATA_NODE_CFG_D_FLOAT(x)                                 { .f = (float)(x) }
+#define _IOTDATA_NODE_CFG_D_STRING(x)                                { .s = { (x), 0 } }
+#define _IOTDATA_NODE_CFG_D_BLOB(x)                                  { .s = { (x), 0 } }
+#define _IOTDATA_NODE_CFG_D(t, x)                                    _IOTDATA_NODE_CFG_D_##t(x)
 
-#define _CFG_ID(n, id, t, mn, mx, df, fl, va, no, hp)   IOTDATA_CFG_##n = (id),
-#define _CFG_TYPE(n, id, t, mn, mx, df, fl, va, no, hp) IOTDATA_CFG_##n##__TYPE = IOTDATA_CONFIG_TYPE_##t,
-#define _CFG_S_BOOL(a, b)
-#define _CFG_S_U8(a, b)
-#define _CFG_S_U16(a, b)
-#define _CFG_S_U32(a, b)
-#define _CFG_S_U64(a, b)
-#define _CFG_S_I8(a, b)
-#define _CFG_S_I16(a, b)
-#define _CFG_S_I32(a, b)
-#define _CFG_S_I64(a, b)
-#define _CFG_S_FLOAT(a, b)
-#define _CFG_S_BLOB(a, b)
+#define _IOTDATA_NODE_CFG_ID(n, id, t, mn, mx, df, fl, va, no, hp)   IOTDATA_NODE_CFG_##n = (id),
+#define _IOTDATA_NODE_CFG_TYPE(n, id, t, mn, mx, df, fl, va, no, hp) IOTDATA_NODE_CFG_##n##__TYPE = IOTDATA_NODE_CONFIG_TYPE_##t,
+#define _IOTDATA_NODE_CFG_S_BOOL(a, b)
+#define _IOTDATA_NODE_CFG_S_U8(a, b)
+#define _IOTDATA_NODE_CFG_S_U16(a, b)
+#define _IOTDATA_NODE_CFG_S_U32(a, b)
+#define _IOTDATA_NODE_CFG_S_U64(a, b)
+#define _IOTDATA_NODE_CFG_S_I8(a, b)
+#define _IOTDATA_NODE_CFG_S_I16(a, b)
+#define _IOTDATA_NODE_CFG_S_I32(a, b)
+#define _IOTDATA_NODE_CFG_S_I64(a, b)
+#define _IOTDATA_NODE_CFG_S_FLOAT(a, b)
+#define _IOTDATA_NODE_CFG_S_BLOB(a, b)
 
-#define _CFG_SIX_STRING(n, mx)                          IOTDATA_CFG_SIX_##n,
-#define _CFG_SIX_BOOL                                   _CFG_S_BOOL
-#define _CFG_SIX_U8                                     _CFG_S_U8
-#define _CFG_SIX_U16                                    _CFG_S_U16
-#define _CFG_SIX_U32                                    _CFG_S_U32
-#define _CFG_SIX_U64                                    _CFG_S_U64
-#define _CFG_SIX_I8                                     _CFG_S_I8
-#define _CFG_SIX_I16                                    _CFG_S_I16
-#define _CFG_SIX_I32                                    _CFG_S_I32
-#define _CFG_SIX_I64                                    _CFG_S_I64
-#define _CFG_SIX_FLOAT                                  _CFG_S_FLOAT
-#define _CFG_SIX_BLOB                                   _CFG_S_BLOB
-#define _CFG_SIX(n, id, t, mn, mx, df, fl, va, no, hp)  _CFG_SIX_##t(n, mx)
+#define _IOTDATA_NODE_CFG_SIX_STRING(n, mx)                         IOTDATA_NODE_CFG_SIX_##n,
+#define _IOTDATA_NODE_CFG_SIX_BOOL                                  _IOTDATA_NODE_CFG_S_BOOL
+#define _IOTDATA_NODE_CFG_SIX_U8                                    _IOTDATA_NODE_CFG_S_U8
+#define _IOTDATA_NODE_CFG_SIX_U16                                   _IOTDATA_NODE_CFG_S_U16
+#define _IOTDATA_NODE_CFG_SIX_U32                                   _IOTDATA_NODE_CFG_S_U32
+#define _IOTDATA_NODE_CFG_SIX_U64                                   _IOTDATA_NODE_CFG_S_U64
+#define _IOTDATA_NODE_CFG_SIX_I8                                    _IOTDATA_NODE_CFG_S_I8
+#define _IOTDATA_NODE_CFG_SIX_I16                                   _IOTDATA_NODE_CFG_S_I16
+#define _IOTDATA_NODE_CFG_SIX_I32                                   _IOTDATA_NODE_CFG_S_I32
+#define _IOTDATA_NODE_CFG_SIX_I64                                   _IOTDATA_NODE_CFG_S_I64
+#define _IOTDATA_NODE_CFG_SIX_FLOAT                                 _IOTDATA_NODE_CFG_S_FLOAT
+#define _IOTDATA_NODE_CFG_SIX_BLOB                                  _IOTDATA_NODE_CFG_S_BLOB
+#define _IOTDATA_NODE_CFG_SIX(n, id, t, mn, mx, df, fl, va, no, hp) _IOTDATA_NODE_CFG_SIX_##t(n, mx)
 
-#define _CFG_SST_STRING(n, mx)                          char n[(mx) + 1];
-#define _CFG_SST_BOOL                                   _CFG_S_BOOL
-#define _CFG_SST_U8                                     _CFG_S_U8
-#define _CFG_SST_U16                                    _CFG_S_U16
-#define _CFG_SST_U32                                    _CFG_S_U32
-#define _CFG_SST_U64                                    _CFG_S_U64
-#define _CFG_SST_I8                                     _CFG_S_I8
-#define _CFG_SST_I16                                    _CFG_S_I16
-#define _CFG_SST_I32                                    _CFG_S_I32
-#define _CFG_SST_I64                                    _CFG_S_I64
-#define _CFG_SST_FLOAT                                  _CFG_S_FLOAT
-#define _CFG_SST_BLOB                                   _CFG_S_BLOB
-#define _CFG_SST(n, id, t, mn, mx, df, fl, va, no, hp)  _CFG_SST_##t(n, mx)
+#define _IOTDATA_NODE_CFG_SST_STRING(n, mx)                         char n[(mx) + 1];
+#define _IOTDATA_NODE_CFG_SST_BOOL                                  _IOTDATA_NODE_CFG_S_BOOL
+#define _IOTDATA_NODE_CFG_SST_U8                                    _IOTDATA_NODE_CFG_S_U8
+#define _IOTDATA_NODE_CFG_SST_U16                                   _IOTDATA_NODE_CFG_S_U16
+#define _IOTDATA_NODE_CFG_SST_U32                                   _IOTDATA_NODE_CFG_S_U32
+#define _IOTDATA_NODE_CFG_SST_U64                                   _IOTDATA_NODE_CFG_S_U64
+#define _IOTDATA_NODE_CFG_SST_I8                                    _IOTDATA_NODE_CFG_S_I8
+#define _IOTDATA_NODE_CFG_SST_I16                                   _IOTDATA_NODE_CFG_S_I16
+#define _IOTDATA_NODE_CFG_SST_I32                                   _IOTDATA_NODE_CFG_S_I32
+#define _IOTDATA_NODE_CFG_SST_I64                                   _IOTDATA_NODE_CFG_S_I64
+#define _IOTDATA_NODE_CFG_SST_FLOAT                                 _IOTDATA_NODE_CFG_S_FLOAT
+#define _IOTDATA_NODE_CFG_SST_BLOB                                  _IOTDATA_NODE_CFG_S_BLOB
+#define _IOTDATA_NODE_CFG_SST(n, id, t, mn, mx, df, fl, va, no, hp) _IOTDATA_NODE_CFG_SST_##t(n, mx)
 
-#define _CFG_SPT_STRING(n, mx)                          _iotdata_config_strings.n,
-#define _CFG_SPT_BOOL                                   _CFG_S_BOOL
-#define _CFG_SPT_U8                                     _CFG_S_U8
-#define _CFG_SPT_U16                                    _CFG_S_U16
-#define _CFG_SPT_U32                                    _CFG_S_U32
-#define _CFG_SPT_U64                                    _CFG_S_U64
-#define _CFG_SPT_I8                                     _CFG_S_I8
-#define _CFG_SPT_I16                                    _CFG_S_I16
-#define _CFG_SPT_I32                                    _CFG_S_I32
-#define _CFG_SPT_I64                                    _CFG_S_I64
-#define _CFG_SPT_FLOAT                                  _CFG_S_FLOAT
-#define _CFG_SPT_BLOB                                   _CFG_S_BLOB
-#define _CFG_SPT(n, id, t, mn, mx, df, fl, va, no, hp)  _CFG_SPT_##t(n, mx)
+#define _IOTDATA_NODE_CFG_SPT_STRING(n, mx)                         _iotdata_node_config_strings.n,
+#define _IOTDATA_NODE_CFG_SPT_BOOL                                  _IOTDATA_NODE_CFG_S_BOOL
+#define _IOTDATA_NODE_CFG_SPT_U8                                    _IOTDATA_NODE_CFG_S_U8
+#define _IOTDATA_NODE_CFG_SPT_U16                                   _IOTDATA_NODE_CFG_S_U16
+#define _IOTDATA_NODE_CFG_SPT_U32                                   _IOTDATA_NODE_CFG_S_U32
+#define _IOTDATA_NODE_CFG_SPT_U64                                   _IOTDATA_NODE_CFG_S_U64
+#define _IOTDATA_NODE_CFG_SPT_I8                                    _IOTDATA_NODE_CFG_S_I8
+#define _IOTDATA_NODE_CFG_SPT_I16                                   _IOTDATA_NODE_CFG_S_I16
+#define _IOTDATA_NODE_CFG_SPT_I32                                   _IOTDATA_NODE_CFG_S_I32
+#define _IOTDATA_NODE_CFG_SPT_I64                                   _IOTDATA_NODE_CFG_S_I64
+#define _IOTDATA_NODE_CFG_SPT_FLOAT                                 _IOTDATA_NODE_CFG_S_FLOAT
+#define _IOTDATA_NODE_CFG_SPT_BLOB                                  _IOTDATA_NODE_CFG_S_BLOB
+#define _IOTDATA_NODE_CFG_SPT(n, id, t, mn, mx, df, fl, va, no, hp) _IOTDATA_NODE_CFG_SPT_##t(n, mx)
 
-#define _CFG_SI_STRING(n)                               IOTDATA_CFG_SIX_##n
-#define _CFG_SI_BOOL(n)                                 0
-#define _CFG_SI_U8(n)                                   0
-#define _CFG_SI_U16(n)                                  0
-#define _CFG_SI_U32(n)                                  0
-#define _CFG_SI_U64(n)                                  0
-#define _CFG_SI_I8(n)                                   0
-#define _CFG_SI_I16(n)                                  0
-#define _CFG_SI_I32(n)                                  0
-#define _CFG_SI_I64(n)                                  0
-#define _CFG_SI_FLOAT(n)                                0
-#define _CFG_SI_BLOB(n)                                 0
-#define _CFG_SI(n, t)                                   _CFG_SI_##t(n)
+#define _IOTDATA_NODE_CFG_SI_STRING(n)                              IOTDATA_NODE_CFG_SIX_##n
+#define _IOTDATA_NODE_CFG_SI_BOOL(n)                                0
+#define _IOTDATA_NODE_CFG_SI_U8(n)                                  0
+#define _IOTDATA_NODE_CFG_SI_U16(n)                                 0
+#define _IOTDATA_NODE_CFG_SI_U32(n)                                 0
+#define _IOTDATA_NODE_CFG_SI_U64(n)                                 0
+#define _IOTDATA_NODE_CFG_SI_I8(n)                                  0
+#define _IOTDATA_NODE_CFG_SI_I16(n)                                 0
+#define _IOTDATA_NODE_CFG_SI_I32(n)                                 0
+#define _IOTDATA_NODE_CFG_SI_I64(n)                                 0
+#define _IOTDATA_NODE_CFG_SI_FLOAT(n)                               0
+#define _IOTDATA_NODE_CFG_SI_BLOB(n)                                0
+#define _IOTDATA_NODE_CFG_SI(n, t)                                  _IOTDATA_NODE_CFG_SI_##t(n)
 
-#define _CFG_IX(n, id, t, mn, mx, df, fl, va, no, hp)   IOTDATA_CFG_IX_##n,
-#define _CFG_ROW(n, id, t, mn, mx, df, fl, va, no, hp)  { (id), IOTDATA_CONFIG_TYPE_##t, (fl), #n, _CFG_B(t, mn), _CFG_B(t, mx), _CFG_D(t, df), va, no, (hp), _CFG_SI(n, t) },
+#define _IOTDATA_NODE_CFG_IX(n, id, t, mn, mx, df, fl, va, no, hp)  IOTDATA_NODE_CFG_IX_##n,
+#define _IOTDATA_NODE_CFG_ROW(n, id, t, mn, mx, df, fl, va, no, hp) \
+    { (id), IOTDATA_NODE_CONFIG_TYPE_##t, (fl), #n, _IOTDATA_NODE_CFG_B(t, mn), _IOTDATA_NODE_CFG_B(t, mx), _IOTDATA_NODE_CFG_D(t, df), va, no, (hp), _IOTDATA_NODE_CFG_SI(n, t) },
 
-#define _CFG_CASE(n, id, t, mn, mx, df, fl, va, no, hp) case (id):
-__attribute__((unused)) static void _iotdata_config_ids_are_unique(const int x) {
+#define _IOTDATA_NODE_CFG_CASE(n, id, t, mn, mx, df, fl, va, no, hp) case (id):
+__attribute__((unused)) static void _iotdata_node_config_ids_are_unique(const int x) {
     switch (x) {
-        IOTDATA_CONFIG_ENTRIES(_CFG_CASE)
+        IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_CASE)
     default:
         break;
     }
 }
 
 enum {
-    IOTDATA_CONFIG_ENTRIES(_CFG_ID) _IOTDATA_CFG_ID_END
+    IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_ID) _IOTDATA_NODE_CFG_ID_END
 };
 enum {
-    IOTDATA_CONFIG_ENTRIES(_CFG_TYPE) _IOTDATA_CFG_TYPE_END
+    IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_TYPE) _IOTDATA_NODE_CFG_TYPE_END
 };
 enum {
-    IOTDATA_CONFIG_ENTRIES(_CFG_IX) IOTDATA_CFG_COUNT
+    IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_IX) IOTDATA_NODE_CFG_COUNT
 };
 enum {
-    IOTDATA_CONFIG_ENTRIES(_CFG_SIX) IOTDATA_CFG_STRING_COUNT
+    IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_SIX) IOTDATA_NODE_CFG_STRING_COUNT
 };
 
 /* One member per string row, each the length that row declared. All char arrays, so alignment is 1
    and sizeof is the exact sum -- this struct IS the aggregate cost, and it is readable in a map. */
 __attribute__((unused)) static struct {
-    IOTDATA_CONFIG_ENTRIES(_CFG_SST)
+    IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_SST)
     char _end[1]; /* a struct with no members is not C, and a table with no strings has none */
-} _iotdata_config_strings;
+} _iotdata_node_config_strings;
 
 /* One past the end, holding NULL. Sized that way so the initialiser is never empty either -- a
    table with no strings expands the entries to nothing and would otherwise leave `= { }`. */
-static char *const _iotdata_config_string_slot[IOTDATA_CFG_STRING_COUNT + 1] = { IOTDATA_CONFIG_ENTRIES(_CFG_SPT) NULL };
+static char *const _iotdata_node_config_string_slot[IOTDATA_NODE_CFG_STRING_COUNT + 1] = { IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_SPT) NULL };
 
-static const iotdata_config_row_t iotdata_config_table[IOTDATA_CFG_COUNT] = { IOTDATA_CONFIG_ENTRIES(_CFG_ROW) };
+static const iotdata_node_config_row_t iotdata_node_config_table[IOTDATA_NODE_CFG_COUNT] = { IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_ROW) };
 
 /* A string row's storage, and how much of it there is. The capacity is the row's own `max`, which
    is also what a write is validated against -- read from the table rather than kept twice. */
-static inline char *_iotdata_config_slot(const iotdata_config_row_t *const row) {
-    return (row->type == IOTDATA_CONFIG_TYPE_STRING) ? _iotdata_config_string_slot[row->sidx] : NULL;
+static inline char *_iotdata_node_config_slot(const iotdata_node_config_row_t *const row) {
+    return (row->type == IOTDATA_NODE_CONFIG_TYPE_STRING) ? _iotdata_node_config_string_slot[row->sidx] : NULL;
 }
-static inline uint16_t _iotdata_config_slot_cap(const iotdata_config_row_t *const row) {
+static inline uint16_t _iotdata_node_config_slot_cap(const iotdata_node_config_row_t *const row) {
     return (uint16_t)row->max.u;
 }
 
@@ -344,61 +345,61 @@ static inline uint16_t _iotdata_config_slot_cap(const iotdata_config_row_t *cons
 // TEXT
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline const char *_iotdata_config_type_name(const uint8_t t) {
+static inline const char *_iotdata_node_config_type_name(const uint8_t t) {
     switch (t) {
-    case IOTDATA_CONFIG_TYPE_BOOL:
+    case IOTDATA_NODE_CONFIG_TYPE_BOOL:
         return "bool";
-    case IOTDATA_CONFIG_TYPE_U8:
+    case IOTDATA_NODE_CONFIG_TYPE_U8:
         return "u8";
-    case IOTDATA_CONFIG_TYPE_I8:
+    case IOTDATA_NODE_CONFIG_TYPE_I8:
         return "i8";
-    case IOTDATA_CONFIG_TYPE_U16:
+    case IOTDATA_NODE_CONFIG_TYPE_U16:
         return "u16";
-    case IOTDATA_CONFIG_TYPE_I16:
+    case IOTDATA_NODE_CONFIG_TYPE_I16:
         return "i16";
-    case IOTDATA_CONFIG_TYPE_U32:
+    case IOTDATA_NODE_CONFIG_TYPE_U32:
         return "u32";
-    case IOTDATA_CONFIG_TYPE_I32:
+    case IOTDATA_NODE_CONFIG_TYPE_I32:
         return "i32";
-    case IOTDATA_CONFIG_TYPE_U64:
+    case IOTDATA_NODE_CONFIG_TYPE_U64:
         return "u64";
-    case IOTDATA_CONFIG_TYPE_I64:
+    case IOTDATA_NODE_CONFIG_TYPE_I64:
         return "i64";
-    case IOTDATA_CONFIG_TYPE_FLOAT:
+    case IOTDATA_NODE_CONFIG_TYPE_FLOAT:
         return "float";
-    case IOTDATA_CONFIG_TYPE_STRING:
+    case IOTDATA_NODE_CONFIG_TYPE_STRING:
         return "string";
-    case IOTDATA_CONFIG_TYPE_BLOB:
+    case IOTDATA_NODE_CONFIG_TYPE_BLOB:
         return "blob";
     default:
         return "?";
     }
 }
 
-static inline const char *_iotdata_config_fmt(const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, char *const out, const size_t size) {
-    if (row->type == IOTDATA_CONFIG_TYPE_STRING) /* quoted, so an empty one and a missing one differ on sight */
+static inline const char *_iotdata_node_config_fmt(const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v, char *const out, const size_t size) {
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_STRING) /* quoted, so an empty one and a missing one differ on sight */
         return snprintf_inline(out, size, "\"%s\"", (v->s.p != NULL) ? v->s.p : "");
-    if (row->type == IOTDATA_CONFIG_TYPE_BOOL)
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_BOOL)
         return snprintf_inline(out, size, "%s", v->b ? "true" : "false");
-    else if (row->type == IOTDATA_CONFIG_TYPE_FLOAT)
+    else if (row->type == IOTDATA_NODE_CONFIG_TYPE_FLOAT)
         return snprintf_inline(out, size, "%.3f", (double)v->f);
-    else if (iotdata_config_type_is_signed(row->type))
+    else if (iotdata_node_config_type_is_signed(row->type))
         return snprintf_inline(out, size, "%lld", (long long)v->i);
     else
         return snprintf_inline(out, size, "%llu", (unsigned long long)v->u);
 }
 
-static inline bool _iotdata_config_parse(const iotdata_config_row_t *const row, const char *const text, iotdata_config_value_t *const out) {
+static inline bool _iotdata_node_config_parse(const iotdata_node_config_row_t *const row, const char *const text, iotdata_node_config_value_t *const out) {
     char *end = NULL;
-    *out = (iotdata_config_value_t){ 0 };
-    if (row->type == IOTDATA_CONFIG_TYPE_STRING) {
+    *out = (iotdata_node_config_value_t){ 0 };
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_STRING) {
         /* BORROWED from the caller's argv, which is why the commit copies. The LENGTH is not
            checked here -- that is a bound, and staging is where a value meets its bounds. */
         out->s.p = text;
         out->s.len = (uint16_t)strlen(text);
         return true;
     }
-    if (row->type == IOTDATA_CONFIG_TYPE_BOOL) {
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_BOOL) {
         if (strcmp(text, "true") == 0 || strcmp(text, "on") == 0 || strcmp(text, "yes") == 0 || strcmp(text, "1") == 0)
             out->b = true;
         else if (strcmp(text, "false") == 0 || strcmp(text, "off") == 0 || strcmp(text, "no") == 0 || strcmp(text, "0") == 0)
@@ -407,9 +408,9 @@ static inline bool _iotdata_config_parse(const iotdata_config_row_t *const row, 
             return false;
         return true;
     }
-    if (row->type == IOTDATA_CONFIG_TYPE_FLOAT)
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_FLOAT)
         out->f = strtof(text, &end);
-    else if (iotdata_config_type_is_signed(row->type))
+    else if (iotdata_node_config_type_is_signed(row->type))
         out->i = (int64_t)strtoll(text, &end, 0);
     else if (text[0] == '-')
         return false; /* strtoull would wrap it into something enormous and comfortably in range */
@@ -427,20 +428,121 @@ static inline bool _iotdata_config_parse(const iotdata_config_row_t *const row, 
 // table is skipped and that entry defaults -- which is what makes a firmware change survivable.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_CONFIG_STORE_KEY
-#define IOTDATA_CONFIG_STORE_KEY "config"
+#ifndef IOTDATA_NODE_CONFIG_STORE_KEY
+#define IOTDATA_NODE_CONFIG_STORE_KEY "config"
 #endif
 /* Ten bytes covers the widest fixed record ([id|type] + u64); a string adds its own declared max
-   plus the length byte, and sizeof(_iotdata_config_strings) is exactly the sum of those maxima. */
-#define IOTDATA_CONFIG_IMAGE_MAX                        (IOTDATA_CFG_COUNT * 10u + sizeof(_iotdata_config_strings) + 4u)
+   plus the length byte, and sizeof(_iotdata_node_config_strings) is exactly the sum of those maxima. */
+#define IOTDATA_NODE_CONFIG_IMAGE_MAX                                (IOTDATA_NODE_CFG_COUNT * 10u + sizeof(_iotdata_node_config_strings) + 4u)
 
-/* INITIALISED TO THE DEFAULTS AT COMPILE TIME, not left in .bss for iotdata_config_defaults() to
+/* INITIALISED TO THE DEFAULTS AT COMPILE TIME, not left in .bss for iotdata_node_config_defaults() to
    fill. The two say the same thing, and the duplication is the point: a read that happens before
    anything has run -- from an init path ordered earlier than the load, say -- then returns the row's
    DEFAULT rather than zero. Zero is rarely a legal value for anything here and never says so; it
    reads as a plausible number and is acted on. The cost is these bytes moving from .bss to .data. */
-#define _CFG_DFLT(n, id, t, mn, mx, df, fl, va, no, hp) _CFG_D(t, df),
-static iotdata_config_value_t _iotdata_config_value[IOTDATA_CFG_COUNT] = { IOTDATA_CONFIG_ENTRIES(_CFG_DFLT) };
+#define _IOTDATA_NODE_CFG_DFLT(n, id, t, mn, mx, df, fl, va, no, hp) _IOTDATA_NODE_CFG_D(t, df),
+static iotdata_node_config_value_t _iotdata_node_config_value[IOTDATA_NODE_CFG_COUNT] = { IOTDATA_NODE_CONFIG_ENTRIES(_IOTDATA_NODE_CFG_DFLT) };
+
+/* THE X-MACRO HELPERS END HERE. They are expansion machinery, not interface: every one of them has
+   done its work by this line, and a header that leaves them defined pushes a hundred names into
+   every translation unit that includes it -- names short enough to collide with somebody else's.
+   _IOTDATA_NODE_CONFIG_IS is deliberately NOT undefined: the typed accessors expand it at the call
+   site, so it has to outlive this file. */
+#undef _IOTDATA_NODE_CFG_B
+#undef _IOTDATA_NODE_CFG_B_BLOB
+#undef _IOTDATA_NODE_CFG_B_BOOL
+#undef _IOTDATA_NODE_CFG_B_FLOAT
+#undef _IOTDATA_NODE_CFG_B_I16
+#undef _IOTDATA_NODE_CFG_B_I32
+#undef _IOTDATA_NODE_CFG_B_I64
+#undef _IOTDATA_NODE_CFG_B_I8
+#undef _IOTDATA_NODE_CFG_B_STRING
+#undef _IOTDATA_NODE_CFG_B_U16
+#undef _IOTDATA_NODE_CFG_B_U32
+#undef _IOTDATA_NODE_CFG_B_U64
+#undef _IOTDATA_NODE_CFG_B_U8
+#undef _IOTDATA_NODE_CFG_CASE
+#undef _IOTDATA_NODE_CFG_D
+#undef _IOTDATA_NODE_CFG_DFLT
+#undef _IOTDATA_NODE_CFG_D_BLOB
+#undef _IOTDATA_NODE_CFG_D_BOOL
+#undef _IOTDATA_NODE_CFG_D_FLOAT
+#undef _IOTDATA_NODE_CFG_D_I16
+#undef _IOTDATA_NODE_CFG_D_I32
+#undef _IOTDATA_NODE_CFG_D_I64
+#undef _IOTDATA_NODE_CFG_D_I8
+#undef _IOTDATA_NODE_CFG_D_STRING
+#undef _IOTDATA_NODE_CFG_D_U16
+#undef _IOTDATA_NODE_CFG_D_U32
+#undef _IOTDATA_NODE_CFG_D_U64
+#undef _IOTDATA_NODE_CFG_D_U8
+#undef _IOTDATA_NODE_CFG_ID
+#undef _IOTDATA_NODE_CFG_IX
+#undef _IOTDATA_NODE_CFG_ROW
+#undef _IOTDATA_NODE_CFG_SI
+#undef _IOTDATA_NODE_CFG_SIX
+#undef _IOTDATA_NODE_CFG_SIX_BLOB
+#undef _IOTDATA_NODE_CFG_SIX_BOOL
+#undef _IOTDATA_NODE_CFG_SIX_FLOAT
+#undef _IOTDATA_NODE_CFG_SIX_I16
+#undef _IOTDATA_NODE_CFG_SIX_I32
+#undef _IOTDATA_NODE_CFG_SIX_I64
+#undef _IOTDATA_NODE_CFG_SIX_I8
+#undef _IOTDATA_NODE_CFG_SIX_STRING
+#undef _IOTDATA_NODE_CFG_SIX_U16
+#undef _IOTDATA_NODE_CFG_SIX_U32
+#undef _IOTDATA_NODE_CFG_SIX_U64
+#undef _IOTDATA_NODE_CFG_SIX_U8
+#undef _IOTDATA_NODE_CFG_SI_BLOB
+#undef _IOTDATA_NODE_CFG_SI_BOOL
+#undef _IOTDATA_NODE_CFG_SI_FLOAT
+#undef _IOTDATA_NODE_CFG_SI_I16
+#undef _IOTDATA_NODE_CFG_SI_I32
+#undef _IOTDATA_NODE_CFG_SI_I64
+#undef _IOTDATA_NODE_CFG_SI_I8
+#undef _IOTDATA_NODE_CFG_SI_STRING
+#undef _IOTDATA_NODE_CFG_SI_U16
+#undef _IOTDATA_NODE_CFG_SI_U32
+#undef _IOTDATA_NODE_CFG_SI_U64
+#undef _IOTDATA_NODE_CFG_SI_U8
+#undef _IOTDATA_NODE_CFG_SPT
+#undef _IOTDATA_NODE_CFG_SPT_BLOB
+#undef _IOTDATA_NODE_CFG_SPT_BOOL
+#undef _IOTDATA_NODE_CFG_SPT_FLOAT
+#undef _IOTDATA_NODE_CFG_SPT_I16
+#undef _IOTDATA_NODE_CFG_SPT_I32
+#undef _IOTDATA_NODE_CFG_SPT_I64
+#undef _IOTDATA_NODE_CFG_SPT_I8
+#undef _IOTDATA_NODE_CFG_SPT_STRING
+#undef _IOTDATA_NODE_CFG_SPT_U16
+#undef _IOTDATA_NODE_CFG_SPT_U32
+#undef _IOTDATA_NODE_CFG_SPT_U64
+#undef _IOTDATA_NODE_CFG_SPT_U8
+#undef _IOTDATA_NODE_CFG_SST
+#undef _IOTDATA_NODE_CFG_SST_BLOB
+#undef _IOTDATA_NODE_CFG_SST_BOOL
+#undef _IOTDATA_NODE_CFG_SST_FLOAT
+#undef _IOTDATA_NODE_CFG_SST_I16
+#undef _IOTDATA_NODE_CFG_SST_I32
+#undef _IOTDATA_NODE_CFG_SST_I64
+#undef _IOTDATA_NODE_CFG_SST_I8
+#undef _IOTDATA_NODE_CFG_SST_STRING
+#undef _IOTDATA_NODE_CFG_SST_U16
+#undef _IOTDATA_NODE_CFG_SST_U32
+#undef _IOTDATA_NODE_CFG_SST_U64
+#undef _IOTDATA_NODE_CFG_SST_U8
+#undef _IOTDATA_NODE_CFG_S_BLOB
+#undef _IOTDATA_NODE_CFG_S_BOOL
+#undef _IOTDATA_NODE_CFG_S_FLOAT
+#undef _IOTDATA_NODE_CFG_S_I16
+#undef _IOTDATA_NODE_CFG_S_I32
+#undef _IOTDATA_NODE_CFG_S_I64
+#undef _IOTDATA_NODE_CFG_S_I8
+#undef _IOTDATA_NODE_CFG_S_U16
+#undef _IOTDATA_NODE_CFG_S_U32
+#undef _IOTDATA_NODE_CFG_S_U64
+#undef _IOTDATA_NODE_CFG_S_U8
+#undef _IOTDATA_NODE_CFG_TYPE
 
 /*
  * PINNED: stated on the command line, and so immutable for as long as this run lasts.
@@ -460,18 +562,18 @@ static iotdata_config_value_t _iotdata_config_value[IOTDATA_CFG_COUNT] = { IOTDA
  * pin is what this INVOCATION says and differs between two boxes running the same binary. Keeping
  * them apart is why `conf` can show "readonly" and "pinned" as the different facts they are.
  */
-static bool _iotdata_config_pinned[IOTDATA_CFG_COUNT];
+static bool _iotdata_node_config_pinned[IOTDATA_NODE_CFG_COUNT];
 
-static inline int iotdata_config_index(const uint16_t id) {
-    for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++)
-        if (iotdata_config_table[i].id == id)
+static inline int iotdata_node_config_index(const uint16_t id) {
+    for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++)
+        if (iotdata_node_config_table[i].id == id)
             return i;
     return -1;
 }
 
-static inline int iotdata_config_index_by_name(const char *const what) {
-    for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
-        const char *a = iotdata_config_table[i].name, *b = what;
+static inline int iotdata_node_config_index_by_name(const char *const what) {
+    for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++) {
+        const char *a = iotdata_node_config_table[i].name, *b = what;
         while (*a != '\0' && *b != '\0' && (((*a | 0x20) == (*b | 0x20)) || (*a == '_' && *b == '-')))
             a++, b++;
         if (*a == '\0' && *b == '\0')
@@ -493,77 +595,77 @@ static inline int iotdata_config_index_by_name(const char *const what) {
         else
             return -1; /* not a number either */
         id = id * (hex ? 16u : 10u) + v;
-        if (id > IOTDATA_CONFIG_ID_MAX)
+        if (id > IOTDATA_NODE_CONFIG_ID_MAX)
             return -1;
     }
-    return (digits > 0) ? iotdata_config_index((uint16_t)id) : -1;
+    return (digits > 0) ? iotdata_node_config_index((uint16_t)id) : -1;
 }
 
-static inline bool iotdata_config_pin(const uint16_t id) {
-    const int i = iotdata_config_index(id);
+static inline bool iotdata_node_config_pin(const uint16_t id) {
+    const int i = iotdata_node_config_index(id);
     if (i < 0)
         return false;
-    _iotdata_config_pinned[i] = true;
+    _iotdata_node_config_pinned[i] = true;
     return true;
 }
 
-static inline bool iotdata_config_is_pinned(const uint16_t id) {
-    const int i = iotdata_config_index(id);
-    return (i >= 0) && _iotdata_config_pinned[i];
+static inline bool iotdata_node_config_is_pinned(const uint16_t id) {
+    const int i = iotdata_node_config_index(id);
+    return (i >= 0) && _iotdata_node_config_pinned[i];
 }
 
-static inline const char *iotdata_config_refusal(const uint16_t id, const bool remote) {
-    const int i = iotdata_config_index(id);
+static inline const char *iotdata_node_config_refusal(const uint16_t id, const bool remote) {
+    const int i = iotdata_node_config_index(id);
     if (i < 0)
         return "not a setting this build has";
-    if (_iotdata_config_pinned[i])
+    if (_iotdata_node_config_pinned[i])
         return "pinned on the command line -- restart without that argument to change it";
-    if ((iotdata_config_table[i].flags & IOTDATA_CONFIG_FLAG_READONLY) != 0u)
+    if ((iotdata_node_config_table[i].flags & IOTDATA_NODE_CONFIG_FLAG_READONLY) != 0u)
         return "read-only: a fact about this node, not a setting";
-    if (remote && (iotdata_config_table[i].flags & IOTDATA_CONFIG_FLAG_LOCAL) != 0u)
+    if (remote && (iotdata_node_config_table[i].flags & IOTDATA_NODE_CONFIG_FLAG_LOCAL) != 0u)
         return "local-only: it cannot be written over the air";
     return NULL;
 }
 
-static inline const iotdata_config_row_t *iotdata_config_row(const uint16_t id) {
-    const int i = iotdata_config_index(id);
-    return (i < 0) ? NULL : &iotdata_config_table[i];
+static inline const iotdata_node_config_row_t *iotdata_node_config_row(const uint16_t id) {
+    const int i = iotdata_node_config_index(id);
+    return (i < 0) ? NULL : &iotdata_node_config_table[i];
 }
 
-static inline void _iotdata_config_string_set(const int i, const char *const src, const size_t len) {
-    const iotdata_config_row_t *const row = &iotdata_config_table[i];
-    char *const slot = _iotdata_config_slot(row);
+static inline void _iotdata_node_config_string_set(const int i, const char *const src, const size_t len) {
+    const iotdata_node_config_row_t *const row = &iotdata_node_config_table[i];
+    char *const slot = _iotdata_node_config_slot(row);
     if (slot != NULL) {
-        const size_t cap = _iotdata_config_slot_cap(row);
+        const size_t cap = _iotdata_node_config_slot_cap(row);
         const size_t n = (len < cap) ? len : cap;
         if (src != NULL && n > 0)
             memcpy(slot, src, n);
         slot[n] = '\0';
-        _iotdata_config_value[i].s.p = slot;
-        _iotdata_config_value[i].s.len = (uint16_t)n;
+        _iotdata_node_config_value[i].s.p = slot;
+        _iotdata_node_config_value[i].s.len = (uint16_t)n;
     }
 }
 
-static inline void iotdata_config_defaults(void) {
-    for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
-        _iotdata_config_value[i] = iotdata_config_table[i].dflt;
-        if (iotdata_config_table[i].type == IOTDATA_CONFIG_TYPE_STRING) {
-            const char *const d = iotdata_config_table[i].dflt.s.p;
-            _iotdata_config_string_set(i, d, (d != NULL) ? strlen(d) : 0u);
+static inline void iotdata_node_config_defaults(void) {
+    for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++) {
+        _iotdata_node_config_value[i] = iotdata_node_config_table[i].dflt;
+        if (iotdata_node_config_table[i].type == IOTDATA_NODE_CONFIG_TYPE_STRING) {
+            const char *const d = iotdata_node_config_table[i].dflt.s.p;
+            _iotdata_node_config_string_set(i, d, (d != NULL) ? strlen(d) : 0u);
         }
     }
 }
 
-static inline bool iotdata_config_validate(const iotdata_config_row_t *const row, const iotdata_config_value_t *const v, const struct iotdata_config_update *const u) {
+static inline bool iotdata_node_config_validate(const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v, const struct iotdata_node_config_update *const u) {
     if (row == NULL || v == NULL)
         return false;
     if (row->validate != NULL)
         return row->validate(row, v, u);
-    if (row->type == IOTDATA_CONFIG_TYPE_STRING) /* the bounds of a string are its LENGTH */
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_STRING) /* the bounds of a string are its LENGTH */
         return v->s.len >= row->min.u && v->s.len <= row->max.u;
-    if (iotdata_config_type_is_signed(row->type))
+    if (iotdata_node_config_type_is_signed(row->type))
         return v->i >= row->min.i && v->i <= row->max.i;
-    if (row->type == IOTDATA_CONFIG_TYPE_FLOAT)
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_FLOAT)
         return v->f >= row->min.f && v->f <= row->max.f;
     return v->u >= row->min.u && v->u <= row->max.u;
 }
@@ -572,30 +674,30 @@ static inline bool iotdata_config_validate(const iotdata_config_row_t *const row
 // READING
 //
 // Assert-style, and type-checked at COMPILE time: the id carries its type as a sibling enum, so
-// iotdata_config_u16(LORA_CHANNEL) on a u8 row is a build error rather than a silent widening.
+// iotdata_node_config_u16(LORA_CHANNEL) on a u8 row is a build error rather than a silent widening.
 // With a compiled-in table a missing id cannot happen, so there is no bool+out-param and no branch
 // at every call site that can never be taken.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define _IOTDATA_CONFIG_IS(n, want) ((void)sizeof(char[1 - 2 * !((int)(IOTDATA_CFG_##n##__TYPE) == (int)(want))]))
+#define _IOTDATA_NODE_CONFIG_IS(n, want) ((void)sizeof(char[1 - 2 * !((int)(IOTDATA_NODE_CFG_##n##__TYPE) == (int)(want))]))
 
-#define iotdata_config_bool(n)      (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_BOOL), _iotdata_config_value[IOTDATA_CFG_IX_##n].b)
-#define iotdata_config_u8(n)        (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_U8), (uint8_t)_iotdata_config_value[IOTDATA_CFG_IX_##n].u)
-#define iotdata_config_u16(n)       (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_U16), (uint16_t)_iotdata_config_value[IOTDATA_CFG_IX_##n].u)
-#define iotdata_config_u32(n)       (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_U32), (uint32_t)_iotdata_config_value[IOTDATA_CFG_IX_##n].u)
-#define iotdata_config_i8(n)        (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_I8), (int8_t)_iotdata_config_value[IOTDATA_CFG_IX_##n].i)
-#define iotdata_config_i16(n)       (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_I16), (int16_t)_iotdata_config_value[IOTDATA_CFG_IX_##n].i)
-#define iotdata_config_i32(n)       (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_I32), (int32_t)_iotdata_config_value[IOTDATA_CFG_IX_##n].i)
-#define iotdata_config_float(n)     (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_FLOAT), _iotdata_config_value[IOTDATA_CFG_IX_##n].f)
+#define iotdata_node_config_bool(n)      (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_BOOL), _iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].b)
+#define iotdata_node_config_u8(n)        (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_U8), (uint8_t)_iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].u)
+#define iotdata_node_config_u16(n)       (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_U16), (uint16_t)_iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].u)
+#define iotdata_node_config_u32(n)       (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_U32), (uint32_t)_iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].u)
+#define iotdata_node_config_i8(n)        (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_I8), (int8_t)_iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].i)
+#define iotdata_node_config_i16(n)       (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_I16), (int16_t)_iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].i)
+#define iotdata_node_config_i32(n)       (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_I32), (int32_t)_iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].i)
+#define iotdata_node_config_float(n)     (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_FLOAT), _iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].f)
 /* Always NUL-terminated and never NULL: a row that has never been written points at its own
    default, and one that has points at its slot. */
-#define iotdata_config_string(n)    (_IOTDATA_CONFIG_IS(n, IOTDATA_CONFIG_TYPE_STRING), (const char *)_iotdata_config_value[IOTDATA_CFG_IX_##n].s.p)
+#define iotdata_node_config_string(n)    (_IOTDATA_NODE_CONFIG_IS(n, IOTDATA_NODE_CONFIG_TYPE_STRING), (const char *)_iotdata_node_config_value[IOTDATA_NODE_CFG_IX_##n].s.p)
 
-static inline bool iotdata_config_get(const uint16_t id, iotdata_config_value_t *const out) {
-    const int i = iotdata_config_index(id);
+static inline bool iotdata_node_config_get(const uint16_t id, iotdata_node_config_value_t *const out) {
+    const int i = iotdata_node_config_index(id);
     if (i < 0 || out == NULL)
         return false;
-    *out = _iotdata_config_value[i];
+    *out = _iotdata_node_config_value[i];
     return true;
 }
 
@@ -618,7 +720,7 @@ static inline bool iotdata_config_get(const uint16_t id, iotdata_config_value_t 
 
 /* The image encoder, defined below: the commit saves before it announces, so that a handler which
    acts on a change can never be told about one that failed to persist. */
-static inline bool iotdata_config_save(datastore_t *ds);
+static inline bool iotdata_node_config_save(datastore_t *ds);
 
 /* WHERE A COMMIT PERSISTS TO, when the datastore blob is not the answer.
  *
@@ -631,57 +733,57 @@ static inline bool iotdata_config_save(datastore_t *ds);
    and cannot work it out afterwards: "differs from the default" is not the same question, and
    answering it instead sweeps up everything an operator put in their own file. By this point the
    update's `touched` has been narrowed to the rows that actually changed. */
-typedef bool (*iotdata_config_saver_fn)(const struct iotdata_config_update *u);
-static iotdata_config_saver_fn _iotdata_config_saver = NULL;
-static inline void iotdata_config_saver_attach(const iotdata_config_saver_fn fn) {
-    _iotdata_config_saver = fn;
+typedef bool (*iotdata_node_config_saver_fn)(const struct iotdata_node_config_update *u);
+static iotdata_node_config_saver_fn _iotdata_node_config_saver = NULL;
+static inline void iotdata_node_config_saver_attach(const iotdata_node_config_saver_fn fn) {
+    _iotdata_node_config_saver = fn;
 }
 
 /* Does a commit have anywhere to put it? EITHER sink counts, which is the point of there being two:
    a node persists through its datastore and a host through a file of its own, and something that
    only asked about the datastore would tell a host its writes were being thrown away. */
-static inline bool iotdata_config_persists(const datastore_t *const ds) {
-    return (_iotdata_config_saver != NULL) || (ds != NULL);
+static inline bool iotdata_node_config_persists(const datastore_t *const ds) {
+    return (_iotdata_node_config_saver != NULL) || (ds != NULL);
 }
 
-typedef struct iotdata_config_update {
-    iotdata_config_value_t staged[IOTDATA_CFG_COUNT];
-    bool touched[IOTDATA_CFG_COUNT];
+typedef struct iotdata_node_config_update {
+    iotdata_node_config_value_t staged[IOTDATA_NODE_CFG_COUNT];
+    bool touched[IOTDATA_NODE_CFG_COUNT];
     bool rejected;
     bool remote;
     uint8_t count;
-} iotdata_config_update_t;
+} iotdata_node_config_update_t;
 
-static inline bool iotdata_config_update_peek(const struct iotdata_config_update *const u, const uint16_t id, iotdata_config_value_t *const out) {
-    const int i = iotdata_config_index(id);
+static inline bool iotdata_node_config_update_peek(const struct iotdata_node_config_update *const u, const uint16_t id, iotdata_node_config_value_t *const out) {
+    const int i = iotdata_node_config_index(id);
     if (i < 0 || out == NULL)
         return false;
-    *out = (u != NULL && u->touched[i]) ? u->staged[i] : _iotdata_config_value[i];
+    *out = (u != NULL && u->touched[i]) ? u->staged[i] : _iotdata_node_config_value[i];
     return true;
 }
 
-static inline void iotdata_config_update_begin(iotdata_config_update_t *const u, bool remote) {
+static inline void iotdata_node_config_update_begin(iotdata_node_config_update_t *const u, bool remote) {
     if (u != NULL)
-        *u = (iotdata_config_update_t){ 0 };
+        *u = (iotdata_node_config_update_t){ 0 };
     if (remote && u != NULL)
         u->remote = true;
 }
 
-static inline bool iotdata_config_update_stage(iotdata_config_update_t *const u, const uint16_t id, const iotdata_config_value_t *const v) {
+static inline bool iotdata_node_config_update_stage(iotdata_node_config_update_t *const u, const uint16_t id, const iotdata_node_config_value_t *const v) {
     if (u == NULL || v == NULL)
         return false;
-    const int i = iotdata_config_index(id);
+    const int i = iotdata_node_config_index(id);
     /* staged FIRST, then validated, so a cross-entry check sees this value too */
     const bool was_touched = (i >= 0) && u->touched[i];
-    iotdata_config_value_t was = { 0 };
+    iotdata_node_config_value_t was = { 0 };
     if (i >= 0) {
         was = u->staged[i];
         u->touched[i] = true;
         u->staged[i] = *v;
     }
-    const uint8_t refuse = (uint8_t)(IOTDATA_CONFIG_FLAG_READONLY | (u->remote ? IOTDATA_CONFIG_FLAG_LOCAL : 0u));
+    const uint8_t refuse = (uint8_t)(IOTDATA_NODE_CONFIG_FLAG_READONLY | (u->remote ? IOTDATA_NODE_CONFIG_FLAG_LOCAL : 0u));
     /* pinned is checked beside the flags and not among them: same refusal, different authority */
-    if (i < 0 || _iotdata_config_pinned[i] || (iotdata_config_table[i].flags & refuse) != 0u || !iotdata_config_validate(&iotdata_config_table[i], v, u)) {
+    if (i < 0 || _iotdata_node_config_pinned[i] || (iotdata_node_config_table[i].flags & refuse) != 0u || !iotdata_node_config_validate(&iotdata_node_config_table[i], v, u)) {
         if (i >= 0) {
             u->touched[i] = was_touched;
             u->staged[i] = was;
@@ -696,34 +798,34 @@ static inline bool iotdata_config_update_stage(iotdata_config_update_t *const u,
 
 /* Everything staged, in one step: commit to the cache, write the image, then tell the handlers.
    Returns false if anything was rejected, in which case NOTHING was applied. */
-static inline bool iotdata_config_update_commit(iotdata_config_update_t *const u, datastore_t *const ds, bool *const reboot_out) {
+static inline bool iotdata_node_config_update_commit(iotdata_node_config_update_t *const u, datastore_t *const ds, bool *const reboot_out) {
     if (u == NULL || u->rejected)
         return false;
-    static iotdata_config_value_t was[IOTDATA_CFG_COUNT]; // XXX
+    static iotdata_node_config_value_t was[IOTDATA_NODE_CFG_COUNT]; // XXX
     bool changed = false;
     /* `touched` is narrowed here from "the update named it" to "and it actually moved", which is
        what the announce loop below then reads. A string needs this because its slot is its home:
        the pointer never moves, so `was` cannot be compared against the new value afterwards -- the
        old bytes are gone the moment the slot is overwritten. Deciding it here, while both are still
        in hand, is the only place the comparison is honest. */
-    for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
-        was[i] = _iotdata_config_value[i];
+    for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++) {
+        was[i] = _iotdata_node_config_value[i];
         if (u->touched[i]) {
-            if (iotdata_config_table[i].type == IOTDATA_CONFIG_TYPE_STRING) {
+            if (iotdata_node_config_table[i].type == IOTDATA_NODE_CONFIG_TYPE_STRING) {
                 /* A STAGED STRING IS BORROWED: it points at the caller's buffer -- the console's argv,
                 a decoded TLV, a line off a config file. Staging one and committing it later would be
                 a use-after-free; every path commits inside the same call, and this copy is what ends
                 the borrow. */
-                u->touched[i] = !((_iotdata_config_value[i].s.len == u->staged[i].s.len) && _iotdata_config_value[i].s.p != NULL && u->staged[i].s.p != NULL &&
-                                  memcmp(_iotdata_config_value[i].s.p, u->staged[i].s.p, _iotdata_config_value[i].s.len) == 0);
+                u->touched[i] = !((_iotdata_node_config_value[i].s.len == u->staged[i].s.len) && _iotdata_node_config_value[i].s.p != NULL && u->staged[i].s.p != NULL &&
+                                  memcmp(_iotdata_node_config_value[i].s.p, u->staged[i].s.p, _iotdata_node_config_value[i].s.len) == 0);
                 if (u->touched[i]) {
-                    _iotdata_config_string_set(i, u->staged[i].s.p, u->staged[i].s.len);
+                    _iotdata_node_config_string_set(i, u->staged[i].s.p, u->staged[i].s.len);
                     changed = true;
                 }
             } else {
                 u->touched[i] = (memcmp(&was[i], &u->staged[i], sizeof(was[i])) != 0);
                 if (u->touched[i]) {
-                    _iotdata_config_value[i] = u->staged[i];
+                    _iotdata_node_config_value[i] = u->staged[i];
                     changed = true;
                 }
             }
@@ -731,17 +833,17 @@ static inline bool iotdata_config_update_commit(iotdata_config_update_t *const u
     }
     if (!changed)
         return true; /* accepted, and nothing to save or announce */
-    if (_iotdata_config_saver != NULL)
-        (void)_iotdata_config_saver(u);
+    if (_iotdata_node_config_saver != NULL)
+        (void)_iotdata_node_config_saver(u);
     else
-        (void)iotdata_config_save(ds);
-    const iotdata_config_info_t info = { .validation_only = false, .version_changed = false };
+        (void)iotdata_node_config_save(ds);
+    const iotdata_node_config_info_t info = { .validation_only = false, .version_changed = false };
     bool reboot = false;
-    for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
+    for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++) {
         if (u->touched[i]) { /* narrowed above to "named AND moved" */
-            if ((iotdata_config_table[i].flags & IOTDATA_CONFIG_FLAG_REBOOT) != 0u)
+            if ((iotdata_node_config_table[i].flags & IOTDATA_NODE_CONFIG_FLAG_REBOOT) != 0u)
                 reboot = true;
-            if (iotdata_config_table[i].notify != NULL && iotdata_config_table[i].notify(&iotdata_config_table[i], &was[i], &info))
+            if (iotdata_node_config_table[i].notify != NULL && iotdata_node_config_table[i].notify(&iotdata_node_config_table[i], &was[i], &info))
                 reboot = true;
         }
     }
@@ -754,25 +856,25 @@ static inline bool iotdata_config_update_commit(iotdata_config_update_t *const u
 // THE IMAGE: one encoder for the datastore and the wire
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline size_t iotdata_config_record_read(const uint8_t *const buf, const size_t len, uint16_t *const id_out, int *const index_out, iotdata_config_value_t *const val_out) {
+static inline size_t iotdata_node_config_record_read(const uint8_t *const buf, const size_t len, uint16_t *const id_out, int *const index_out, iotdata_node_config_value_t *const val_out) {
     if (index_out != NULL)
         *index_out = -1;
     if (buf == NULL || len < 3u)
         return 0;
     const uint16_t rec = (uint16_t)(((uint16_t)buf[0] << 8) | buf[1]);
-    const uint8_t type = iotdata_config_rec_type(rec), w = iotdata_config_type_size(type);
-    const uint16_t id = iotdata_config_rec_id(rec);
+    const uint8_t type = iotdata_node_config_rec_type(rec), w = iotdata_node_config_type_size(type);
+    const uint16_t id = iotdata_node_config_rec_id(rec);
     if (id_out != NULL)
         *id_out = id;
     /* A string is skippable by a build that has never heard of this id, which is the whole reason
        the length is on the wire and not only in the table. */
-    if (type == IOTDATA_CONFIG_TYPE_STRING) {
+    if (type == IOTDATA_NODE_CONFIG_TYPE_STRING) {
         const size_t n = buf[2];
         if (len < 3u + n)
             return 0; /* truncated: stop rather than guess where the next record begins */
-        const int si = iotdata_config_index(id);
-        if (si >= 0 && iotdata_config_table[si].type == type && val_out != NULL) {
-            *val_out = (iotdata_config_value_t){ 0 };
+        const int si = iotdata_node_config_index(id);
+        if (si >= 0 && iotdata_node_config_table[si].type == type && val_out != NULL) {
+            *val_out = (iotdata_node_config_value_t){ 0 };
             val_out->s.p = (const char *)&buf[3]; /* BORROWED from the caller's buffer */
             val_out->s.len = (uint16_t)n;
             if (index_out != NULL)
@@ -782,19 +884,19 @@ static inline size_t iotdata_config_record_read(const uint8_t *const buf, const 
     }
     if (w == 0 || len < (size_t)(2u + w))
         return 0; /* unreadable: stop rather than guess where the next record begins */
-    const int i = iotdata_config_index(id);
-    if (i >= 0 && iotdata_config_table[i].type == type && val_out != NULL) {
+    const int i = iotdata_node_config_index(id);
+    if (i >= 0 && iotdata_node_config_table[i].type == type && val_out != NULL) {
         uint64_t raw = 0;
         for (uint8_t b = 0; b < w; b++)
             raw = (raw << 8) | buf[2u + b];
-        *val_out = (iotdata_config_value_t){ 0 };
-        if (type == IOTDATA_CONFIG_TYPE_FLOAT) {
+        *val_out = (iotdata_node_config_value_t){ 0 };
+        if (type == IOTDATA_NODE_CONFIG_TYPE_FLOAT) {
             const uint32_t bits = (uint32_t)raw;
             memcpy(&val_out->f, &bits, sizeof(float));
-        } else if (iotdata_config_type_is_signed(type)) {
+        } else if (iotdata_node_config_type_is_signed(type)) {
             const uint8_t shift = (uint8_t)(64u - 8u * w);
             val_out->i = (int64_t)(raw << shift) >> shift; /* sign-extend */
-        } else if (type == IOTDATA_CONFIG_TYPE_BOOL)
+        } else if (type == IOTDATA_NODE_CONFIG_TYPE_BOOL)
             val_out->b = (raw != 0u);
         else
             val_out->u = raw;
@@ -806,46 +908,46 @@ static inline size_t iotdata_config_record_read(const uint8_t *const buf, const 
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline size_t iotdata_config_decode(const uint8_t *const buf, const size_t len) {
+static inline size_t iotdata_node_config_decode(const uint8_t *const buf, const size_t len) {
     uint16_t id = 0;
     int i = -1;
-    iotdata_config_value_t v;
-    const size_t n = iotdata_config_record_read(buf, len, &id, &i, &v);
+    iotdata_node_config_value_t v;
+    const size_t n = iotdata_node_config_record_read(buf, len, &id, &i, &v);
     if (n > 0 && i >= 0)
-        _iotdata_config_value[i] = v;
+        _iotdata_node_config_value[i] = v;
     return n;
 }
 
 /* Append one entry as [id|type][value], big-endian, the same shape the TLV carries. Returns the
    bytes written, or 0 if it does not fit. */
-static inline size_t iotdata_config_encode(const int i, uint8_t *const buf, const size_t size) {
-    if (i < 0 || i >= (int)IOTDATA_CFG_COUNT || buf == NULL)
+static inline size_t iotdata_node_config_encode(const int i, uint8_t *const buf, const size_t size) {
+    if (i < 0 || i >= (int)IOTDATA_NODE_CFG_COUNT || buf == NULL)
         return 0;
-    const iotdata_config_row_t *const row = &iotdata_config_table[i];
-    const uint16_t rec = iotdata_config_rec(row->id, row->type);
+    const iotdata_node_config_row_t *const row = &iotdata_node_config_table[i];
+    const uint16_t rec = iotdata_node_config_rec(row->id, row->type);
     /* A STRING carries its own length, because it has to: [id|type][len][bytes]. A fixed-width type
        does not, because the type already said. The 255 ceiling is the length byte's, which is also
        why a row may not declare a max above it. */
-    if (row->type == IOTDATA_CONFIG_TYPE_STRING) {
-        const uint16_t n = _iotdata_config_value[i].s.len;
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_STRING) {
+        const uint16_t n = _iotdata_node_config_value[i].s.len;
         if (n > 255u || (size_t)(3u + n) > size)
             return 0;
         buf[0] = (uint8_t)(rec >> 8);
         buf[1] = (uint8_t)rec;
         buf[2] = (uint8_t)n;
-        if (n > 0 && _iotdata_config_value[i].s.p != NULL)
-            memcpy(&buf[3], _iotdata_config_value[i].s.p, n);
+        if (n > 0 && _iotdata_node_config_value[i].s.p != NULL)
+            memcpy(&buf[3], _iotdata_node_config_value[i].s.p, n);
         return (size_t)(3u + n);
     }
-    const uint8_t w = iotdata_config_type_size(row->type);
+    const uint8_t w = iotdata_node_config_type_size(row->type);
     if (w == 0 || (size_t)(2u + w) > size)
         return 0; /* a type with neither a width nor a length: nothing sensible to write */
     buf[0] = (uint8_t)(rec >> 8);
     buf[1] = (uint8_t)rec;
-    uint64_t raw = iotdata_config_type_is_signed(row->type) ? (uint64_t)_iotdata_config_value[i].i : _iotdata_config_value[i].u;
-    if (row->type == IOTDATA_CONFIG_TYPE_FLOAT) {
+    uint64_t raw = iotdata_node_config_type_is_signed(row->type) ? (uint64_t)_iotdata_node_config_value[i].i : _iotdata_node_config_value[i].u;
+    if (row->type == IOTDATA_NODE_CONFIG_TYPE_FLOAT) {
         uint32_t bits;
-        memcpy(&bits, &_iotdata_config_value[i].f, sizeof(bits));
+        memcpy(&bits, &_iotdata_node_config_value[i].f, sizeof(bits));
         raw = bits;
     }
     for (uint8_t b = 0; b < w; b++)
@@ -856,13 +958,13 @@ static inline size_t iotdata_config_encode(const int i, uint8_t *const buf, cons
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline int iotdata_config_pack(uint8_t *const buf, const size_t size, iotdata_partial_t *const p) {
+static inline int iotdata_node_config_pack(uint8_t *const buf, const size_t size, iotdata_node_partial_t *const p) {
     size_t at = 0;
     uint8_t packed = 0;
     bool more = false;
     uint32_t cur = (p != NULL) ? p->cursor : 0u;
-    for (; cur < (uint32_t)IOTDATA_CFG_COUNT; cur++) {
-        const size_t n = iotdata_config_encode((int)cur, buf + at, size - at);
+    for (; cur < (uint32_t)IOTDATA_NODE_CFG_COUNT; cur++) {
+        const size_t n = iotdata_node_config_encode((int)cur, buf + at, size - at);
         if (n > 0) {
             at += n;
             packed++;
@@ -874,7 +976,7 @@ static inline int iotdata_config_pack(uint8_t *const buf, const size_t size, iot
         }
     }
     if (p != NULL) {
-        p->total = (uint8_t)IOTDATA_CFG_COUNT;
+        p->total = (uint8_t)IOTDATA_NODE_CFG_COUNT;
         p->chunk = packed;
         p->more = more;
         p->cursor = more ? cur : 0u; /* 0: the table is done, a later request restarts it */
@@ -888,49 +990,49 @@ static inline int iotdata_config_pack(uint8_t *const buf, const size_t size, iot
    the whole update, because applying half of a radio reconfiguration is how a remote node is lost.
    An UNKNOWN id is skipped rather than rejected -- it is the ignore-unknown rule, and the reply
    says what actually took. Returns whether the update committed. */
-static inline bool iotdata_config_apply(const uint8_t *const buf, const size_t len, datastore_t *const ds, bool *const reboot_out) {
-    iotdata_config_update_t u;
-    iotdata_config_update_begin(&u, true);
+static inline bool iotdata_node_config_apply(const uint8_t *const buf, const size_t len, datastore_t *const ds, bool *const reboot_out) {
+    iotdata_node_config_update_t u;
+    iotdata_node_config_update_begin(&u, true);
     for (size_t at = 0; at < len;) {
         uint16_t id = 0;
         int i = -1;
-        iotdata_config_value_t v;
-        const size_t n = iotdata_config_record_read(buf + at, len - at, &id, &i, &v);
+        iotdata_node_config_value_t v;
+        const size_t n = iotdata_node_config_record_read(buf + at, len - at, &id, &i, &v);
         if (n == 0)
             break;
         if (i >= 0)
-            (void)iotdata_config_update_stage(&u, id, &v); /* a rejection poisons the whole update */
+            (void)iotdata_node_config_update_stage(&u, id, &v); /* a rejection poisons the whole update */
         at += n;
     }
-    return iotdata_config_update_commit(&u, ds, reboot_out);
+    return iotdata_node_config_update_commit(&u, ds, reboot_out);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static uint8_t _iotdata_config_buffer[IOTDATA_CONFIG_IMAGE_MAX]; // XXX
+static uint8_t _iotdata_node_config_buffer[IOTDATA_NODE_CONFIG_IMAGE_MAX]; // XXX
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline bool iotdata_config_save(datastore_t *const ds) {
+static inline bool iotdata_node_config_save(datastore_t *const ds) {
     if (ds == NULL)
         return false;
     size_t at = 0;
-    for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++)
-        at += iotdata_config_encode(i, _iotdata_config_buffer + at, sizeof(_iotdata_config_buffer) - at);
-    return datastore_write(ds, IOTDATA_CONFIG_STORE_KEY, _iotdata_config_buffer, at);
+    for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++)
+        at += iotdata_node_config_encode(i, _iotdata_node_config_buffer + at, sizeof(_iotdata_node_config_buffer) - at);
+    return datastore_write(ds, IOTDATA_NODE_CONFIG_STORE_KEY, _iotdata_node_config_buffer, at);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline bool iotdata_config_load(datastore_t *const ds) {
-    iotdata_config_defaults(); // defaults first
+static inline bool iotdata_node_config_load(datastore_t *const ds) {
+    iotdata_node_config_defaults(); // defaults first
     if (ds == NULL)
         return false;
     size_t len = 0;
-    if (datastore_read(ds, IOTDATA_CONFIG_STORE_KEY, _iotdata_config_buffer, sizeof(_iotdata_config_buffer), &len)) {
+    if (datastore_read(ds, IOTDATA_NODE_CONFIG_STORE_KEY, _iotdata_node_config_buffer, sizeof(_iotdata_node_config_buffer), &len)) {
         for (size_t at = 0; at < len;) {
-            const size_t n = iotdata_config_decode(_iotdata_config_buffer + at, len - at);
+            const size_t n = iotdata_node_config_decode(_iotdata_node_config_buffer + at, len - at);
             if (n == 0)
                 break;
             at += n;
@@ -961,76 +1063,76 @@ static inline bool iotdata_config_load(datastore_t *const ds) {
 //     conf <name|id> <value>  set it, then print what is now true
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static datastore_t *_iotdata_config_console_ds = NULL;
+static datastore_t *_iotdata_node_config_console_ds = NULL;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void iotdata_config_console_attach(datastore_t *const ds) {
-    _iotdata_config_console_ds = ds;
+static inline void iotdata_node_config_console_attach(datastore_t *const ds) {
+    _iotdata_node_config_console_ds = ds;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void _iotdata_config_show(const iotdata_console_emit_fn emit, const int i, const bool detail) {
-    const iotdata_config_row_t *const row = &iotdata_config_table[i];
+static inline void _iotdata_node_config_show(const iotdata_node_console_emit_fn emit, const int i, const bool detail) {
+    const iotdata_node_config_row_t *const row = &iotdata_node_config_table[i];
     char val[32];
-    _iotdata_config_fmt(row, &_iotdata_config_value[i], val, sizeof(val));
+    _iotdata_node_config_fmt(row, &_iotdata_node_config_value[i], val, sizeof(val));
     if (detail) {
         char lo[32], hi[32];
         emit("%s = %s\n", row->name, val);
         if (row->help != NULL)
             emit("  %s\n", row->help);
-        if (row->type == IOTDATA_CONFIG_TYPE_STRING)
-            emit("  id=0x%03X type=%s length=%u..%u (%u byte slot)\n", (unsigned)row->id, _iotdata_config_type_name(row->type), (unsigned)row->min.u, (unsigned)row->max.u, (unsigned)row->max.u + 1u);
+        if (row->type == IOTDATA_NODE_CONFIG_TYPE_STRING)
+            emit("  id=0x%03X type=%s length=%u..%u (%u byte slot)\n", (unsigned)row->id, _iotdata_node_config_type_name(row->type), (unsigned)row->min.u, (unsigned)row->max.u, (unsigned)row->max.u + 1u);
         else
-            emit("  id=0x%03X type=%s range=%s..%s\n", (unsigned)row->id, _iotdata_config_type_name(row->type), _iotdata_config_fmt(row, &row->min, lo, sizeof(lo)), _iotdata_config_fmt(row, &row->max, hi, sizeof(hi)));
-        emit("  %s%s%s%s%s\n", (row->flags & IOTDATA_CONFIG_FLAG_READONLY) ? "read-only " : "", (row->flags & IOTDATA_CONFIG_FLAG_LOCAL) ? "local-only " : "", (row->flags & IOTDATA_CONFIG_FLAG_STARTUP) ? "command-line-only " : "",
-             (row->flags & IOTDATA_CONFIG_FLAG_REBOOT) ? "reboot-required " : "", row->flags == 0 ? "effective-immediately" : "");
+            emit("  id=0x%03X type=%s range=%s..%s\n", (unsigned)row->id, _iotdata_node_config_type_name(row->type), _iotdata_node_config_fmt(row, &row->min, lo, sizeof(lo)), _iotdata_node_config_fmt(row, &row->max, hi, sizeof(hi)));
+        emit("  %s%s%s%s%s\n", (row->flags & IOTDATA_NODE_CONFIG_FLAG_READONLY) ? "read-only " : "", (row->flags & IOTDATA_NODE_CONFIG_FLAG_LOCAL) ? "local-only " : "",
+             (row->flags & IOTDATA_NODE_CONFIG_FLAG_STARTUP) ? "command-line-only " : "", (row->flags & IOTDATA_NODE_CONFIG_FLAG_REBOOT) ? "reboot-required " : "", row->flags == 0 ? "effective-immediately" : "");
         /* on its own line, and in words: a pin is about THIS INVOCATION, not about the row, and the
            way out of it is an instruction rather than a property */
-        if (_iotdata_config_pinned[i])
+        if (_iotdata_node_config_pinned[i])
             emit("  PINNED on the command line -- restart without that argument to change it\n");
     } else
-        emit("  %-32s = %-12s [0x%03X %s%s%s%s%s]\n", row->name, val, (unsigned)row->id, _iotdata_config_type_name(row->type), (row->flags & IOTDATA_CONFIG_FLAG_READONLY) ? " ro" : "",
-             (row->flags & IOTDATA_CONFIG_FLAG_LOCAL) ? " local" : "", (row->flags & IOTDATA_CONFIG_FLAG_REBOOT) ? " reboot" : "", _iotdata_config_pinned[i] ? " pinned" : "");
+        emit("  %-32s = %-12s [0x%03X %s%s%s%s%s]\n", row->name, val, (unsigned)row->id, _iotdata_node_config_type_name(row->type), (row->flags & IOTDATA_NODE_CONFIG_FLAG_READONLY) ? " ro" : "",
+             (row->flags & IOTDATA_NODE_CONFIG_FLAG_LOCAL) ? " local" : "", (row->flags & IOTDATA_NODE_CONFIG_FLAG_REBOOT) ? " reboot" : "", _iotdata_node_config_pinned[i] ? " pinned" : "");
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static void iotdata_config_console(const iotdata_console_emit_fn emit, const int argc, char **const argv) {
+static void iotdata_node_config_console(const iotdata_node_console_emit_fn emit, const int argc, char **const argv) {
     if (argc < 2) {
-        emit("config: %u entries%s\n", (unsigned)IOTDATA_CFG_COUNT, iotdata_config_persists(_iotdata_config_console_ds) ? "" : " (NOT PERSISTED: nowhere to write them)");
-        for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++)
-            _iotdata_config_show(emit, i, false);
+        emit("config: %u entries%s\n", (unsigned)IOTDATA_NODE_CFG_COUNT, iotdata_node_config_persists(_iotdata_node_config_console_ds) ? "" : " (NOT PERSISTED: nowhere to write them)");
+        for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++)
+            _iotdata_node_config_show(emit, i, false);
         return;
     }
-    const int i = iotdata_config_index_by_name(argv[1]);
+    const int i = iotdata_node_config_index_by_name(argv[1]);
     if (i < 0) {
         emit("%s: no such entry (try `%s` with no argument)\n", argv[1], argv[0]);
         return;
     }
     if (argc < 3) {
-        _iotdata_config_show(emit, i, true);
+        _iotdata_node_config_show(emit, i, true);
         return;
     }
-    iotdata_config_value_t v;
-    if (!_iotdata_config_parse(&iotdata_config_table[i], argv[2], &v)) {
-        emit("%s: '%s' is not a %s\n", iotdata_config_table[i].name, argv[2], _iotdata_config_type_name(iotdata_config_table[i].type));
+    iotdata_node_config_value_t v;
+    if (!_iotdata_node_config_parse(&iotdata_node_config_table[i], argv[2], &v)) {
+        emit("%s: '%s' is not a %s\n", iotdata_node_config_table[i].name, argv[2], _iotdata_node_config_type_name(iotdata_node_config_table[i].type));
         return;
     }
-    iotdata_config_update_t u;
-    iotdata_config_update_begin(&u, false);
+    iotdata_node_config_update_t u;
+    iotdata_node_config_update_begin(&u, false);
     bool reboot = false;
-    if (!iotdata_config_update_stage(&u, iotdata_config_table[i].id, &v) || !iotdata_config_update_commit(&u, _iotdata_config_console_ds, &reboot)) {
-        const char *const why = iotdata_config_refusal(iotdata_config_table[i].id, false);
-        emit("%s: refused -- %s\n", iotdata_config_table[i].name, (why != NULL) ? why : "out of range, or a cross-entry rule");
-        _iotdata_config_show(emit, i, true); /* the response is the truth: say what it still is, and why */
+    if (!iotdata_node_config_update_stage(&u, iotdata_node_config_table[i].id, &v) || !iotdata_node_config_update_commit(&u, _iotdata_node_config_console_ds, &reboot)) {
+        const char *const why = iotdata_node_config_refusal(iotdata_node_config_table[i].id, false);
+        emit("%s: refused -- %s\n", iotdata_node_config_table[i].name, (why != NULL) ? why : "out of range, or a cross-entry rule");
+        _iotdata_node_config_show(emit, i, true); /* the response is the truth: say what it still is, and why */
         return;
     }
-    _iotdata_config_show(emit, i, false);
+    _iotdata_node_config_show(emit, i, false);
     if (reboot)
         emit("  (requires restart)\n");
-    if (!iotdata_config_persists(_iotdata_config_console_ds))
+    if (!iotdata_node_config_persists(_iotdata_node_config_console_ds))
         emit("  (not persisted: this node has nowhere to write it)\n");
 }
 
@@ -1040,11 +1142,11 @@ static void iotdata_config_console(const iotdata_console_emit_fn emit, const int
    the table already says everything such a listing needs -- the name, the type, the bounds, the
    default and now what it is FOR -- and a hand-kept list beside it is one that goes stale the first
    time a row is added without it. */
-static inline void iotdata_config_help(const iotdata_console_emit_fn emit, const char *const prog) {
+static inline void iotdata_node_config_help(const iotdata_node_console_emit_fn emit, const char *const prog) {
     char dflt[64];
     emit("usage: %s [--<setting> <value>] ...\n\n", (prog != NULL) ? prog : "program");
-    for (int i = 0; i < (int)IOTDATA_CFG_COUNT; i++) {
-        const iotdata_config_row_t *const row = &iotdata_config_table[i];
+    for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++) {
+        const iotdata_node_config_row_t *const row = &iotdata_node_config_table[i];
         char opt[80];
         size_t at = 0;
         opt[at++] = '-';
@@ -1053,13 +1155,13 @@ static inline void iotdata_config_help(const iotdata_console_emit_fn emit, const
             opt[at++] = (*p == '_') ? '-' : (char)(*p | 0x20);
         opt[at] = '\0';
         emit("  %-34s %s\n", opt, (row->help != NULL) ? row->help : "");
-        emit("  %-34s   %s, default %s%s%s%s\n", "", _iotdata_config_type_name(row->type), _iotdata_config_fmt(row, &row->dflt, dflt, sizeof(dflt)), (row->flags & IOTDATA_CONFIG_FLAG_READONLY) ? ", read-only" : "",
-             (row->flags & IOTDATA_CONFIG_FLAG_STARTUP) ? ", command line only" : "", (row->flags & IOTDATA_CONFIG_FLAG_REBOOT) ? ", needs a restart" : "");
+        emit("  %-34s   %s, default %s%s%s%s\n", "", _iotdata_node_config_type_name(row->type), _iotdata_node_config_fmt(row, &row->dflt, dflt, sizeof(dflt)), (row->flags & IOTDATA_NODE_CONFIG_FLAG_READONLY) ? ", read-only" : "",
+             (row->flags & IOTDATA_NODE_CONFIG_FLAG_STARTUP) ? ", command line only" : "", (row->flags & IOTDATA_NODE_CONFIG_FLAG_REBOOT) ? ", needs a restart" : "");
     }
 }
 
-/* Drop this into the application's iotdata_console_t array. */
-#define IOTDATA_CONFIG_CONSOLE_COMMAND { "conf", iotdata_config_console, "show or set configuration: conf [<name|id> [<value>]]" }
+/* Drop this into the application's iotdata_node_console_t array. */
+#define IOTDATA_NODE_CONFIG_CONSOLE_COMMAND { "conf", iotdata_node_config_console, "show or set configuration: conf [<name|id> [<value>]]" }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1068,4 +1170,4 @@ static inline void iotdata_config_help(const iotdata_console_emit_fn emit, const
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#endif /* IOTDATA_CONFIG_ENTRIES && !IOTDATA_NODE_CONFIG_EXPANDED */
+#endif /* IOTDATA_NODE_CONFIG_ENTRIES && !IOTDATA_NODE_CONFIG_EXPANDED */

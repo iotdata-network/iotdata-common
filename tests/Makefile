@@ -16,11 +16,14 @@ IOTDATA_SRC_BLACKBOX = $(IOTDATA_SRC)/iotdata-depend/blackbox/include
 IOTDATA_VARIANT ?= $(abspath $(IOTDATA_SRC_COMMON)/include/iotdata_variant_weather_station.h)
 
 TEST_CC     ?= gcc
-TEST_CFLAGS ?= -std=c11 -Wall -Wextra -Werror -Wconversion -Wshadow \
+## _DEFAULT_SOURCE because -std=c11 is strict ISO, which hides POSIX from the system headers --
+## iotdata_node_utils.h calls gethostname() to derive a node identity on a host, and anything that
+## includes it needs the declaration. Set once here rather than per test, since the reach spreads.
+TEST_CFLAGS ?= -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -Wconversion -Wshadow \
                -I$(IOTDATA_SRC_LIBRARY) -I$(IOTDATA_SRC_COMMON)/include -I$(IOTDATA_SRC_EXAMPLE)/include \
                -DIOTDATA_VARIANT='"$(IOTDATA_VARIANT)"' -DIOTDATA_NO_JSON
-TEST_DIR    ?= build-test
-TEST_VERSION_DEFS ?= -DIOTDATA_VERSION_APP='"testapp"' -DIOTDATA_VERSION_SEMVER='"1.2.3"' -DIOTDATA_VERSION_STAMP='"$(shell date -u +%Y%m%d%H%M)"'
+TEST_DIR    ?= build_test
+TEST_VERSION_DEFS ?= -DIOTDATA_NODE_VERSION_APP='"testapp"' -DIOTDATA_NODE_VERSION_SEMVER='"1.2.3"' -DIOTDATA_NODE_VERSION_STAMP='"$(shell date -u +%Y%m%d%H%M)"'
 
 .PHONY: test test-clean
 
@@ -42,6 +45,14 @@ test:
 	@$(TEST_DIR)/test_node_status
 	@$(TEST_CC) $(TEST_CFLAGS) test_node_content_ota.c -o $(TEST_DIR)/test_node_content_ota -lm
 	@$(TEST_DIR)/test_node_content_ota
+	@$(TEST_CC) $(TEST_CFLAGS) test_node_config_blocks.c -o $(TEST_DIR)/test_node_config_blocks -lm
+	@$(TEST_DIR)/test_node_config_blocks
+	@$(TEST_CC) $(TEST_CFLAGS) test_node_utils.c -o $(TEST_DIR)/test_node_utils -lm
+	@$(TEST_DIR)/test_node_utils
+	@$(TEST_CC) $(TEST_CFLAGS) test_node_stations.c -o $(TEST_DIR)/test_node_stations -lm
+	@$(TEST_DIR)/test_node_stations
+	@$(TEST_CC) $(TEST_CFLAGS) test_node_console.c -o $(TEST_DIR)/test_node_console -lm
+	@$(TEST_DIR)/test_node_console
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_control.c -o $(TEST_DIR)/test_node_control -lm -lcjson
 	@$(TEST_DIR)/test_node_control
 	@$(TEST_CC) $(TEST_CFLAGS) test_format.c -o $(TEST_DIR)/test_format
