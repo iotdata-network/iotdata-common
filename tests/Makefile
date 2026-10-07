@@ -29,8 +29,8 @@ TEST_VERSION_DEFS ?= -DIOTDATA_NODE_VERSION_APP='"testapp"' -DIOTDATA_NODE_VERSI
 
 test:
 	@mkdir -p $(TEST_DIR)
-	@$(TEST_CC) $(TEST_CFLAGS) test_node_platform.c $(IOTDATA_SRC_LIBRARY)/iotdata.c -o $(TEST_DIR)/test_node_endpoint -lm
-	@$(TEST_DIR)/test_node_endpoint
+	@$(TEST_CC) $(TEST_CFLAGS) test_node_runtime.c $(IOTDATA_SRC_LIBRARY)/iotdata.c -o $(TEST_DIR)/test_node_runtime -lm
+	@$(TEST_DIR)/test_node_runtime
 # JSON ON for this one: -UIOTDATA_NO_JSON and cJSON, because the version header's encoders are
 # only compiled when a project has JSON, and a test that skips them tests nothing.
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON -DPLATFORM_LINUX $(TEST_VERSION_DEFS) test_version.c -o $(TEST_DIR)/test_version -lm -lcjson

@@ -38,6 +38,7 @@ static bool said(const char *n) {
 
 #include "iotdata_node_state.h"
 #include "iotdata_node_settings.h"
+#include "iotdata_node_console_settings.h" /* the `node` console words moved here */
 
 static int fails = 0;
 #define CHECK(c, m) \

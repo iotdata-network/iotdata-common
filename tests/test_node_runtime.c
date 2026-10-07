@@ -2,12 +2,13 @@
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 //
-// test_node_platform.c - host tests for iotdata_node_platform.h, the END-DEVICE half of the node
-// protocol (a sensor, a simulator, and in due course a node that both senses and relays).
+// test_node_runtime.c - host tests for iotdata_node_runtime.h, the running state behind the node
+// protocol: identity and sequence, the receive window, the report builders, frame dispatch.
 //
-// It is tested here rather than in a project because it belongs to neither: both consumers are
-// ESP-IDF applications that a host toolchain cannot build, so without this the shared header has
-// no coverage at all and a signature change is discovered by flashing.
+// It is tested here rather than in a project because it belongs to no one project -- every role
+// uses it, a sensor and a simulator as much as a relay and a gateway -- and most of those are
+// ESP-IDF applications a host toolchain cannot build. Without this the shared header has no
+// coverage at all and a signature change is discovered by flashing.
 //
 // What is pinned down: STATUS scoping (including the case that a node in no mesh answers the mesh
 // scope EMPTY rather than falling back to the node group), CONTROL advertising exactly what the
@@ -34,7 +35,7 @@
 #include "device/d_module_datastore_linux.h"
 #include "iotdata_node_state.h"
 #include "iotdata_node_settings.h"
-#include "iotdata_node_platform.h"
+#include "iotdata_node_runtime.h"
 
 /* --- stubs standing in for an application ------------------------------------------------- */
 

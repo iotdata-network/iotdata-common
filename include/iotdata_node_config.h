@@ -1041,6 +1041,8 @@ static inline bool iotdata_node_config_load(datastore_t *const ds) {
     }
     return false;
 }
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #ifdef IOTDATA_NODE_CONSOLE_H
 
@@ -1099,7 +1101,10 @@ static inline void _iotdata_node_config_show(const iotdata_node_console_emit_fn 
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static void iotdata_node_config_console(const iotdata_node_console_emit_fn emit, const int argc, char **const argv) {
+/* UNUSED IS NOT AN ERROR HERE: including the adapter and registering the command are separate
+   decisions. A node with a console that does not offer this one still compiles it, and that is
+   cheaper to allow than to make every application prove it wired the command up. */
+__attribute__((unused)) static void iotdata_node_config_console(const iotdata_node_console_emit_fn emit, const int argc, char **const argv) {
     if (argc < 2) {
         emit("config: %u entries%s\n", (unsigned)IOTDATA_NODE_CFG_COUNT, iotdata_node_config_persists(_iotdata_node_config_console_ds) ? "" : " (NOT PERSISTED: nowhere to write them)");
         for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++)
@@ -1166,8 +1171,5 @@ static inline void iotdata_node_config_help(const iotdata_node_console_emit_fn e
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_CONSOLE_H */
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_CONFIG_ENTRIES && !IOTDATA_NODE_CONFIG_EXPANDED */

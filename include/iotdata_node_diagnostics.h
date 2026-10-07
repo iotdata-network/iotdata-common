@@ -574,61 +574,6 @@ static inline bool iotdata_node_diagnostics_node_control(const uint16_t station,
     return iotdata_node_diagnostics_control(subject, action, args, arglen);
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// MEDIA: A CONSOLE
-//
-// The recorder's words that have NO wire equivalent, and so cannot drift from one: its own status,
-// a manual flush, and the record filter. Everything else an operator types -- enable, disable,
-// clear, dump -- is in the CONTROL vocabulary and reaches the handler above by the same route an
-// MQTT request does.
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-static inline void iotdata_node_diagnostics_filter(const int argc, char **const argv) {
-    if (!_iotdata_node_diagnostics_ready) {
-        _iotdata_node_diagnostics_say("diag: unavailable (recorder did not start)");
-        return;
-    }
-    blackbox_handle_t *const h = &_iotdata_node_diagnostics_handle;
-    const char *const sub = (argc >= 3) ? argv[2] : "";
-    if (argc < 3)
-        ; /* no subcommand: just show where the filter stands */
-    else if (strcmp(sub, "off") == 0)
-        blackbox_filter_mode(h, BLACKBOX_FILTER_OFF);
-    else if (strcmp(sub, "include") == 0)
-        blackbox_filter_mode(h, BLACKBOX_FILTER_INCLUDE);
-    else if (strcmp(sub, "exclude") == 0)
-        blackbox_filter_mode(h, BLACKBOX_FILTER_EXCLUDE);
-    else if (strcmp(sub, "clear") == 0)
-        blackbox_filter_clear(h);
-    else if (strcmp(sub, "add") == 0 && argc >= 4)
-        (void)blackbox_filter_add(h, argv[3]);
-    else if (strcmp(sub, "remove") == 0 && argc >= 4)
-        blackbox_filter_remove(h, argv[3]);
-    else {
-        _iotdata_node_diagnostics_say("diag filter: off|include|exclude|add <tag>|remove <tag>|clear");
-        return;
-    }
-    iotdata_node_diagnostics_stat(); /* echo the resulting state, whichever way we got here */
-}
-
-/* Returns whether this was a recorder word. `argv[0]` is the verb the console dispatched on. */
-static inline bool iotdata_node_diagnostics_console(const int argc, char **const argv) {
-    if (argc < 2 || argv == NULL)
-        return false;
-    if (strcmp(argv[1], "stat") == 0)
-        iotdata_node_diagnostics_stat();
-    else if (strcmp(argv[1], "flush") == 0) {
-        iotdata_node_diagnostics_flush();
-        iotdata_node_diagnostics_stat();
-    } else if (strcmp(argv[1], "filter") == 0)
-        iotdata_node_diagnostics_filter(argc, argv);
-    else
-        return false;
-    return true;
-}
-
-#define IOTDATA_NODE_DIAGNOSTICS_CONSOLE_HELP "stat | flush | filter [off|include|exclude|add <tag>|remove <tag>|clear]"
-
 #else /* !IOTDATA_NODE_DIAGNOSTICS -- compiled out, but every call site still type-checks */
 
 static const uint8_t *const iotdata_node_diagnostics_control_actions = NULL;
@@ -636,7 +581,6 @@ static const uint8_t *const iotdata_node_diagnostics_control_actions = NULL;
 /* NULL, so a node with no recorder reports no diagnostics rather than an empty blackbox */
 #define IOTDATA_NODE_DIAGNOSTICS_PULL                  NULL
 #define IOTDATA_NODE_DIAGNOSTICS_CONTROL               NULL
-#define IOTDATA_NODE_DIAGNOSTICS_CONSOLE_HELP          ""
 
 static inline iotdata_node_diagnostics_emit_fn iotdata_node_diagnostics_emit_set(const iotdata_node_diagnostics_emit_fn fn) {
     (void)fn;
@@ -696,11 +640,6 @@ static inline bool iotdata_node_diagnostics_control(const uint8_t subject, const
     (void)action;
     (void)args;
     (void)arglen;
-    return false;
-}
-static inline bool iotdata_node_diagnostics_console(const int argc, char **const argv) {
-    (void)argc;
-    (void)argv;
     return false;
 }
 static inline bool iotdata_node_diagnostics_node_control(const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {

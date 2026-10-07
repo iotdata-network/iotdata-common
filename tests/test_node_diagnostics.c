@@ -24,6 +24,7 @@
 
 #define IOTDATA_NODE_BLACKBOX_IMPLEMENTATION
 #include "iotdata_node_diagnostics.h"
+#include "iotdata_node_console_diagnostics.h" /* the `diag` console words moved here */
 
 static int fails = 0;
 #define CHECK(c, m) \
