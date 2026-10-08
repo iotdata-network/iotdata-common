@@ -8,7 +8,9 @@ It is the side modem for the remote LoRa node: the ESP32 switches 5V to the Pi a
 availability window, the Pi dials out, leaves a reverse tunnel behind (see ../README.md), and the
 window closes.
 
-First proven working on iotdata-rem-b827eb2878c0 (Pi Zero 1, no wifi) on 2026-09-25.
+First proven working on iotdata-rem-b827eb2878c0 (Pi Zero 1, no wifi) on 2026-09-25, and a second
+module on iotdata-rem-b827ebc17aaf (Pi Zero W) on 2026-10-08. The ordered walkthrough for doing it on
+a new box is in ../README.md, "Commissioning a modem box, start to finish".
 
 Files here
 ----------
@@ -80,6 +82,9 @@ Test
 ----
     ./dialout-test.sh                 full check: modem, network, context, modem stack, ppp0, hang-up
     ./dialout-test.sh --no-data       survey only, uses no data
+    ./dialout-test.sh --no-data --apn ""   survey and change NOTHING: an empty APN makes the script
+                                      skip writing the context, so you can see what a new SIM has
+                                      before touching it. Do this first on a fresh module.
     ./dialout-test.sh --keep 60       hold the data link longer
     ./dialout-test.sh --apn X --user U --password P
     ./dialout-test.sh --operator 24007 --lte-only      pin Tele2 SE, LTE only
@@ -237,3 +242,14 @@ Log
             consistent (60s TTL, and public resolvers answer from several caches), so a dial in that
             window legitimately reports "not invited". Wait for it to settle before concluding
             anything is broken.
+2026-10-08  Second module, on iotdata-rem-b827ebc17aaf (Pi Zero W, 192.168.0.74, wifi). Serial needed
+            no changes again. ppp was absent AND apt had zero package lists, so `apt-get install ppp`
+            said "no installation candidate" until `apt-get update` ran. /opt is not mounted on that
+            box, so the directory was staged with tar over ssh -- into /root, because /run is noexec
+            here and install.sh would not execute from there.
+            Same SIM family (ICCID 8944100030..., IMSI 23415937...), same wrong-APN trap on arrival:
+            default.mnc015.mcc234.gprs with an IP but empty gateway and DNS. uk.lebara.mobi + wap/wap
+            fixed it: DNS 10.205.64.1, ping 0% loss ~59ms, https 200, -59 dBm on band 1.
+            dialout matched to the other modem box: link-script + ping-every=0 in the checkout cfg,
+            watch mode stopped, timer installed at 6h. Verified by its own timer-driven round and
+            LAST SEEN on the server.

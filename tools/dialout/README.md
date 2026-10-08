@@ -156,6 +156,92 @@ Then hand that public key to the server once:
 dialout-server enrol iotdata-tst-2 /path/to/its.pub     # or pipe it on stdin
 ```
 
+### Commissioning a modem box, start to finish
+
+Done twice now — `b827eb2878c0` (2026-09-25) and `b827ebc17aaf` (2026-10-08) — and this is the whole
+sequence, including the parts that cost an afternoon the first time. Modem specifics (wiring, the APN
+trap, an AT crib) live in `simcom-a7670e/steps.txt`; this is the order to do things in.
+
+**1. Check the UART the image already gives you.** On the reference Pi image nothing needed enabling:
+`/dev/serial0 -> ttyAMA0`, `enable_uart=1` and `dtoverlay=disable-bt` in `/boot/firmware/config.txt`,
+`console=tty1` *only* in `cmdline.txt`, `serial-getty@ttyAMA0` masked, and nothing holding the port.
+`install.sh` re-checks all four and warns rather than editing boot config.
+
+**2. Install ppp.** On a fresh trimmed image `apt-get install ppp` fails with *"Package 'ppp' has no
+installation candidate"* — not a missing package but **zero** apt lists:
+
+```sh
+apt-get update && apt-get install -y ppp      # ~16 MB, half a minute over wifi
+```
+
+If apt instead fails with `BADSIG` on every repo, fix the clock first — a box whose clock is in the
+past rejects every signature made since, which looks nothing like a clock problem.
+
+**3. Get the files onto the box.** If `/opt` is not mounted there (a wifi-only box often isn't), stage
+over ssh — and stage into `/root`, because **`/run` is `noexec`** on this image and an installer run
+from there dies with a bare "Permission denied":
+
+```sh
+tar -cz -C simcom-a7670e . | ssh root@box 'mkdir -p /root/simcom && tar -xz -C /root/simcom'
+ssh root@box 'chmod 755 /root/simcom/*.sh /root/simcom/dialout-link && /root/simcom/install.sh'
+```
+
+That puts `/etc/ppp/peers/a7670e-lebara`, `/etc/ppp/chat/a7670e-lebara` and
+`/usr/local/sbin/dialout-link` in place. Leave the staging directory behind: on a box with no `/opt`
+it is your only local copy of `dialout-test.sh`.
+
+**4. Survey the modem read-only, before changing anything.** `--apn ""` makes the script skip writing
+the context, so you see what the SIM actually has:
+
+```sh
+/root/simcom/dialout-test.sh --no-data --apn ""
+```
+
+A factory-fresh module shows the trap every time: an IP address, but `context detail` with an empty
+gateway *and* empty DNS, `FAIL context carries DNS`, and a modem stack that cannot ping or resolve.
+That is an absent APN, not a broken modem, a dead SIM or bad wiring.
+
+**5. Then the real test**, which sets the APN and proves the data path end to end:
+
+```sh
+/root/simcom/dialout-test.sh
+```
+
+Expect `network gave DNS <addr>`, ping 0% loss at 55–65 ms, `https … http 200`, `ppp0 gone`,
+`default route unchanged`, exit 0. Safe to run over ssh: pppd gets `nodefaultroute` and every test
+binds to `ppp0`.
+
+**6. Wire dialout to the modem** — exactly two settings, edited in the **checkout** copy of
+`dialout.<hostname>.cfg`, because `install` copies the per-host cfg from wherever it runs and would
+otherwise revert a box-local edit:
+
+```
+link-script=/usr/local/sbin/dialout-link
+ping-every=0
+```
+
+`ping-every=0` suits a timer box: a round is already a rare event and the radio is up anyway.
+
+**7. Move it off watch mode onto the timer.** A modem box must not watch — that would raise the radio
+every round, and the client refuses the combination outright:
+
+```sh
+systemctl stop dialout-client-watch.service
+/usr/local/lib/dialout/dialout-client install --interval 6h    # the INSTALLED copy, not the share
+```
+
+**8. Let a round run, and read it from the server.** `dialout-server clients` shows LAST SEEN flip to
+seconds. A good round in the client's journal reads: `link: up` → `dialing a7670e-lebara` →
+`PAP authentication succeeded` → `not invited` → `ping: seen by …` → `link: down` — about five seconds
+of radio and 2.5 s of CPU on a Pi Zero.
+
+**9. Re-tag it**, since the link field has changed:
+`dialout-server tag <fragment> <place>/<role>/<board>/mobile`.
+
+Throughout this the box stays reachable on wifi or ethernet: `dialout-link` notices another default
+route and dials without one ("something else holds the default route -- dialing without one (bench)"),
+so bringing the modem up never pulls your ssh session out from under you.
+
 ### Moving a server, or keeping a spare
 
 ```sh
