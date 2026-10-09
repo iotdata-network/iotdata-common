@@ -142,15 +142,15 @@ int main(void) {
     CHECK(c.fails == 0, "a good window clears the back-off");
     CHECK(c.st_closed == 1, "counted as a normal close");
 
-    printf("\nA HALT PULSE ARRIVING INSIDE THE SETTLE IS A BEAT, so the settle restarts from it\n");
-    /* what a shutting-down linux board does on the way out: the beating process is killed, then the
-       poweroff overlay pulses the same pin at the true halt. Cutting on the first silence would
-       cut mid-shutdown; this is why a late change abandons the settle. */
+    printf("\nA BEAT ARRIVING INSIDE THE SETTLE IS LIVENESS, so the settle is abandoned\n");
+    /* a cart that goes quiet for longer than silent_ms and then beats again was never finished: a
+       stalled scheduler or a long busy moment looks exactly like this. Cutting on the first silence
+       would cut a working cart, which is why a late change puts it back to RUNNING. */
     CHECK(run_ms(&c, cfg.interval_ms + 500u, 0) == CART_EVENT_OPENED, "a fresh window");
     CHECK(run_ms(&c, 1000u, 500u) == CART_EVENT_LIVE, "booted");
     CHECK(run_ms(&c, cfg.silent_ms + 300u, 0) == CART_EVENT_NONE, "goes quiet: shutdown has begun");
     CHECK(c.state == CART_SETTLING, "settling");
-    g_pin_in = !g_pin_in; /* the halt pulse */
+    g_pin_in = !g_pin_in; /* a late beat */
     CHECK(cart_tick(&c, g_now) == CART_EVENT_NONE, "the pulse is not an event");
     CHECK(c.state == CART_RUNNING, "but it IS liveness: the settle is abandoned");
     CHECK(g_pin_out, "and nothing was cut");

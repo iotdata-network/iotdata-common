@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# cartbeat -- oscillate the CARTBEAT pin for as long as this board is alive.
+#
+# The node on the other end of that wire owns our 5V rail. It counts CHANGES on the pin, not the
+# level: a level says something set a pin, an edge rate says software is still running, and it is the
+# wedged board you are switching power for. See iotdata-common/include/device/d_interface_cart.h.
+#
+# Therefore, and this is the whole discipline of this script:
+#
+#   IT IS CONDITIONAL ON NOTHING. Not the modem, not the network, not whether the payload worked.
+#   It beats from early boot until something kills it, and the moment it starts checking whether
+#   things are going well it stops being proof that this board's scheduler is running.
+#
+#   IT IS SOFTWARE. A PWM peripheral could produce a prettier beat in hardware and it would be
+#   worthless: a beat that outlives the software it vouches for proves nothing.
+#
+# Stopping is how the cart says "done" -- there is no separate signal, and none is wanted. systemd
+# kills this during shutdown, the silence starts there, and the node's silent+settle allowance covers
+# the rest of the shutdown.
+
+set -eu
+
+PIN=${CART_BEAT_PIN:-17}
+# An edge per second against the node's 15s tolerance: ~15 missed beats of margin, for a cost of one
+# fork per second on a Pi Zero, which is nothing. The node wants one to five seconds.
+INTERVAL=${CART_BEAT_INTERVAL:-1}
+
+log() { printf '%s cartbeat: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
+
+command -v pinctrl >/dev/null 2>&1 || {
+    log "pinctrl is not installed -- cannot beat, and a cart that cannot beat will be cut"
+    exit 1
+}
+
+# Leave it low on the way out: a defined state, and the node is about to stop hearing us anyway.
+# Not a signal -- the absence of beats is the signal. This is just tidiness.
+trap 'pinctrl set "$PIN" op dl 2>/dev/null || true; exit 0' INT TERM
+
+pinctrl set "$PIN" op dl
+log "beating GPIO$PIN every ${INTERVAL}s"
+
+while :; do
+    pinctrl set "$PIN" dh
+    sleep "$INTERVAL"
+    pinctrl set "$PIN" dl
+    sleep "$INTERVAL"
+done

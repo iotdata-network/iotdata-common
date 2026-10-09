@@ -164,6 +164,7 @@ typedef struct {
     iotdata_node_settings_t node_settings; /* the PROTOCOL's own: station id, reporting, receive */
     const iotdata_node_params_t node_config;
     uint8_t packet_buffer[IOTDATA_MAX_PACKET_SIZE];
+    uint32_t cycle_due_ms; /* absolute tick the NEXT cycle is due; 0 until anchored  */
     app_running_t app;
 } iapp_running_t;
 
@@ -283,6 +284,41 @@ static bool _iapp_node_config_apply(const uint8_t *const buf, const size_t len, 
 
 static void iapp_cycle_elapsed(iapp_state_t *const as, const uint32_t cycle_ms) {
     (void)iotdata_node_window_advance(&as->operating->node, cycle_ms);
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// THE SLEEP IS SCHEDULED, NOT MEASURED
+//
+// Cycle N is due at anchor + N*period on the tick counter, and the delay is whatever is LEFT until
+// that target. Deriving it instead from this cycle's measured length -- period minus awake -- makes
+// every millisecond spent after the measurement accumulate, because the next target moves with it.
+//
+// That is not theoretical: CONSOLE_DRAIN_MS was spent after `awake_ms` was taken and so sat outside
+// the budget, putting the real period at 300100ms against the 300000 asked for. Dead constant, which
+// is what a systematic offset looks like: 26 seconds a day, 13 minutes a month. Anchoring absorbs it
+// and anything else later added on this path, because `remain` is computed as late as possible.
+//
+// An overrun skips whole periods rather than shortening one, so a cycle that runs long loses its
+// slot but stays ON the original grid instead of dragging every later cycle off phase.
+//
+// NB: uint32 ms wraps at ~49.7 days. The unsigned subtraction then the cast to int32 handles it
+// correctly for any gap under ~24.8 days, which a sleep period will never approach.
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static uint32_t iapp_sleep_remaining(iapp_state_t *const as, const uint32_t start_ms, const uint32_t period_ms) {
+
+    if (period_ms == 0)
+        return 0;
+    if (as->running->cycle_due_ms == 0)
+        as->running->cycle_due_ms = start_ms; /* first cycle anchors the grid where it woke */
+
+    as->running->cycle_due_ms += period_ms;
+    int32_t remain = (int32_t)(as->running->cycle_due_ms - hw_time_ms());
+    while (remain <= 0) { /* overran: give up this slot, keep the phase */
+        as->running->cycle_due_ms += period_ms;
+        remain = (int32_t)((uint32_t)remain + period_ms);
+    }
+    return (uint32_t)remain;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -446,7 +482,8 @@ static bool iapp_sleep(iapp_state_t *const as, const uint32_t start_ms, bool dee
         iotdata_node_diagnostics_flush();
         ESP_LOGI(__tag_iapp, "sleep light %" PRIu32 "ms (awake %" PRIu32 "ms) -- cycle %" PRIu32 ", tx=%" PRIu32 " errors=%" PRIu32, sleep_ms, awake_ms, as->operating->tx_cycles, as->operating->tx_count, as->operating->tx_errors);
         hw_delay_ms_yieldable(CONSOLE_DRAIN_MS);
-        hw_delay_ms_yieldable(sleep_ms);
+        /* AFTER the drain, so the drain is inside the period rather than added to it */
+        hw_delay_ms_yieldable(iapp_sleep_remaining(as, start_ms, awake_ms + sleep_ms));
     } else {
         if (ad->func_sleep && ad->func_sleep(&app_state, node, &sleep_ms, start_ms, awake_ms, true) != IAPP_EV_OK)
             return false;
@@ -457,7 +494,12 @@ static bool iapp_sleep(iapp_state_t *const as, const uint32_t start_ms, bool dee
         datastore_close(&as->running->datastore);
         ESP_LOGI(__tag_iapp, "sleep deep %" PRIu32 "ms (awake %" PRIu32 "ms) -- cycle %" PRIu32 ", tx=%" PRIu32 " errors=%" PRIu32, sleep_ms, awake_ms, as->operating->tx_cycles, as->operating->tx_count, as->operating->tx_errors);
         hw_delay_ms_yieldable(CONSOLE_DRAIN_MS);
-        esp_deep_sleep((uint64_t)sleep_ms * 1000); /* does not return */
+        /* No grid to anchor to: deep sleep is a reboot and esp_timer restarts at zero, so the
+           absolute schedule above cannot reach across it. What IS fixable is the same drain
+           sitting outside the budget -- charge it to the sleep. The residual is the boot path,
+           which needs RTC time to measure and is a separate change. */
+        const uint32_t deep_ms = sleep_ms > CONSOLE_DRAIN_MS ? sleep_ms - CONSOLE_DRAIN_MS : sleep_ms;
+        esp_deep_sleep((uint64_t)deep_ms * 1000); /* does not return */
     }
     return true;
 }

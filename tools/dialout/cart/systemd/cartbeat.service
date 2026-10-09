@@ -1,0 +1,26 @@
+# Installed by `cart/install.sh`. The liveness beat -- see cart/cartbeat for why it is unconditional.
+#
+# EARLY, and deliberately not in multi-user.target: the node allows two minutes from power-on to the
+# second beat, and a cart that only starts beating once its application is up has spent that budget
+# on a kernel. DefaultDependencies=no because all this needs is /dev, which devtmpfs has already.
+
+[Unit]
+Description=cartbeat (liveness for the node that owns our power rail)
+Documentation=file:/opt/iotdata/src/iotdata-common/tools/dialout/cart/README.md
+DefaultDependencies=no
+After=sysinit.target
+Before=basic.target
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/cart/cart.conf
+ExecStart=/usr/local/lib/cart/cartbeat
+# If this dies, the rail goes with it a minute later, so put it back immediately and keep trying.
+Restart=always
+RestartSec=1
+# Nothing here should be able to take the box down by looping on a missing pinctrl.
+StartLimitBurst=0
+
+[Install]
+WantedBy=sysinit.target

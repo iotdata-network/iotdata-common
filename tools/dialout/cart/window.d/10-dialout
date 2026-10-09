@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# The dialout payload: phone home, and hold the tunnel for as long as the session lasts.
+#
+# `dial` blocks while the tunnel is up and returns when the invitation is withdrawn or `idle`
+# expires, so "how long is this window" is decided by the end that knows -- which is the whole shape
+# the node's header asks for.
+#
+# It RETRIES, because the first dial of a boot races the modem: a module that has not finished
+# registering fails a dial attempted twenty seconds after power-on, and that is a window thrown away
+# for something that would have worked at forty-five. Note that `dial` exits 0 when there is no
+# invitation and when there is no SRV record -- those are not failures and are not retried.
+
+set -eu
+
+CLIENT=${CART_DIALOUT_CLIENT:-/usr/local/lib/dialout/dialout-client}
+TRIES=${CART_DIAL_TRIES:-3}
+GAP=${CART_DIAL_GAP:-60}
+
+log() { printf '%s 10-dialout: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
+
+[ -x "$CLIENT" ] || { log "no dialout client at $CLIENT -- skipping"; exit 0; }
+
+_n=1
+while :; do
+    _rc=0
+    "$CLIENT" dial || _rc=$?
+    [ "$_rc" = 0 ] && exit 0
+    if [ "$_n" -ge "$TRIES" ]; then
+        log "dial failed (rc $_rc) on attempt $_n of $TRIES -- giving up this window"
+        exit 1
+    fi
+    log "dial failed (rc $_rc) on attempt $_n -- the modem may still be registering, retrying in ${GAP}s"
+    _n=$((_n + 1))
+    sleep "$GAP"
+done

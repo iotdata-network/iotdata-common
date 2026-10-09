@@ -1,0 +1,123 @@
+#!/bin/sh
+#
+# cartdial -- the one-shot that uses the window the node gave us, then gives the rail back.
+#
+# Runs once per boot, late: the payloads in window.d, then power off. The node is already counting
+# (see d_interface_cart.h): its backstop will cut a cart that will not close itself, and that is a
+# HARD cut with the filesystem still mounted -- so every path through here ends in a halt, including
+# the failures and including the deadline.
+#
+#   cartdial [--no-halt] [--now]
+#     --no-halt   run the payloads and stay up. For bench work, and for the first boot of a new board.
+#     --now       skip the linger: halt even if somebody is logged in.
+#
+# WHY IT WAITS FOR YOU TO LOG OUT. A cart on a bench is otherwise unusable: give it power, it dials,
+# finds no invitation, and halts about a minute later -- under your fingers, while you are reading the
+# journal that would have told you why. So if anybody is logged in, it keeps waiting (and cartbeat
+# keeps beating, which is what holds the rail on). Capped, because a forgotten ssh session on a solar
+# site is exactly the wedged cart the node's backstop exists for, and hitting that backstop is worse
+# than cutting you off.
+#
+# An inhibit file does the same thing permanently, which is what you want on a board that lives on a
+# bench: /etc/cart/inhibit (survives reboots) or /run/cart-inhibit (this boot only).
+
+set -eu
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+WINDOW_D=${CART_WINDOW_D:-$HERE/window.d}
+LINGER_MAX=${CART_LINGER_MAX:-3600}  # 1h of somebody being logged in, inside the node's 2h backstop
+DEADLINE=${CART_DEADLINE:-5400}      # 90min for everything, to match dialout's hold-max on a cart
+POLL=${CART_LINGER_POLL:-30}
+HALT=1 LINGER=1 STAY_REASON="--no-halt"
+
+for a in "$@"; do
+    case $a in
+    --no-halt) HALT=0 LINGER=0 ;;
+    --now) LINGER=0 ;;
+    *) echo "cartdial: unknown option $a" >&2; exit 2 ;;
+    esac
+done
+
+STARTED=$(date +%s)
+log() { printf '%s cartdial: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
+elapsed() { echo $(($(date +%s) - STARTED)); }
+
+# Who is on the box. `who` catches a console or a serial login; the ss check catches ssh, including
+# an operator arriving through the reverse tunnel -- that lands as a connection to 127.0.0.1:22, so
+# it looks local, which is why both are needed and neither is enough.
+sessions() {
+    _n=0
+    if command -v who >/dev/null 2>&1; then _n=$(who 2>/dev/null | grep -c . || true); fi
+    if command -v ss >/dev/null 2>&1; then
+        _s=$(ss -Htn state established '( sport = :22 )' 2>/dev/null | grep -c . || true)
+        _n=$((_n + _s))
+    fi
+    echo "$_n"
+}
+
+inhibited() {
+    for f in /etc/cart/inhibit /run/cart-inhibit; do
+        if [ -e "$f" ]; then
+            STAY_REASON="inhibited by $f"
+            log "$STAY_REASON -- running the payloads but staying up"
+            return 0
+        fi
+    done
+    return 1
+}
+
+halt_now() {
+    if [ "$HALT" = 0 ]; then
+        log "staying up ($STAY_REASON). Stop beating or halt by hand when you are done."
+        exit 0
+    fi
+    log "halting after $(elapsed)s -- the node cuts the rail once the beat stops"
+    # --no-block: systemd will stop cartbeat as part of this, and our own exit does not matter
+    systemctl --no-block poweroff || poweroff
+    exit 0
+}
+
+log "window opened, pid $$"
+
+# ---- the payloads ------------------------------------------------------------------------------
+# Drop-ins rather than a hardcoded dial, because dialout is today's only payload and will not be the
+# last: a blackbox upload or an OTA check should not need this script rewritten. Run in name order,
+# and one that fails does not stop the others -- a window is expensive and whatever else is in here
+# deserves its turn.
+if [ -d "$WINDOW_D" ]; then
+    _ran=0
+    for p in "$WINDOW_D"/*; do
+        [ -f "$p" ] && [ -x "$p" ] || continue
+        _ran=$((_ran + 1))
+        log "payload: $(basename "$p")"
+        if "$p"; then log "payload: $(basename "$p") ok"; else log "payload: $(basename "$p") FAILED (rc $?)"; fi
+    done
+    [ "$_ran" = 0 ] && log "no executable payloads in $WINDOW_D -- this window did nothing"
+    true
+else
+    log "no payload directory at $WINDOW_D -- nothing to do in this window"
+fi
+
+inhibited && { HALT=0; halt_now; }
+
+# ---- hold the rail while somebody is using it --------------------------------------------------
+if [ "$LINGER" = 1 ]; then
+    _n=$(sessions)
+    if [ "$_n" -gt 0 ]; then
+        log "$_n session(s) logged in -- holding the rail (up to ${LINGER_MAX}s)"
+        _waited=0
+        while [ "$_n" -gt 0 ]; do
+            [ "$_waited" -ge "$LINGER_MAX" ] && { log "linger cap reached with $_n session(s) still up -- halting anyway"; break; }
+            [ "$(elapsed)" -ge "$DEADLINE" ] && { log "window deadline reached -- halting"; break; }
+            sleep "$POLL"
+            _waited=$((_waited + POLL))
+            _n=$(sessions)
+            if [ $((_waited % 300)) -lt "$POLL" ] && [ "$_n" -gt 0 ]; then
+                log "still $_n session(s) after ${_waited}s"
+            fi
+        done
+        if [ "$_n" = 0 ]; then log "last session left after ${_waited}s"; fi
+    fi
+fi
+
+halt_now

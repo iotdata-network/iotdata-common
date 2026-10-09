@@ -181,11 +181,15 @@
 //   3. Close itself before the backstop. The backstop is this node's protection against a wedged
 //      cart, not a schedule; a cart that regularly hits it is a cart that is not managing itself.
 //
-// A CART THAT CAN SIGNAL ITS OWN HALT should do it on the same pin. If the last thing the cart does
-// on the way down is pulse that line -- linux's `gpio-poweroff` overlay does exactly this, active
-// 100ms / inactive 100ms / active -- then those pulses read as beats, the beat effectively runs
-// until the true halt, and the settle starts from there instead of from wherever the beating
-// process happened to be killed. Nothing here needs configuring for it: a beat is a beat.
+// A CART DOES NOT SIGNAL ITS HALT, and should not try. Absence of beat already covers every way a
+// cart can stop -- a clean shutdown, a panic, a wedge, the rail browning out -- and one signal that
+// covers all of them is worth more than a second one that covers the tidiest.
+//
+// It is tempting to have the cart pulse this line on the way down (linux's `gpio-poweroff` overlay
+// does exactly that) so the trailing allowance would start from the true halt. Do not: that overlay
+// is a kernel driver and it CLAIMS the GPIO when it probes, so the process doing the beating can no
+// longer drive the same pin. One pin, one writer. The allowance below is sized to cover the
+// shutdown without it.
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -220,10 +224,11 @@ static const char *__tag_cart = "cart";
  *   settle_ms  HAVING BELIEVED IT, HOW LONG THE SHUTDOWN GETS. Nothing else stands between the last
  *              beat and the rail going down, so this is the one that protects the filesystem.
  *
- * They stack: a cart that stops beating has silent_ms + settle_ms before the cut. And if it pulses
- * the pin at its true halt, that lands inside the silence or the settle, is taken as a beat, and
- * the whole trailing allowance restarts from the halt rather than from whenever its beating process
- * happened to be killed -- which is the best case and costs nothing to allow for.
+ * They stack: a cart that stops beating has silent_ms + settle_ms before the cut. Both are measured
+ * from the LAST BEAT, which on a linux cart is wherever its init system happened to kill the beating
+ * process -- early in the shutdown, with filesystems still to flush. So settle_ms has to cover the
+ * REST of that shutdown, not just the halt itself. 30s against a small board's few seconds, and a
+ * cart that can be cut at any instant should have a read-only root anyway.
  */
 #ifndef CART_SILENT_MS_DEFAULT
 #define CART_SILENT_MS_DEFAULT (15u * 1000u) /* ~3 missed beats at the slow end of the intended rate */
@@ -435,8 +440,9 @@ static inline cart_event_t cart_tick(cart_t *const c, const uint32_t now_ms) {
                 return CART_EVENT_LIVE;
             }
             if (c->state == CART_SETTLING) {
-                /* it spoke again inside the settle -- it was pausing, not finished. The halt pulse
-                   of a shutting-down board arrives exactly like this, which is the point. */
+                /* it spoke again inside the settle -- it was pausing, not finished. A stalled
+                   scheduler, a slow unmount, a board that went quiet for longer than silent_ms and
+                   came back: all of them are software still running, which is what a beat means. */
                 c->state = CART_RUNNING;
                 ESP_LOGI(__tag_cart, "window: beating again, settle abandoned");
             }

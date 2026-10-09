@@ -1,0 +1,31 @@
+# Installed by `cart/install.sh`. The window: run the payloads, hold the rail while somebody is
+# logged in, then halt. See cart/cartdial.
+#
+# NOT ordered after network-online.target, which is the one counter-intuitive thing in here: a cart
+# in the field has NO network until its payload dials, so waiting for network-online would sit out
+# wait-online's timeout spending the node's boot budget on nothing. The modem comes up inside the
+# dial, through dialout-link.
+#
+# A cart also does not use dialout's timer or watch mode -- the node's interval IS the schedule:
+#   systemctl disable --now dialout-client.timer
+
+[Unit]
+Description=cartdial (use the window, then give the rail back)
+Documentation=file:/opt/iotdata/src/iotdata-common/tools/dialout/cart/README.md
+After=basic.target cartbeat.service
+Wants=cartbeat.service
+# Every way out of this ends with the rail released. cartdial halts on its own paths; this catches
+# the ones it cannot -- a bug, a kill, the start timeout below.
+OnFailure=cart-halt.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/cart/cart.conf
+ExecStart=/usr/local/lib/cart/cartdial
+# Beyond cartdial's own deadline (CART_DEADLINE, 90min) but well inside the node's backstop (2h), so
+# a wedged payload is halted by us rather than hard-cut by the node with the filesystem mounted.
+TimeoutStartSec=5700
+
+[Install]
+WantedBy=multi-user.target

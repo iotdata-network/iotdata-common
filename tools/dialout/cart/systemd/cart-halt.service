@@ -1,0 +1,13 @@
+# Installed by `cart/install.sh`. The backstop behind cartdial: OnFailure lands here.
+#
+# Deliberately NOT wired to anything else. It is not reached during an ordinary shutdown or reboot
+# (OnFailure fires on failure, not on a stop), so it cannot turn an operator's `reboot` into a
+# poweroff -- which an ExecStopPost on cartdial would have done.
+
+[Unit]
+Description=cart halt (cartdial failed or timed out -- release the rail)
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo "cart-halt: cartdial did not finish cleanly -- halting" | systemd-cat -t cart-halt; systemctl --no-block poweroff'
