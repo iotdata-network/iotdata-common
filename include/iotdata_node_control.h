@@ -7,17 +7,6 @@
 // iotdata_node_control.h - driving a node: the command vocabulary, its packaging, and the
 // translation to and from whatever medium the operator is using.
 //
-// FRAMEWORK, NOT PROTOCOL. iotdata_node.h says what a CONTROL key IS -- its number, its width, its
-// meaning on the wire. This says what an operator CALLS it, how a request becomes that key, and
-// how the pair survives a trip through JSON. Those are different jobs with different lifetimes: a
-// key number is forever, a name is a user interface.
-//
-// AND IT BELONGS TO EVERY CALLER, not to whichever one happened to need it first. This vocabulary
-// lived inside the MQTT gateway, which meant a serial console or a C control tool either grew its
-// own words for the same commands or reached into the gateway for them. One node, driven two ways,
-// must not need two sets of words -- which is also why the primary names are four letters:
-// `vers`, `stat`, `diag` read the same typed at a console as sent over MQTT.
-//
 // A TABLE, so a medium is a thin adapter. Each medium fills an iotdata_node_control_args_t from
 // whatever it has -- JSON members here, argv on a console later -- and the packaging is shared.
 // Adding a medium should not touch the vocabulary, and adding a command should not touch a medium.
@@ -29,16 +18,6 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/*
- * THE MQTT MANAGEMENT CHANNEL. Two topics, suffixed onto whatever prefix a deployment uses: one
- * that requests arrive on, one that every answer goes to.
- *
- * They live here rather than in the gateway because they are not the gateway's: a control tool
- * publishing a request and a monitor subscribing to the answers have to agree on the same two
- * strings, and a second copy of a topic name is a second thing to get wrong. The response topic
- * carries more than control answers -- reports and diagnostics land there too -- but it is one
- * channel, and the alternative was a hodgepodge of topics per producer.
- */
 /* How many stations one request may name. Bounded because each becomes its own DOWN frame in the
    gateway's staging queue: a request that would outrun that queue is refused whole, rather than
    half-delivered with no way to say which half. */
@@ -46,6 +25,10 @@
 #define IOTDATA_NODE_CONTROL_TARGETS_MAX 8
 #endif
 
+/*
+ * THE MQTT MANAGEMENT CHANNEL. Two topics, suffixed onto whatever prefix a deployment uses: one
+ * that requests arrive on, one that every answer goes to.
+ */
 #define IOTDATA_NODE_MQTT_MANAGE_TOPIC_REQ  "/manage/req"
 #define IOTDATA_NODE_MQTT_MANAGE_TOPIC_RESP "/manage/resp"
 
@@ -178,12 +161,10 @@ static inline void iotdata_node_control_init(const iotdata_node_control_command_
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Built-ins first, deliberately: an application must not be able to redefine `boot` and leave an
-   operator's word meaning something else on one node than on every other. */
 static inline const iotdata_node_control_command_t *iotdata_node_control_find(const char *const name) {
     if (name == NULL)
         return NULL;
-    for (uint8_t i = 0; i < IOTDATA_NODE_CONTROL_COMMANDS_COUNT; i++)
+    for (uint8_t i = 0; i < IOTDATA_NODE_CONTROL_COMMANDS_COUNT; i++) // builtins first
         if (strcmp(iotdata_node_control_commands[i].name, name) == 0)
             return &iotdata_node_control_commands[i];
     for (uint8_t i = 0; i < _iotdata_node_control_app_count; i++)
@@ -194,8 +175,6 @@ static inline const iotdata_node_control_command_t *iotdata_node_control_find(co
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Walk every name, built-in then application, so a medium can offer help or completion without
-   knowing where a command came from. Returns NULL past the end. */
 static inline const iotdata_node_control_command_t *iotdata_node_control_at(const uint8_t index) {
     if (index < IOTDATA_NODE_CONTROL_COMMANDS_COUNT)
         return &iotdata_node_control_commands[index];
@@ -207,13 +186,11 @@ static inline const iotdata_node_control_command_t *iotdata_node_control_at(cons
 // PACKAGING
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define _IOTDATA_NODE_CONTROL_VALUE_MAX IOTDATA_TLV_VALUE_MAX
-
 /* Build the CONTROL payload for one command. Returns false when nothing was added. */
 static inline bool iotdata_node_control_build(iotdata_kvr_t *const kv, const iotdata_node_control_command_t *const c, const iotdata_node_control_args_t *const a) {
     if (kv == NULL || c == NULL || a == NULL)
         return false;
-    static uint8_t v[_IOTDATA_NODE_CONTROL_VALUE_MAX]; // XXX
+    static uint8_t v[IOTDATA_TLV_VALUE_MAX]; // XXX
     uint8_t n = _iotdata_node_control_prefix(c, v);
 
     switch (c->arg) {
@@ -337,12 +314,6 @@ static inline uint8_t iotdata_node_control_action(const char *const s) {
     return IOTDATA_NODE_CONTROL_MESH_FILTERS_NONE; /* "none", "remove", absent: no entry */
 }
 
-/* Whether a word IS one of the above, which is a different question from what it parses to. The
-   parsers are deliberately lenient -- an unrecognised scope means "every group" -- and that is
-   right for JSON, where the member name already said what the word was for. On a console nothing
-   says it: a trailing word that means nothing to us is far more likely a mistyped command than an
-   argument, and shrugging it off is how `mesh peers remove 0537` silently becomes `mesh peers`,
-   a REQUEST, with the removal quietly dropped. So the console asks these first. */
 static inline bool _iotdata_node_control_is_station(const char *const s) {
     return s != NULL && s[0] >= '0' && s[0] <= '9';
 }
@@ -488,10 +459,6 @@ static inline const iotdata_node_control_command_t *iotdata_node_control_from_ar
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // MEDIA: JSON
-//
-// The first adapter. A second one -- a serial console taking argv -- fills the same
-// iotdata_node_control_args_t and calls the same iotdata_node_control_build, which is the point of both
-// existing.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #if !defined(IOTDATA_NO_JSON)

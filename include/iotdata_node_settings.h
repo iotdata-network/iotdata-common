@@ -28,9 +28,6 @@
 #endif
 
 #define IOTDATA_NODE_SETTINGS_STATE_TAG     0x53455431u /* "SET1" */
-/* 2: the receive interval and offset moved from SECONDS to MINUTES. The layout did not change, so
-   nothing would otherwise force a reseed -- and a stored 60 would silently stop meaning a minute
-   and start meaning an hour, which is invisible until a node goes quiet. */
 #define IOTDATA_NODE_SETTINGS_STATE_VERSION 2u
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -85,6 +82,7 @@ typedef struct {
 #ifndef IOTDATA_NODE_SETTINGS_DEFAULT_WINDOW_MS
 #define IOTDATA_NODE_SETTINGS_DEFAULT_WINDOW_MS 5000u
 #endif
+
 /* MINUTES, not seconds: u16 seconds capped the interval at 18h, and a slow-cycle node spends more
    of its budget on the receive window than on sensing. One-minute granularity is the whole range
    anyone wants -- nobody reaches for 6025 seconds over 100 minutes.
@@ -250,9 +248,7 @@ static inline bool iotdata_node_settings_at_startup(const iotdata_node_settings_
 
 static inline uint16_t iotdata_node_settings_period_s(const iotdata_node_settings_t *const s, const uint8_t subject) {
     const iotdata_node_settings_report_t *const r = iotdata_node_settings_report_find(s, subject);
-    if (r == NULL || (r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) == 0u)
-        return 0u;
-    return r->period_s;
+    return (r == NULL || (r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) == 0u) ? 0u : r->period_s;
 }
 
 static inline uint16_t iotdata_node_settings_window_ms(const iotdata_node_settings_t *const s) {
@@ -421,6 +417,7 @@ static inline bool _iotdata_node_settings_a2b(const char *const t, bool *const o
 static inline uint8_t _iotdata_node_settings_key_subject(const int i) {
     return (uint8_t)((i - 4) / 2);
 }
+
 static inline bool _iotdata_node_settings_key_is_startup(const int i) {
     return ((i - 4) % 2) == 0;
 }
@@ -553,8 +550,6 @@ static inline bool iotdata_node_settings_key_is_pinned(const int i) {
     return (i < 4) ? iotdata_node_settings_is_pinned((uint8_t)(1u << i)) : iotdata_node_settings_report_is_pinned(_iotdata_node_settings_key_subject(i));
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 

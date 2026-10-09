@@ -285,11 +285,10 @@ static inline void _iotdata_node_down_slot_clear(iotdata_node_down_t *const ds, 
 /* Does this station hold anything we could still put on the air for it? */
 static inline bool iotdata_node_down_holds(iotdata_node_down_t *const ds, const uint16_t station) {
     const iotdata_node_down_station_t *const st = iotdata_node_down_station_find(ds, station);
-    if (st == NULL)
-        return false;
-    for (int j = 0; j < IOTDATA_NODE_DOWN_SLOTS; j++)
-        if (st->slot[j].frame != BUFFER_NONE)
-            return true;
+    if (st != NULL)
+        for (int j = 0; j < IOTDATA_NODE_DOWN_SLOTS; j++)
+            if (st->slot[j].frame != BUFFER_NONE)
+                return true;
     return false;
 }
 
@@ -335,20 +334,19 @@ static inline iotdata_node_down_station_t *_iotdata_node_down_station_evict(iotd
 
 static inline iotdata_node_down_station_t *_iotdata_node_down_station_obtain(iotdata_node_down_t *const ds, const uint16_t station) {
     iotdata_node_down_station_t *st = iotdata_node_down_station_find(ds, station);
-    if (st != NULL)
-        return st;
-    for (int i = 1; i < IOTDATA_NODE_DOWN_STATIONS; i++)
-        if (ds->station[i].station == 0u) {
-            ds->station[i].station = station;
-            ds->count++;
-            return &ds->station[i];
-        }
-    st = _iotdata_node_down_station_evict(ds);
-    st->station = station;
+    if (st == NULL) {
+        for (int i = 1; i < IOTDATA_NODE_DOWN_STATIONS; i++)
+            if (ds->station[i].station == 0u) {
+                ds->station[i].station = station;
+                ds->count++;
+                return &ds->station[i];
+            }
+        st = _iotdata_node_down_station_evict(ds);
+        st->station = station;
+    }
     return st;
 }
 
-/* A slot for a new frame: an empty one, else the oldest, whose frame goes back to the pool. */
 static inline iotdata_node_down_slot_t *_iotdata_node_down_slot_obtain(iotdata_node_down_t *const ds, iotdata_node_down_station_t *const st) {
     int best = 0;
     for (int j = 0; j < IOTDATA_NODE_DOWN_SLOTS; j++) {

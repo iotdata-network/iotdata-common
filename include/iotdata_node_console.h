@@ -31,38 +31,16 @@
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-#include <stddef.h>
-
-typedef void (*iotdata_node_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-
-/* argv[0] is the console name. */
-typedef void (*iotdata_node_console_fn)(iotdata_node_console_emit_fn emit, int argc, char **argv);
-
-typedef struct {
-    const char *name;           /* the verb typed at the console            */
-    iotdata_node_console_fn fn; /* handler                              */
-    const char *help;           /* one-line description for `help` (or NULL) */
-} iotdata_node_console_t;
-
-// ------------------------------------------------------------------------------------------------------------------------
-// ------------------------------------------------------------------------------------------------------------------------
-
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <stddef.h>
+
 #if !defined(ESP_PLATFORM)
 #include <poll.h>
 #include <unistd.h>
-#endif
-
-/* Command output is emitted as a pseudo log line "<TAG> (<ms>) <message>" — the same shape as an
- * ESP_LOG "<LEVEL> (<ms>) tag: msg" line — so a host monitor can grep/strip it by the leading level
- * letter (default 'C'), consistent with the I/W/E/D log lines it's interleaved with. Override the
- * letter before including if it clashes. */
-#ifndef IOTDATA_NODE_CONSOLE_TAG
-#define IOTDATA_NODE_CONSOLE_TAG "C"
 #endif
 
 #if defined(ESP_PLATFORM)
@@ -82,6 +60,31 @@ typedef struct {
 #include "esp_timer.h"
 #pragma GCC diagnostic pop
 #endif
+
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* Command output is emitted as a pseudo log line "<TAG> (<ms>) <message>" — the same shape as an
+ * ESP_LOG "<LEVEL> (<ms>) tag: msg" line — so a host monitor can grep/strip it by the leading level
+ * letter (default 'C'), consistent with the I/W/E/D log lines it's interleaved with. Override the
+ * letter before including if it clashes. */
+#ifndef IOTDATA_NODE_CONSOLE_TAG
+#define IOTDATA_NODE_CONSOLE_TAG "C"
+#endif
+
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
+typedef void (*iotdata_node_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/* argv[0] is the console name. */
+typedef void (*iotdata_node_console_fn)(iotdata_node_console_emit_fn emit, int argc, char **argv);
+
+typedef struct {
+    const char *name;           /* the verb typed at the console            */
+    iotdata_node_console_fn fn; /* handler                              */
+    const char *help;           /* one-line description for `help` (or NULL) */
+} iotdata_node_console_t;
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------

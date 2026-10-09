@@ -544,6 +544,8 @@ static iotdata_node_config_value_t _iotdata_node_config_value[IOTDATA_NODE_CFG_C
 #undef _IOTDATA_NODE_CFG_S_U8
 #undef _IOTDATA_NODE_CFG_TYPE
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /*
  * PINNED: stated on the command line, and so immutable for as long as this run lasts.
  *
@@ -1101,9 +1103,7 @@ static inline void _iotdata_node_config_show(const iotdata_node_console_emit_fn 
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* UNUSED IS NOT AN ERROR HERE: including the adapter and registering the command are separate
-   decisions. A node with a console that does not offer this one still compiles it, and that is
-   cheaper to allow than to make every application prove it wired the command up. */
+/* UNUSED IS NOT AN ERROR HERE: including the adapter and registering the command are separate decisions. */
 __attribute__((unused)) static void iotdata_node_config_console(const iotdata_node_console_emit_fn emit, const int argc, char **const argv) {
     if (argc < 2) {
         emit("config: %u entries%s\n", (unsigned)IOTDATA_NODE_CFG_COUNT, iotdata_node_config_persists(_iotdata_node_config_console_ds) ? "" : " (NOT PERSISTED: nowhere to write them)");
@@ -1143,10 +1143,6 @@ __attribute__((unused)) static void iotdata_node_config_console(const iotdata_no
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Every row as a command-line option, for a --help. Out here rather than in an application because
-   the table already says everything such a listing needs -- the name, the type, the bounds, the
-   default and now what it is FOR -- and a hand-kept list beside it is one that goes stale the first
-   time a row is added without it. */
 static inline void iotdata_node_config_help(const iotdata_node_console_emit_fn emit, const char *const prog) {
     char dflt[64];
     emit("usage: %s [--<setting> <value>] ...\n\n", (prog != NULL) ? prog : "program");

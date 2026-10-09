@@ -6,20 +6,6 @@
 //
 // iotdata_node_status.h - how a node says it is DOING: the single source of truth for STATUS.
 //
-// The key space lives in iotdata_node.h, next to the other TLVs. What lives HERE is everything
-// above the keys: the shape a node fills in, the one encoder that turns it into a payload, the
-// scope vocabulary a request is written in, and the rendering of the answer for a console or for
-// JSON. An application fills a struct and is done; it should not add keys to a payload itself.
-//
-// That matters more for STATUS than for most TLVs, because STATUS is the report every node sends
-// on a period whether anyone asked or not, and it is the one a fleet view is assembled from. Three
-// devices that each emit their own subset in their own order are three parsers at the far end.
-// Before this header there were exactly three: a relay filled a struct, a gateway hardcoded two
-// keys inline, and an end device wrote keys straight into the payload -- in a different order,
-// with a different subset, from the same list.
-//
-// TWO GROUPS, AND A SCOPE.
-//
 //   node   0x00..0x1F   uptime, restarts, why it last booted, supply, heap -- true of any node
 //   mesh   0x20..0x3F   parent, cost, and the counters of taking part in a mesh
 //
@@ -33,9 +19,6 @@
 // a presence flag. A gateway on mains has no supply reading and a Linux box's "free heap" means
 // something different from an MCU's, so both are omitted rather than sent as zero -- a zero here
 // would read as a flat battery or an exhausted heap.
-//
-// FORMATS, NEVER LOGS. Everything that renders fills a caller's buffer and returns it, so the same
-// call serves an ESP_LOG line, a USB console reply and an MQTT payload.
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -75,6 +58,8 @@ typedef struct {
     uint32_t forwards, duplicates;
 } iotdata_node_status_mesh_t;
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /*
  * The node group, plus the mesh group it may or may not have. One struct is the whole of what a
  * node reports about itself, so a device that grows a mesh -- or loses a battery -- changes a
@@ -110,11 +95,9 @@ typedef struct {
    a periodic report -- which asks for nothing -- must not carry three of them, and a mistyped
    request must not cost twenty frames of airtime. A caller that wants a table says which. */
 static inline bool iotdata_node_status_scope_wants(const uint8_t scope, const uint8_t group) {
-    const uint8_t want = (scope == 0) ? (uint8_t)IOTDATA_NODE_STATUS_SCOPE_DEFAULT : scope;
-    return (want & group) != 0;
+    return (((scope == 0) ? (uint8_t)IOTDATA_NODE_STATUS_SCOPE_DEFAULT : scope) & group) != 0;
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* "node", "mesh", "stations", "filters", "peers", or any combination; "all" is every group
@@ -143,7 +126,6 @@ static inline uint8_t iotdata_node_status_scope_from_name(const char *const s) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Is this word one of ours at all? The parser above is deliberately lenient -- an unrecognised
    scope means the default -- which is right where a member name already said what the word was
@@ -153,7 +135,6 @@ static inline bool iotdata_node_status_scope_is_name(const char *const s) {
     return s != NULL && iotdata_node_status_scope_from_name(s) != 0;
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline const char *iotdata_node_status_scope_name(const uint8_t scope, char *const out, const size_t size) {
@@ -179,10 +160,6 @@ static inline const char *iotdata_node_status_scope_name(const uint8_t scope, ch
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // PACKAGING
-//
-// One encoder, so every node emits the same keys in the same order. The order is the key order,
-// which is also the order they read in: how long it has been up, how many times it has not been,
-// why, then how it feels.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void _iotdata_node_status_pack_node(iotdata_kvr_t *const kv, const iotdata_node_status_t *const s) {
@@ -213,7 +190,6 @@ static inline void _iotdata_node_status_pack_node(iotdata_kvr_t *const kv, const
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void _iotdata_node_status_pack_mesh(iotdata_kvr_t *const kv, const iotdata_node_status_mesh_t *const m) {
     if (!m->present)
@@ -239,16 +215,7 @@ static inline void _iotdata_node_status_pack_mesh(iotdata_kvr_t *const kv, const
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
-/*
- * The STATUS payload for one node, for the groups asked for. Returns the length, or -1 if it did
- * not fit.
- *
- * An EMPTY payload is a legitimate answer and not an error: a plain sensor asked for the mesh
- * group is correctly telling you it is in no mesh, and answering with the node group it was not
- * asked for would be worse than answering with nothing.
- */
 static inline int iotdata_node_status_pack(iotdata_kvr_t *const kv, const iotdata_node_status_t *const s, const uint8_t scope) {
     if (kv == NULL || s == NULL)
         return -1;
@@ -261,10 +228,6 @@ static inline int iotdata_node_status_pack(iotdata_kvr_t *const kv, const iotdat
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // RENDERING
-//
-// One line, for a console or a log. Seconds are printed as seconds: a duration in `2h13m` reads
-// better to a person, but this line is also grepped and diffed, and the caller that wants the
-// prettier form already has secs2str.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_NODE_STATUS_STR_MAX 200
@@ -300,9 +263,6 @@ static inline const char *iotdata_node_status_str(const iotdata_node_status_t *c
         _STATUS_APPEND(" heap=%u/%u", (unsigned)s->heap_free, (unsigned)s->heap_min);
     if (s->mesh.present) {
         _STATUS_APPEND(" mesh=%s", iotdata_node_tlv_status_mesh_state_str(s->mesh.state));
-        /* a parent, and a distance to the root, only mean anything to a node that HAS a place in
-           the tree: a root is at 0 and a joined node n hops out, while a searching or orphaned one
-           has neither, and printing the stale or sentinel value reads as though it did */
         if (s->mesh.state == IOTDATA_NODE_STATUS_MESH_STATE_JOINED)
             _STATUS_APPEND(" parent=%04X@%ddBm", (unsigned)s->mesh.parent, (int)s->mesh.parent_rssi);
         if (s->mesh.state == IOTDATA_NODE_STATUS_MESH_STATE_JOINED || s->mesh.state == IOTDATA_NODE_STATUS_MESH_STATE_GATEWAY)
@@ -315,11 +275,6 @@ static inline const char *iotdata_node_status_str(const iotdata_node_status_t *c
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // MEDIA: JSON
-//
-// The generic TLV renderer already turns a STATUS key into a number, which is right for a counter
-// and wrong for an enumeration: `reason: 3` and `mesh-state: 2` send a reader to the header file.
-// This is the same hook iotdata_node_version_json_key uses, for the same reason -- the keys that mean
-// something other than their value.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #if !defined(IOTDATA_NO_JSON)

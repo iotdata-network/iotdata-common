@@ -1,0 +1,27 @@
+
+
+# [DEVICE]
+cd /opt/iotdata/src/iotdata-common/tools/dialout
+apt-get install -y --no-install-recommends openssh-client bind9-dnsutils
+cp dialout.client-iotdata.network.cfg dialout.$(hostname).cfg
+./dialout-client keygen                  # key goes to /var/lib/dialout-client/id_dialout, prints the pubkey line: ssh-ed25519 AAAA... dialout:<hostname>
+./dialout-client check 		   # Expect: name, token and tunnel port as in the table above; 
+
+# [SERVER]
+echo 'ssh-ed25519 AAAA...paste...the...line... dialout:iotdata-tst-2' | ./dialout-server enrol iotdata-tst-2
+./dialout-server clients
+
+# [DEVICE]
+./dialout-client install --watch         # asks every 60s; --every 300 is gentler, see notes
+                                         # copies the client to /usr/local/lib/dialout and runs it from there; re-run from here to update
+systemctl status dialout-client-watch --no-pager
+journalctl -u dialout-client-watch -f
+
+# [SERVER]
+./dialout-server wait --for iotdata-tst-2
+
+./dialout-client status                  # check output, where it is installed (and whether that copy is older than this one), plus the service status
+./dialout-client uninstall               # [DEVICE] removes the watch (and any timer)
+./dialout-server revoke iotdata-tst-2    # [SERVER] only if the board should never dial in again
+# optional [DEVICE]: rm -rf /usr/local/lib/dialout /var/lib/dialout-client; rm dialout.$(hostname).cfg
+

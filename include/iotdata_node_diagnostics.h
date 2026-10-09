@@ -6,8 +6,6 @@
 //
 // iotdata_node_diagnostics.h - what a node RECORDED: the single source of truth for DIAGNOSTICS.
 //
-// Two things live here, and the second is why this replaced iotdata_blackbox.h.
-//
 // THE ADAPTER binds the blackbox recorder (iotdata-depend/blackbox) to iotdata: the backend for
 // this platform, the clock, and the one record type every node shares -- a lifecycle event. That
 // part is unchanged; only the file name is.
@@ -24,8 +22,8 @@
 //     iotdata_node_diagnostics_begin(reason, cold); /* once, at startup */
 //     iotdata_node_diagnostics_tick(now_ms);        /* each loop pass; flushes on its own schedule */
 //
-// and the node's hooks are iotdata_node_diagnostics_pull / _control / _control_actions, passed straight to
-// node_begin or into an iotdata_node_params_t.
+// and the node's hooks are iotdata_node_diagnostics_pull / _control / _control_actions, passed
+// straight to node_begin or into an iotdata_node_params_t.
 //
 // EVERY app-facing call COMPILES TO NOTHING when IOTDATA_NODE_DIAGNOSTICS is 0. They are functions
 // rather than macros so that the disabled build still type-checks its call sites -- a macro that
@@ -49,6 +47,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Off unless an application says otherwise. The value chooses how far a record survives:
      0  off, compiled out entirely
@@ -265,8 +266,7 @@ void iotdata_node_blackbox_begin(void);
 
 /* Convenience: record a lifecycle event against any handle. */
 static inline int iotdata_node_blackbox_lifecycle(blackbox_handle_t *h, iotdata_node_bb_lc_event_t ev, uint8_t reason) {
-    const iotdata_node_bb_lifecycle_t r = { (uint8_t)ev, reason };
-    return blackbox_insert(h, &iotdata_node_blackbox_config_lifecycle, &r);
+    return blackbox_insert(h, &iotdata_node_blackbox_config_lifecycle, &(const iotdata_node_bb_lifecycle_t){ (uint8_t)ev, reason });
 }
 
 /* Convenience: record a power state, a rail description, or one detail, against any handle. */
@@ -278,8 +278,6 @@ static inline int iotdata_node_blackbox_power_source(blackbox_handle_t *h, const
     return blackbox_insert(h, &iotdata_node_blackbox_config_power_source, r);
 }
 
-/* The strings are COPIED, bounded by the record: a key is a word and a value is a short phrase, and
-   that bound is per attribute rather than per record-set, which is the point of one fact per line. */
 static inline int iotdata_node_blackbox_power_detail(blackbox_handle_t *h, const uint8_t rail, const char *const key, const char *const value) {
     iotdata_node_bb_power_detail_t r = { .rail = rail, .key = { 0 }, .value = { 0 } };
     (void)snprintf(r.key, sizeof(r.key), "%s", key != NULL ? key : "");
@@ -393,11 +391,9 @@ static inline blackbox_handle_t *iotdata_node_diagnostics_handle(void) {
    recorder still answers a diagnostics request, emptily. */
 static inline bool iotdata_node_diagnostics_begin(const uint8_t reason, const bool cold) {
     iotdata_node_blackbox_begin(); /* seed the clock BEFORE init: see the note on the magic word */
-    if (blackbox_init(&_iotdata_node_diagnostics_handle, &_iotdata_node_diagnostics_config) != 0)
-        return false;
-    _iotdata_node_diagnostics_ready = true;
-    (void)iotdata_node_blackbox_lifecycle(&_iotdata_node_diagnostics_handle, cold ? IOTDATA_NODE_BB_LC_BOOT : IOTDATA_NODE_BB_LC_WAKE, reason);
-    return true;
+    if ((_iotdata_node_diagnostics_ready = (blackbox_init(&_iotdata_node_diagnostics_handle, &_iotdata_node_diagnostics_config) != 0)))
+        (void)iotdata_node_blackbox_lifecycle(&_iotdata_node_diagnostics_handle, cold ? IOTDATA_NODE_BB_LC_BOOT : IOTDATA_NODE_BB_LC_WAKE, reason);
+    return _iotdata_node_diagnostics_ready;
 }
 
 static inline void iotdata_node_diagnostics_event(const iotdata_node_bb_lc_event_t ev, const uint8_t reason) {
@@ -437,24 +433,20 @@ static inline void iotdata_node_diagnostics_clear(void) {
     }
 }
 
-/* One record per call, from `cursor` (start it at 0), 0 when there are no more. This is the shape
-   both node layers want for their diagnostics report: node_diag_fn and iotdata_node_diag_fn. */
 static inline size_t iotdata_node_diagnostics_pull(size_t *const cursor, char *const out, const size_t outsize) {
-    if (!_iotdata_node_diagnostics_ready)
-        return 0;
-    const int n = blackbox_pull(&_iotdata_node_diagnostics_handle, cursor, out, outsize);
-    return (n > 0) ? strlen(out) : 0;
+    if (_iotdata_node_diagnostics_ready)
+        if (blackbox_pull(&_iotdata_node_diagnostics_handle, cursor, out, outsize) > 0)
+            return strlen(out);
+    return 0;
 }
 
-/* The recorder's own housekeeping: its flush policy runs on this. Give it the same millisecond
-   clock the rest of the loop uses; it works out its own interval. */
 static inline void iotdata_node_diagnostics_tick(const uint32_t now_ms) {
-    if (!_iotdata_node_diagnostics_ready)
-        return;
-    if (_iotdata_node_diagnostics_ticked_ms == 0)
+    if (_iotdata_node_diagnostics_ready) {
+        if (_iotdata_node_diagnostics_ticked_ms == 0)
+            _iotdata_node_diagnostics_ticked_ms = now_ms;
+        blackbox_tick(&_iotdata_node_diagnostics_handle, now_ms - _iotdata_node_diagnostics_ticked_ms);
         _iotdata_node_diagnostics_ticked_ms = now_ms;
-    blackbox_tick(&_iotdata_node_diagnostics_handle, now_ms - _iotdata_node_diagnostics_ticked_ms);
-    _iotdata_node_diagnostics_ticked_ms = now_ms;
+    }
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -462,50 +454,42 @@ static inline void iotdata_node_diagnostics_tick(const uint32_t now_ms) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_node_diagnostics_stat(void) {
-    blackbox_status_t st;
-    if (!_iotdata_node_diagnostics_ready)
-        _iotdata_node_diagnostics_say("diag: unavailable (recorder did not start)");
-    else if (blackbox_status(&_iotdata_node_diagnostics_handle, &st)) {
-        (void)blackbox_status_str(&st, BLACKBOX_STATUS_ALL, _iotdata_node_diagnostics_line, sizeof(_iotdata_node_diagnostics_line));
-        _iotdata_node_diagnostics_say(_iotdata_node_diagnostics_line);
-    }
-}
-
-/*
- * A dump is STARTED here and drained by iotdata_node_diagnostics_pump on later passes, a chunk at a
- * time: a full store is thousands of records and writing them in one call would stall the loop
- * long enough to lose frames. The flush first is what makes the dump cover the staged pool as well
- * as the store.
- */
-static inline void iotdata_node_diagnostics_dump_start(void) {
-    if (!_iotdata_node_diagnostics_ready) {
-        _iotdata_node_diagnostics_say("diag: unavailable (recorder did not start)");
-        return;
-    }
-    iotdata_node_diagnostics_flush();
-    _iotdata_node_diagnostics_dump.cursor = 0;
-    _iotdata_node_diagnostics_dump.count = 0;
-    _iotdata_node_diagnostics_dump.active = true;
-    _iotdata_node_diagnostics_say("diag: dump begin");
-}
-
-/* Call every loop pass. Emits at most IOTDATA_NODE_DIAGNOSTICS_DUMP_CHUNK records and returns whether a
-   dump is still running. `emit` is asked for on every pass rather than remembered from the start,
-   because by the time the records flow the console's turn to speak is usually over. */
-static inline bool iotdata_node_diagnostics_pump(void) {
-    if (!_iotdata_node_diagnostics_dump.active || !_iotdata_node_diagnostics_ready)
-        return false;
-    for (int i = 0; i < IOTDATA_NODE_DIAGNOSTICS_DUMP_CHUNK; i++) {
-        if (blackbox_pull(&_iotdata_node_diagnostics_handle, &_iotdata_node_diagnostics_dump.cursor, _iotdata_node_diagnostics_rec, sizeof(_iotdata_node_diagnostics_rec)) <= 0) {
-            (void)snprintf(_iotdata_node_diagnostics_line, sizeof(_iotdata_node_diagnostics_line), "diag: dump end (%d record(s))", _iotdata_node_diagnostics_dump.count);
+    if (_iotdata_node_diagnostics_ready) {
+        blackbox_status_t st;
+        if (blackbox_status(&_iotdata_node_diagnostics_handle, &st)) {
+            (void)blackbox_status_str(&st, BLACKBOX_STATUS_ALL, _iotdata_node_diagnostics_line, sizeof(_iotdata_node_diagnostics_line));
             _iotdata_node_diagnostics_say(_iotdata_node_diagnostics_line);
-            _iotdata_node_diagnostics_dump.active = false;
-            return false;
         }
-        _iotdata_node_diagnostics_say(_iotdata_node_diagnostics_rec);
-        _iotdata_node_diagnostics_dump.count++;
+    } else
+        _iotdata_node_diagnostics_say("diag: unavailable (recorder did not start)");
+}
+
+static inline void iotdata_node_diagnostics_dump_start(void) {
+    if (_iotdata_node_diagnostics_ready) {
+        iotdata_node_diagnostics_flush();
+        _iotdata_node_diagnostics_dump.cursor = 0;
+        _iotdata_node_diagnostics_dump.count = 0;
+        _iotdata_node_diagnostics_dump.active = true;
+        _iotdata_node_diagnostics_say("diag: dump begin");
+    } else
+        _iotdata_node_diagnostics_say("diag: unavailable (recorder did not start)");
+}
+
+static inline bool iotdata_node_diagnostics_pump(void) {
+    if (_iotdata_node_diagnostics_ready && _iotdata_node_diagnostics_dump.active) {
+        for (int i = 0; i < IOTDATA_NODE_DIAGNOSTICS_DUMP_CHUNK; i++) {
+            if (blackbox_pull(&_iotdata_node_diagnostics_handle, &_iotdata_node_diagnostics_dump.cursor, _iotdata_node_diagnostics_rec, sizeof(_iotdata_node_diagnostics_rec)) <= 0) {
+                (void)snprintf(_iotdata_node_diagnostics_line, sizeof(_iotdata_node_diagnostics_line), "diag: dump end (%d record(s))", _iotdata_node_diagnostics_dump.count);
+                _iotdata_node_diagnostics_say(_iotdata_node_diagnostics_line);
+                _iotdata_node_diagnostics_dump.active = false;
+                return false;
+            }
+            _iotdata_node_diagnostics_say(_iotdata_node_diagnostics_rec);
+            _iotdata_node_diagnostics_dump.count++;
+        }
+        return true;
     }
-    return true;
+    return false;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -537,40 +521,32 @@ static const uint8_t iotdata_node_diagnostics_control_actions[] = {
 #define IOTDATA_NODE_DIAGNOSTICS_PULL                  iotdata_node_diagnostics_pull
 #define IOTDATA_NODE_DIAGNOSTICS_CONTROL               iotdata_node_diagnostics_node_control
 
-/* Returns whether the command was one of ours. An app's own control hook offers everything it does
-   not know to this, then falls through to its own. */
 static inline bool iotdata_node_diagnostics_control(const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
-    if (!_iotdata_node_diagnostics_ready)
-        return false; /* advertised, but not working today: counted unknown rather than pretended */
-    if (subject != IOTDATA_NODE_TLV_DIAGNOSTICS)
-        return false;
-    switch (action) {
-    case IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE: {
-        const bool on = (arglen >= 1) ? (args[0] != 0u) : true;
-        iotdata_node_diagnostics_enable(on);
-        _iotdata_node_diagnostics_say(on ? "diag: enabled" : "diag: disabled");
-        return true;
-    }
-    case IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR:
-        iotdata_node_diagnostics_clear();
-        _iotdata_node_diagnostics_say("diag: cleared");
-        return true;
+    if (_iotdata_node_diagnostics_ready)
+        if (subject == IOTDATA_NODE_TLV_DIAGNOSTICS)
+            switch (action) {
+            case IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE: {
+                const bool on = (arglen >= 1) ? (args[0] != 0u) : true;
+                iotdata_node_diagnostics_enable(on);
+                _iotdata_node_diagnostics_say(on ? "diag: enabled" : "diag: disabled");
+                return true;
+            }
+            case IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR:
+                iotdata_node_diagnostics_clear();
+                _iotdata_node_diagnostics_say("diag: cleared");
+                return true;
 #if IOTDATA_NODE_DIAGNOSTICS_DUMP
-    case IOTDATA_NODE_ACTION_DIAGNOSTICS_DUMP:
-        iotdata_node_diagnostics_dump_start();
-        return true;
+            case IOTDATA_NODE_ACTION_DIAGNOSTICS_DUMP:
+                iotdata_node_diagnostics_dump_start();
+                return true;
 #endif
-    default:
-        return false;
-    }
+            default:
+                break;
+            }
+    return false;
 }
 
-/* The same handler in the shape an end device's node layer wants (iotdata_node_control_fn). The station is
-   narration only: there is ONE recorder per board, so a request to any station a board stands up
-   reads and manages the same log. A relay or gateway, whose hook carries a clock instead, calls
-   iotdata_node_diagnostics_control directly from its own default branch. */
-static inline bool iotdata_node_diagnostics_node_control(const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
-    (void)station;
+static inline bool iotdata_node_diagnostics_node_control(__attribute__((unused)) const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
     return iotdata_node_diagnostics_control(subject, action, args, arglen);
 }
 
@@ -582,8 +558,7 @@ static const uint8_t *const iotdata_node_diagnostics_control_actions = NULL;
 #define IOTDATA_NODE_DIAGNOSTICS_PULL                  NULL
 #define IOTDATA_NODE_DIAGNOSTICS_CONTROL               NULL
 
-static inline iotdata_node_diagnostics_emit_fn iotdata_node_diagnostics_emit_set(const iotdata_node_diagnostics_emit_fn fn) {
-    (void)fn;
+static inline iotdata_node_diagnostics_emit_fn iotdata_node_diagnostics_emit_set(__attribute__((unused)) const iotdata_node_diagnostics_emit_fn fn) {
     return NULL;
 }
 static inline bool iotdata_node_diagnostics_ready(void) {
@@ -592,41 +567,27 @@ static inline bool iotdata_node_diagnostics_ready(void) {
 static inline blackbox_handle_t *iotdata_node_diagnostics_handle(void) {
     return NULL;
 }
-static inline bool iotdata_node_diagnostics_begin(const uint8_t reason, const bool cold) {
-    (void)reason;
-    (void)cold;
+static inline bool iotdata_node_diagnostics_begin(__attribute__((unused)) const uint8_t reason, __attribute__((unused)) const bool cold) {
     return false;
 }
-static inline void iotdata_node_diagnostics_event(const iotdata_node_bb_lc_event_t ev, const uint8_t reason) {
-    (void)ev;
-    (void)reason;
+static inline void iotdata_node_diagnostics_event(__attribute__((unused)) const iotdata_node_bb_lc_event_t ev, __attribute__((unused)) const uint8_t reason) {
 }
-static inline void iotdata_node_diagnostics_power(const iotdata_node_bb_power_event_t *const r) {
-    (void)r;
+static inline void iotdata_node_diagnostics_power(__attribute__((unused)) const iotdata_node_bb_power_event_t *const r) {
 }
-static inline void iotdata_node_diagnostics_power_source(const iotdata_node_bb_power_source_t *const r) {
-    (void)r;
+static inline void iotdata_node_diagnostics_power_source(__attribute__((unused)) const iotdata_node_bb_power_source_t *const r) {
 }
-static inline void iotdata_node_diagnostics_power_detail(const uint8_t rail, const char *const key, const char *const value) {
-    (void)rail;
-    (void)key;
-    (void)value;
+static inline void iotdata_node_diagnostics_power_detail(__attribute__((unused)) const uint8_t rail, __attribute__((unused)) const char *const key, __attribute__((unused)) const char *const value) {
 }
 static inline void iotdata_node_diagnostics_flush(void) {
 }
-static inline void iotdata_node_diagnostics_enable(const bool on) {
-    (void)on;
+static inline void iotdata_node_diagnostics_enable(__attribute__((unused)) const bool on) {
 }
 static inline void iotdata_node_diagnostics_clear(void) {
 }
-static inline size_t iotdata_node_diagnostics_pull(size_t *const cursor, char *const out, const size_t outsize) {
-    (void)cursor;
-    (void)out;
-    (void)outsize;
+static inline size_t iotdata_node_diagnostics_pull(__attribute__((unused)) size_t *const cursor, __attribute__((unused)) char *const out, __attribute__((unused)) const size_t outsize) {
     return 0;
 }
-static inline void iotdata_node_diagnostics_tick(const uint32_t now_ms) {
-    (void)now_ms;
+static inline void iotdata_node_diagnostics_tick(__attribute__((unused)) const uint32_t now_ms) {
 }
 static inline void iotdata_node_diagnostics_stat(void) {
 }
@@ -635,19 +596,12 @@ static inline void iotdata_node_diagnostics_dump_start(void) {
 static inline bool iotdata_node_diagnostics_pump(void) {
     return false;
 }
-static inline bool iotdata_node_diagnostics_control(const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
-    (void)subject;
-    (void)action;
-    (void)args;
-    (void)arglen;
+static inline bool iotdata_node_diagnostics_control(__attribute__((unused)) const uint8_t subject, __attribute__((unused)) const uint8_t action, __attribute__((unused)) const uint8_t *const args,
+                                                    __attribute__((unused)) const uint8_t arglen) {
     return false;
 }
-static inline bool iotdata_node_diagnostics_node_control(const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
-    (void)station;
-    (void)subject;
-    (void)action;
-    (void)args;
-    (void)arglen;
+static inline bool iotdata_node_diagnostics_node_control(__attribute__((unused)) const uint16_t station, __attribute__((unused)) const uint8_t subject, __attribute__((unused)) const uint8_t action,
+                                                         __attribute__((unused)) const uint8_t *const args, __attribute__((unused)) const uint8_t arglen) {
     return false;
 }
 
@@ -693,11 +647,11 @@ static long iotdata_node_bb__field_num(const char *const in, const int idx, cons
 static void iotdata_node_bb__field_str(const char *const in, const int idx, char *const out, const size_t outlen, const bool to_end) {
     const char *const f = iotdata_node_bb__field(in, idx);
     out[0] = '\0';
-    if (iotdata_node_bb__field_absent(f))
-        return;
-    const char *end = to_end ? strchr(f, '\n') : strchr(f, ',');
-    const size_t len = (end != NULL) ? (size_t)(end - f) : strlen(f);
-    (void)snprintf(out, outlen, "%.*s", (int)(len < outlen - 1 ? len : outlen - 1), f);
+    if (!iotdata_node_bb__field_absent(f)) {
+        const char *end = to_end ? strchr(f, '\n') : strchr(f, ',');
+        const size_t len = (end != NULL) ? (size_t)(end - f) : strlen(f);
+        (void)snprintf(out, outlen, "%.*s", (int)(len < outlen - 1 ? len : outlen - 1), f);
+    }
 }
 
 /* An absent numeric field is printed as nothing at all: ",,". */
@@ -811,8 +765,7 @@ void iotdata_node_blackbox_begin(void) {
 }
 
 int iotdata_node_blackbox_clock(char *out, size_t n) {
-    const uint32_t up = (uint32_t)(esp_timer_get_time() / 1000);
-    return snprintf(out, n, "%u:%u", (unsigned)(++iotdata_node_blackbox_seq), (unsigned)up);
+    return snprintf(out, n, "%u:%u", (unsigned)(++iotdata_node_blackbox_seq), (unsigned)(esp_timer_get_time() / 1000));
 }
 #else
 void iotdata_node_blackbox_begin(void) { /* host: the clock is a real timestamp, nothing to seed */
@@ -821,8 +774,7 @@ void iotdata_node_blackbox_begin(void) { /* host: the clock is a real timestamp,
 int iotdata_node_blackbox_clock(char *out, size_t n) {
     struct timespec ts;
     timespec_get(&ts, TIME_UTC); /* C11 standard — no POSIX feature-test macro needed */
-    const long long ms = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-    return snprintf(out, n, "%lld", ms);
+    return snprintf(out, n, "%lld", (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 #endif
 

@@ -6,14 +6,11 @@
 //
 // iotdata_node_version.h - what a node says it is: the single source of truth for VERSION.
 //
-// An application includes this, declares its name and release line, and gets the whole VERSION
-// TLV and a printable line for its console. It should not assemble any of these strings itself --
-// the point of one header is that every node in the fleet answers the same question the same way,
-// and that a reader can parse one grammar rather than guessing per device.
+// An application should not assemble any of these strings itself -- the point of one header is that
+// every node in the fleet answers the same question the same way, and that a reader can parse one
+// grammar rather than guessing per device.
 //
-// FOUR BUCKETS AND AN INVENTORY. The key space and the grammars are defined in iotdata_node.h, at
-// the VERSION keys; the reasoning for the split is there too. This header owns the ENCODING and
-// the PER-PLATFORM DETECTION:
+// The key space and the grammars are defined in iotdata_node.h, at the VERSION keys.
 //
 //   hardware      board/arch            detected: chip on ESP-IDF, device-tree or DMI on Linux
 //   firmware      stack/version[+low]   detected: IDF + bootloader, or kernel
@@ -21,15 +18,13 @@
 //   serial        hex                   detected: eFuse MAC, cpu serial, machine-id
 //   capabilities  16-bit entries        declared by the app, seeded from build flags
 //
-// FORMATS, NEVER LOGS. Every function here fills a buffer the caller owns and hands it back; where
-// it goes is the application's business, because an ESP-IDF app wants ESP_LOGI, a Linux daemon
-// wants PRINTF_INFO, and a serial command wants a tagged emit callback. Same rule as d_format.h,
-// and it is what makes this header shareable between them.
+// Every function here fills a buffer the caller owns and hands it back; where it goes is the
+// application's business.
 //
-// THE STAMP MUST BE REAL. IOTDATA_NODE_VERSION_STAMP comes from the build, regenerated every time, and
-// a build that does not set it reports IOTDATA_NODE_VERSION_STAMP_NONE so the omission is visible
-// rather than silently inherited from whenever the tree was last touched. A stamp that lies is
-// worse than no stamp: it is how an hour goes into debugging a binary that is not the one running.
+// IOTDATA_NODE_VERSION_STAMP comes from the build, regenerated every time, and a build that does
+// not set it reports IOTDATA_NODE_VERSION_STAMP_NONE so the omission is visible rather than
+// silently inherited from whenever the tree was last touched. A stamp that lies is worse than
+// no stamp: it is how an hour goes into debugging a binary that is not the one running.
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -47,8 +42,6 @@
 #define IOTDATA_NODE_VERSION_APP "unknown"
 #endif
 
-/* Normative and hand-set at release points, NOT the ordering key -- see iotdata_node.h. A dev
-   build still tracks a release line, so this is always present rather than optional. */
 #ifndef IOTDATA_NODE_VERSION_SEMVER
 #define IOTDATA_NODE_VERSION_SEMVER "0.0.0"
 #endif
@@ -62,9 +55,7 @@
 #define IOTDATA_NODE_VERSION_STAMP_NONE          "000000000000"
 #define IOTDATA_NODE_VERSION_STAMP_LEN           12
 
-/* Field sizes in CHARACTERS -- a buffer for one is declared [SIZE + 1] for the terminator, so
-   these read as the lengths they are rather than as one less than they look. Generous against the grammars (a `board/arch` runs ~15, a `software` ~24) and cheap:
-   the whole TLV is ~80 bytes of kvr, one frame, sent at startup and on request. */
+/* Field sizes in CHARACTERS, not including terminator */
 #define IOTDATA_NODE_VERSION_HARDWARE_MAX        24
 #define IOTDATA_NODE_VERSION_FIRMWARE_MAX        24
 #define IOTDATA_NODE_VERSION_SOFTWARE_MAX        48
@@ -252,8 +243,6 @@ static inline void iotdata_node_version_caps_init(iotdata_node_version_caps_t *c
     }
 }
 
-/* OR-merges into an existing category rather than adding a second entry, so a caller can declare
-   capabilities from several places without having to collect them first. */
 static inline bool iotdata_node_version_caps_add(iotdata_node_version_caps_t *const c, const uint8_t key, const uint16_t mask) {
     if (key >= IOTDATA_NODE_VERSION_CAPS_COUNT || (mask & ~IOTDATA_NODE_VERSION_CAPS_MASK_MAX) != 0 || mask == 0)
         return false;
@@ -340,7 +329,6 @@ static inline void _iotdata_node_version_sep(char *const dst, const size_t size,
     dst[*n] = '\0';
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #if defined(PLATFORM_ESP32)
@@ -449,7 +437,6 @@ static inline const char *iotdata_node_version_serial(char *const buf, const siz
     return snprintf_inline(buf, size, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #elif defined(PLATFORM_LINUX)
@@ -585,7 +572,6 @@ static inline const char *iotdata_node_version_serial(char *const buf, const siz
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Three letters to a month number, for the one place a C build hands over a date as English. */
 static inline int _iotdata_node_version_month(const char *const mon) {
     static const char names[] = "janfebmaraprmayjunjulaugsepoctnovdec";
     char low[4] = { 0, 0, 0, 0 };
@@ -671,15 +657,7 @@ static inline const char *iotdata_node_version_str(char *const buf, const size_t
                            iotdata_node_version_serial(sn, sizeof(sn)), cp[0] != '\0' ? " caps=" : "", cp);
 }
 
-/* The TLV packer needs the kvr writer, so it appears only where the node protocol has been
-   included. Everything above is pure formatting and needs nothing -- which is what lets a host
-   tool include this header on its own just to say what it is. */
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// TAKING THEM APART AGAIN
-//
-// The grammars are defined here, so the splitters belong here too -- otherwise every reader
-// reimplements them and they drift. All three use '/' as the separator, which is what lets one
-// helper serve them all.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* The idx'th `sep`-delimited part of `s`, copied into `out`. Returns its length, or -1 if there is
@@ -762,7 +740,6 @@ static inline int iotdata_node_version_caps_key(const char *const name) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline cJSON *iotdata_node_version_caps_to_json(const iotdata_node_version_caps_t *const caps) {
     cJSON *const o = cJSON_CreateObject();
@@ -781,7 +758,6 @@ static inline cJSON *iotdata_node_version_caps_to_json(const iotdata_node_versio
     return o;
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_node_version_caps_from_json(const cJSON *const obj, iotdata_node_version_caps_t *const caps) {
@@ -805,7 +781,6 @@ static inline bool iotdata_node_version_caps_from_json(const cJSON *const obj, i
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_node_version_json_key(cJSON *const obj, const char *const name, const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
     if (key != IOTDATA_NODE_VERSION_CAPABILITIES)
@@ -820,7 +795,6 @@ static inline bool iotdata_node_version_json_key(cJSON *const obj, const char *c
 
 #endif /* !IOTDATA_NO_JSON */
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline int iotdata_node_version_pack(iotdata_kvr_t *const kv, const iotdata_node_version_caps_t *const caps) {

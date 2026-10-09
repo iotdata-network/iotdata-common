@@ -20,15 +20,15 @@
 #ifndef PLATFORM_ESP32
 
 static inline bool _iotdata_node_sysfs(const char *const path, char *const out, const size_t size) {
+    bool ok = false;
     FILE *const f = fopen(path, "re");
-    if (f == NULL)
-        return false;
-    const bool ok = (fgets(out, (int)size, f) != NULL);
-    (void)fclose(f);
-    if (!ok)
-        return false;
-    out[strcspn(out, "\r\n")] = '\0';
-    return true;
+    if (f != NULL) {
+        ok = (fgets(out, (int)size, f) != NULL);
+        (void)fclose(f);
+        if (ok)
+            out[strcspn(out, "\r\n")] = '\0';
+    }
+    return ok;
 }
 
 static inline uint32_t _iotdata_node_hash32(const char *s) {
@@ -113,7 +113,7 @@ static inline uint16_t iotdata_node_station_from_mac(const char *const tag) {
         return station_id;
     }
 #ifdef PLATFORM_ESP32
-    ESP_LOGW(tag, "board: no mac, station=001");
+    ESP_LOGW(tag, "board: no permanent mac, station=001");
     return 1u;
 #else
     char host[256];

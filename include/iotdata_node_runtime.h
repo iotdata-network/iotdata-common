@@ -47,6 +47,7 @@
 #ifndef IOTDATA_NODE_RECEIVE_EVERY_MS
 #define IOTDATA_NODE_RECEIVE_EVERY_MS (6u * 60u * 60u * 1000u) /* 6 hours between windows */
 #endif
+
 #ifndef IOTDATA_NODE_RECEIVE_WINDOW_MS
 /* How long the receiver stays on. The SAME number the protocol assumes when a RECEIVE
    advertisement states no duration (IOTDATA_NODE_RECEIVE_WINDOW_MS_DEFAULT): a node whose own
@@ -55,6 +56,7 @@
    a default and not a limit. */
 #define IOTDATA_NODE_RECEIVE_WINDOW_MS IOTDATA_NODE_RECEIVE_WINDOW_MS_DEFAULT
 #endif
+
 #ifndef IOTDATA_NODE_DIAG_RECORD_MAX
 #define IOTDATA_NODE_DIAG_RECORD_MAX 128 /* one diagnostic record: only allocated when a device HAS a recorder */
 #endif

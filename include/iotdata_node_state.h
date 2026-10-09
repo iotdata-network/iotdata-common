@@ -4,15 +4,12 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 //
-// iotdata_node_state.h - what a node has to REMEMBER across a restart, as opposed to what it can
+// iotdata_node_state.h - what a node has to remember across a restart, as opposed to what it can
 // be told (CONFIG) or asked (STATUS).
 //
-// THE BOUNDARY, because it will drift otherwise: state is read and written by the firmware ONLY.
-// Never by an operator, never over the air, never rendered. So it needs no names, no validators,
-// no adapters and no wire format -- it is native bytes, and that is the whole reason this is a
-// far smaller thing than CONFIG despite sitting on the same datastore. The moment something here
-// wants to be operator-visible it has stopped being state: settable makes it CONFIG, reportable
-// makes it STATUS. Sequence numbers, cursors and high-water marks stay.
+// Because it will drift otherwise: state is read and written by the firmware ONLY. Never by an
+// operator, never over the air, never rendered. So it needs no names, no validators, no adapters
+// and no wire format -- it is native bytes.
 //
 // MODULES REGISTER THEIR OWN BLOCKS and keep their own memory:
 //
@@ -22,31 +19,14 @@
 // so nothing owns a central struct that every module has to edit, and RTC placement stays a
 // per-module decision. The store holds pointers and serialises on demand.
 //
-// KEYED BY TAG, NEVER BY ORDER. A block is found on reload by its tag, so adding or removing a
-// module does not corrupt the others: unknown tags are skipped, missing ones defaulted, the rest
-// restored. Ordering would make every firmware change a migration.
-//
-// AND THE SIZE AND VERSION MUST MATCH TOO. A tag whose block changed size is defaulted rather than
-// restored, because a struct whose layout moved cannot be partly trusted -- this is the check
-// _RTC_DATA_VALID does not do, comparing a magic only, so a struct that GREW between firmware
-// versions is read back as valid through the old layout. The version catches what size cannot: the
-// same bytes meaning something different, which is the change that would otherwise be restored
-// confidently and be wrong. A module bumps it when its OWN meaning moves; nothing central does.
-//
-// TWO WRITE PATTERNS, AND CONFLATING THEM IS A BUG:
+// A block is found on reload by its tag, so adding or removing a module does not corrupt the
+// others: unknown tags are skipped, missing ones defaulted, the rest restored. Ordering would
+// make every firmware change a migration. A tag whose block changed size is defaulted rather
+// than restored, because a struct whose layout moved cannot be partly trusted.
 //
 //   iotdata_node_state_touch()  write-behind. The tick persists it later. For counters, cursors and
 //                          anything where coming back a little stale is merely lossy.
 //   iotdata_node_state_flush()  write-through, now. For anything where coming back BEHIND is unsafe.
-//
-// A sequence number is the second kind, and the asymmetry is the whole reason this module exists:
-// GAPS ARE SAFE, REPEATS ARE NOT. A gap is how a receiver detects loss and the protocol says so;
-// a repeat is indistinguishable from a duplicate and corrupts dedup and loss accounting alike.
-// Write-behind can come back behind -- persist every 60s, lose power at 59s, and the node reuses
-// numbers it has already sent. So sequence RESERVES AHEAD instead (see below): it persists a high
-// water mark, spends it from RAM, and on an unclean restart resumes at the mark, skipping whatever
-// it had not used. One store write per N packets, and N can be large precisely because skipping
-// forward costs nothing.
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -107,9 +87,7 @@ static inline void iotdata_node_state_init(iotdata_node_state_t *const s, datast
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Register a block. Every insert must happen BEFORE iotdata_node_state_load(), because load is what
-   matches the persisted records against what is registered -- a block inserted afterwards has
-   already missed its restore and is holding whatever the app left in it. */
+/* Register a block, which must happen BEFORE iotdata_node_state_load() */
 static inline bool iotdata_node_state_insert(iotdata_node_state_t *const s, const uint32_t tag, const uint16_t version, void *const data, const size_t size, const void *const defaults) {
     if (s == NULL || data == NULL || size == 0 || size > IOTDATA_NODE_STATE_BYTES_MAX || s->count >= IOTDATA_NODE_STATE_BLOCKS_MAX || s->loaded)
         return false;
@@ -143,36 +121,34 @@ static inline bool iotdata_node_state_load(iotdata_node_state_t *const s) {
     uint8_t *const buf = s->_buffer;
     const size_t buflen = sizeof(s->_buffer);
     size_t len = 0;
-    if (!datastore_read(s->ds, s->key, buf, buflen, &len) || len < 8u)
-        return false;
-    if (((uint32_t)buf[0] << 24 | (uint32_t)buf[1] << 16 | (uint32_t)buf[2] << 8 | buf[3]) != IOTDATA_NODE_STATE_MAGIC || buf[4] != IOTDATA_NODE_STATE_VERSION)
-        return false;
-    size_t at = 8;
-    while (at + 8u <= len) {
-        const uint32_t tag = (uint32_t)buf[at] << 24 | (uint32_t)buf[at + 1] << 16 | (uint32_t)buf[at + 2] << 8 | buf[at + 3];
-        const uint16_t version = (uint16_t)((uint16_t)buf[at + 4] << 8 | buf[at + 5]);
-        const uint16_t size = (uint16_t)((uint16_t)buf[at + 6] << 8 | buf[at + 7]);
-        at += 8u;
-        if (at + size > len)
-            break; /* truncated image: what has been read stands, the rest defaults */
-        for (uint8_t i = 0; i < s->count; i++) {
-            iotdata_node_state_block_t *const b = &s->block[i];
-            /* All THREE must agree. Size catches a struct that changed shape; version catches the
-               nastier one it cannot see -- same bytes, different meaning, which would otherwise be
-               restored confidently and be wrong. */
-            if (b->tag == tag && b->version == version && b->size == size) {
-                memcpy(b->data, &buf[at], size);
-                b->restored = true;
-                s->stat_restored++;
-                break;
+    if (datastore_read(s->ds, s->key, buf, buflen, &len) || len < 8u) {
+        if (((uint32_t)buf[0] << 24 | (uint32_t)buf[1] << 16 | (uint32_t)buf[2] << 8 | buf[3]) == IOTDATA_NODE_STATE_MAGIC && buf[4] == IOTDATA_NODE_STATE_VERSION) {
+            size_t at = 8;
+            while (at + 8u <= len) {
+                const uint32_t tag = (uint32_t)buf[at] << 24 | (uint32_t)buf[at + 1] << 16 | (uint32_t)buf[at + 2] << 8 | buf[at + 3];
+                const uint16_t version = (uint16_t)((uint16_t)buf[at + 4] << 8 | buf[at + 5]);
+                const uint16_t size = (uint16_t)((uint16_t)buf[at + 6] << 8 | buf[at + 7]);
+                at += 8u;
+                if (at + size > len)
+                    break; /* truncated image: what has been read stands, the rest defaults */
+                for (uint8_t i = 0; i < s->count; i++) {
+                    iotdata_node_state_block_t *const b = &s->block[i];
+                    if (b->tag == tag && b->version == version && b->size == size) {
+                        memcpy(b->data, &buf[at], size);
+                        b->restored = true;
+                        s->stat_restored++;
+                        break;
+                    }
+                }
+                at += size;
             }
+            for (uint8_t i = 0; i < s->count; i++)
+                if (!s->block[i].restored)
+                    s->stat_defaulted++;
+            return s->stat_restored > 0;
         }
-        at += size;
     }
-    for (uint8_t i = 0; i < s->count; i++)
-        if (!s->block[i].restored)
-            s->stat_defaulted++;
-    return s->stat_restored > 0;
+    return false;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -209,13 +185,14 @@ static inline bool iotdata_node_state_flush(iotdata_node_state_t *const s) {
         memcpy(&buf[at], b->data, b->size);
         at += b->size;
     }
-    if (!datastore_write(s->ds, s->key, buf, at)) {
+    if (datastore_write(s->ds, s->key, buf, at)) {
+        s->dirty = false;
+        s->stat_saved++;
+        return true;
+    } else {
         s->stat_failed++;
         return false;
     }
-    s->dirty = false;
-    s->stat_saved++;
-    return true;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
