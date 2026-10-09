@@ -7,6 +7,9 @@
 // records the answer in the RTC-retained state; when it is absent the ADC is never brought up
 // again and the packet simply carries no battery field. Nothing else in the app changes.
 //
+// A STRIPBOARD BUILD of this divider, together with the 3V3 regulator it sits beside, is at
+// https://claude.ai/artifact/KQfQiM8DTgeEsBRYc9kjiy ("Battery Divider & Regulator").
+//
 //              VBAT+  (raw cell 3.0-4.2V)
 //                │
 //                ├──────────────┬─────────────────┬──────────────► to 3V3 reg input
@@ -26,7 +29,7 @@
 //                  [R4 100k]  │     E     │       │           │
 //                       │     └─────┬─────┘      GND         GND
 //                      GND         GND
-//                            Q1 2N2222A (NPN)
+//                            Q1 2N3904 (NPN)
 //
 // WHY A PNP AND NOT A P-FET. The pack sits above the GPIO rail, so the high-side switch cannot be
 // driven from a pin directly -- turning it OFF means pulling its control terminal up to VBAT+,
@@ -299,6 +302,8 @@ static inline void battery_range_mv(const battery_profile_t *const p, const bool
         *max_mv += BATTERY_HOT_MAX_RISE_MV;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Piecewise, because a Li-ion cell does not discharge linearly: it falls quickly off the top, sits
    on a long plateau, then drops away below the knee. A straight line over the whole range reads
    ~50% for most of the life and then falls off a cliff. LiFePO4 is flat enough that the straight
@@ -326,6 +331,8 @@ static inline uint8_t battery_percent_of(const int mv, const battery_profile_t *
     return (uint8_t)(pct < 0 ? 0 : (pct > 100 ? 100 : pct));
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline battery_state_t battery_state_of(const uint8_t percent) {
     if (percent < BATTERY_PCT_CRITICAL)
         return BATTERY_STATE_CRITICAL;
@@ -338,6 +345,40 @@ static inline battery_state_t battery_state_of(const uint8_t percent) {
     return BATTERY_STATE_FULL;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline bool battery_sample_pin_mv(int *const out_mv) {
+    int mv, sum = 0, count = 0;
+    for (int i = 0; i < BATTERY_SAMPLE_COUNT; i++) {
+        hw_delay_us_precise(BATTERY_SAMPLE_INTERVAL_US);
+        if (hw_adc_oneshot_read_mv(&mv) == ESP_OK) {
+            sum += mv;
+            count++;
+        }
+    }
+    if (count == 0)
+        return false;
+    *out_mv = sum / count;
+    return true;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline int battery_measure_mv(void) {
+
+    hw_gpio_set(PIN_BATTERY_EN, true);
+    hw_delay_ms_yieldable(BATTERY_SETTLE_MS);
+
+    int pin_mv;
+    const bool ok = battery_sample_pin_mv(&pin_mv);
+
+    hw_gpio_set(PIN_BATTERY_EN, false);
+
+    return ok ? (((pin_mv * BATTERY_DIVIDER_RATIO_X100) / 100) + _battery_profile.offset_mv) : -1;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool battery_begin(void) {
@@ -375,35 +416,6 @@ static inline void battery_end(void) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-
-static inline bool battery_sample_pin_mv(int *const out_mv) {
-    int mv, sum = 0, count = 0;
-    for (int i = 0; i < BATTERY_SAMPLE_COUNT; i++) {
-        hw_delay_us_precise(BATTERY_SAMPLE_INTERVAL_US);
-        if (hw_adc_oneshot_read_mv(&mv) == ESP_OK) {
-            sum += mv;
-            count++;
-        }
-    }
-    if (count == 0)
-        return false;
-    *out_mv = sum / count;
-    return true;
-}
-
-static inline int battery_measure_mv(void) {
-
-    hw_gpio_set(PIN_BATTERY_EN, true);
-    hw_delay_ms_yieldable(BATTERY_SETTLE_MS);
-
-    int pin_mv;
-    const bool ok = battery_sample_pin_mv(&pin_mv);
-
-    hw_gpio_set(PIN_BATTERY_EN, false);
-
-    return ok ? (((pin_mv * BATTERY_DIVIDER_RATIO_X100) / 100) + _battery_profile.offset_mv) : -1;
-}
-
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool battery_read(battery_reading_t *const out, int16_t *const previous_mv) {
@@ -423,6 +435,7 @@ static inline bool battery_read(battery_reading_t *const out, int16_t *const pre
     return true;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline battery_status_t battery_status(int *const out_pack_mv) {
@@ -477,6 +490,9 @@ static inline battery_status_t battery_status(int *const out_pack_mv) {
     return BATTERY_STATUS_OK;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline bool battery_probe(void) {
     battery_status_t status = BATTERY_STATUS_UNKNOWN;
     if (battery_begin()) {
@@ -509,7 +525,6 @@ static inline bool battery_probe(void) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool battery_test(const uint32_t duration_ms) {
@@ -631,4 +646,5 @@ static inline bool battery_test(const uint32_t duration_ms) {
     return ok;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

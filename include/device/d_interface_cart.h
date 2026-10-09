@@ -11,6 +11,10 @@
 // all the time, and every twelve hours or so the relay gives it power long enough to phone home.
 // Nothing in here knows that; a cart is any board on a switched 5V line that can wiggle a pin.
 //
+// A STRIPBOARD BUILD of the switch below -- layout, solder order, bench tests and the traps that cost
+// a board -- is at https://claude.ai/artifact/X5frt9gDdfTJwwzHgkJQbu ("Cart Switch, Single Bank"). It
+// also carries the node's 3V3 regulator, since the 5V pin is left disconnected.
+//
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // THE SWITCH
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -26,9 +30,9 @@
 //             ├──[R4 10k]──┐            ├──────────┬───────────────────► SW_5V ──► cart + whatever it powers
 //             │            │            │          │
 //             │        ┌───┴───┐    [C2 100u]  [C3 100n]
-//             │        │   C   │        │          │
+//             │        │   B   │        │          │
 //             │        │       │ Q2     └────┬─────┘
-//             │        │   E   │ NPN 2N2222A │
+//             │        │ E   C │ NPN 2N3904  │
 //             │        └─┬───┬─┘            GND
 //             │          │   │
 //            5V         GND  └──[R2 10k]──┬── CART_PWR  (out, this node)
@@ -37,11 +41,11 @@
 //                                         │
 //                                        GND
 //
-//     cart cartbeat pin ──[R5 1k]────┬──────────────────────────────────────────► CART_LIVE (in, this node)
-//                                   │
-//                               [R6 100k]
-//                                   │
-//                                  GND
+//     CART_BEAT ──[R5 1k]────┬───────────────────────────────────────────────────► CART_LIVE (in, this node)
+//                            │
+//                         [R6 100k]
+//                            │
+//                           GND
 //
 //     cart GND ─────────────────────────────────────────────────────────────────── node GND   (common, required)
 //
@@ -192,28 +196,10 @@ static const char *__tag_cart = "cart";
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Every interval is milliseconds. The defaults suit a linux single-board computer on solar; a cart
-   that boots in two seconds or runs for a day wants its own numbers. */
-typedef struct {
-    gpio_num_t pin_power; /* out -> load switch EN. High = the cart has power.                     */
-    gpio_num_t pin_live;  /* in  <- the CARTBEAT. Needs an external pull-down (above).              */
-
-    uint32_t interval_ms; /* between windows, measured from the last CUT, not the last open        */
-    uint32_t boot_ms;     /* the first beat must arrive within this of power-on                    */
-    uint32_t silent_ms;   /* no change for this long = finished, or dead                           */
-    uint32_t settle_ms;   /* after the beat stops, wait this before cutting                        */
-    uint32_t limit_ms;    /* BACKSTOP: cut even while beating. Hours, not minutes.                 */
-
-    /* A cart that is not coming back should not be offered power on schedule for ever. Each
-       consecutive failure adds this to the wait, up to the cap -- so a dead cart costs a little
-       battery on a lengthening interval rather than the same battery for ever. */
-    uint32_t retry_ms;
-    uint8_t retry_max;
-} cart_config_t;
-
 #ifndef CART_INTERVAL_MS_DEFAULT
 #define CART_INTERVAL_MS_DEFAULT (12u * 60u * 60u * 1000u) /* twice a day */
 #endif
+
 /*
  * THE LEADING ALLOWANCE. A kernel, a filesystem check and an init system all happen before anything
  * can wiggle a pin, so the first beat is minutes away, not seconds. Two of them here against the
@@ -262,6 +248,27 @@ typedef struct {
 #define CART_BEATS_MIN 2u
 #endif
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+/* Every interval is milliseconds. The defaults suit a linux single-board computer on solar; a cart
+   that boots in two seconds or runs for a day wants its own numbers. */
+typedef struct {
+    gpio_num_t pin_power; /* out -> load switch EN. High = the cart has power.                     */
+    gpio_num_t pin_live;  /* in  <- the CARTBEAT. Needs an external pull-down (above).              */
+
+    uint32_t interval_ms; /* between windows, measured from the last CUT, not the last open        */
+    uint32_t boot_ms;     /* the first beat must arrive within this of power-on                    */
+    uint32_t silent_ms;   /* no change for this long = finished, or dead                           */
+    uint32_t settle_ms;   /* after the beat stops, wait this before cutting                        */
+    uint32_t limit_ms;    /* BACKSTOP: cut even while beating. Hours, not minutes.                 */
+
+    /* A cart that is not coming back should not be offered power on schedule for ever. Each
+       consecutive failure adds this to the wait, up to the cap -- so a dead cart costs a little
+       battery on a lengthening interval rather than the same battery for ever. */
+    uint32_t retry_ms;
+    uint8_t retry_max;
+} cart_config_t;
+
 #define CART_CONFIG_DEFAULTS(power, live) \
     (cart_config_t) { \
         .pin_power = (power), .pin_live = (live), .interval_ms = CART_INTERVAL_MS_DEFAULT, .boot_ms = CART_BOOT_MS_DEFAULT, .silent_ms = CART_SILENT_MS_DEFAULT, .settle_ms = CART_SETTLE_MS_DEFAULT, .limit_ms = CART_LIMIT_MS_DEFAULT, \
@@ -277,8 +284,6 @@ typedef enum {
     CART_SETTLING, /* gone quiet, giving it the settle before the power goes      */
 } cart_state_t;
 
-/* Returned by cart_tick(), one per transition. Everything except NONE is worth counting and most
-   are worth reporting: a site whose cart stopped booting is a site to visit. */
 typedef enum {
     CART_EVENT_NONE = 0,
     CART_EVENT_OPENED,  /* power applied, the window has begun                     */
@@ -348,6 +353,8 @@ static inline void _cart_power(cart_t *const c, const bool on) {
     hw_gpio_set(c->cfg.pin_power, on);
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* OFF FIRST, BEFORE ANYTHING ELSE. Between this node powering up and this call, the cart's fate
    rests entirely on the pull-down at the load switch; the first thing to do with the pin is to
    agree with it. Configuring the output before driving it would leave a moment at whatever level
@@ -365,53 +372,51 @@ static inline void cart_init(cart_t *const c, const cart_config_t *const cfg, co
              (unsigned)(c->cfg.silent_ms / 1000u), (unsigned)(c->cfg.settle_ms / 1000u), (unsigned)(c->cfg.limit_ms / 1000u));
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline bool cart_is_open(const cart_t *const c) {
     return c->state != CART_OFF;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* How long until the next window would open by itself. Back-off is applied here rather than to
    closed_ms, so that a cart which starts working again returns to the plain interval at once. */
 static inline uint32_t cart_wait_ms(const cart_t *const c) {
-    const uint8_t n = (c->fails < c->cfg.retry_max) ? c->fails : c->cfg.retry_max;
-    return c->cfg.interval_ms + (uint32_t)n * c->cfg.retry_ms;
-}
-
-/* Open one now: a console command, a mesh request, a button, or the first window after a restart
-   because somebody is probably standing at the site. */
-static inline bool cart_open(cart_t *const c, const uint32_t now_ms) {
-    if (cart_is_open(c))
-        return false;
-    c->state = CART_BOOTING;
-    c->opened_ms = now_ms;
-    c->live_seen = false;
-    c->live_beats = 0;
-    c->live_level = hw_gpio_get(c->cfg.pin_live);
-    c->live_edge_ms = now_ms;
-    _cart_power(c, true);
-    c->st_opened++;
-    ESP_LOGI(__tag_cart, "window: open (boot deadline %us)", (unsigned)(c->cfg.boot_ms / 1000u));
-    return true;
-}
-
-/* Cut now. `why` is for the log only; the caller decides what it meant. */
-static inline void cart_close(cart_t *const c, const uint32_t now_ms, const char *const why) {
-    if (!cart_is_open(c))
-        return;
-    _cart_power(c, false);
-    c->state = CART_OFF;
-    c->closed_ms = now_ms;
-    ESP_LOGI(__tag_cart, "window: closed after %us (%s)", (unsigned)((now_ms - c->opened_ms) / 1000u), (why != NULL) ? why : "asked");
+    return c->cfg.interval_ms + (uint32_t)((c->fails < c->cfg.retry_max) ? c->fails : c->cfg.retry_max) * c->cfg.retry_ms;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/*
- * Sample, then decide. One event per call at most.
- *
- * The sample is a CHANGE, not a level, and the whole cartbeat reduces to one number: when the pin
- * last differed from what it was. Everything else is a comparison against that -- which is why the
- * beat rate does not have to be configured, only an outside bound on how long silence may last.
- */
+static inline bool cart_open(cart_t *const c, const uint32_t now_ms) {
+    if (!cart_is_open(c)) {
+        c->state = CART_BOOTING;
+        c->opened_ms = now_ms;
+        c->live_seen = false;
+        c->live_beats = 0;
+        c->live_level = hw_gpio_get(c->cfg.pin_live);
+        c->live_edge_ms = now_ms;
+        _cart_power(c, true);
+        c->st_opened++;
+        ESP_LOGI(__tag_cart, "window: open (boot deadline %us)", (unsigned)(c->cfg.boot_ms / 1000u));
+        return true;
+    }
+    return false;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline void cart_close(cart_t *const c, const uint32_t now_ms, const char *const why) {
+    if (cart_is_open(c)) {
+        _cart_power(c, false);
+        c->state = CART_OFF;
+        c->closed_ms = now_ms;
+        ESP_LOGI(__tag_cart, "window: closed after %us (%s)", (unsigned)((now_ms - c->opened_ms) / 1000u), (why != NULL) ? why : "asked");
+    }
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline cart_event_t cart_tick(cart_t *const c, const uint32_t now_ms) {
 
     if (c->state != CART_OFF) {
@@ -490,5 +495,7 @@ static inline cart_event_t cart_tick(cart_t *const c, const uint32_t now_ms) {
         return CART_EVENT_NONE;
     }
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* D_INTERFACE_CART_H */
