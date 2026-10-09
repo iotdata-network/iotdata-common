@@ -91,3 +91,6 @@ IOTDATA_CFLAGS_OPT ?= -O3
 # shared linker options (none by default); extend locally the same way.
 IOTDATA_LIBS_COMMON    ?= -lcjson -lm
 IOTDATA_LDFLAGS_COMMON ?=
+
+# The clang-format binary every repo's `format` target runs.
+FORMAT ?= clang-format-22

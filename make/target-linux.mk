@@ -6,7 +6,7 @@
 #   SOURCES         prerequisites (rebuild on change)               [required]
 #   CFLAGS LDFLAGS LIBS   the compile + link flags                  [required]
 #   CC              compiler                                        [default: gcc]
-#   FORMAT          clang-format binary                            [default: clang-format-19]
+#   FORMAT          clang-format binary                   [default: clang-format-19, from config.mk]
 #   SOURCES_TARGET  the project's OWN sources, for `format`         [default: empty -> deps not reformatted]
 #   SOURCES_ALL     files `format` rewrites            [default: $(MAIN) [$(TEST_MAIN)] $(SOURCES_TARGET)]
 #   TARGETS_ALL     files `clean` removes             [default: $(TARGET) [$(TEST_TARGET)]]
@@ -26,7 +26,6 @@
 #   CFG_SRC         the .cfg to install         [default: $(TARGET).$(IOTDATA_HOST).cfg if present, else $(TARGET).cfg]
 
 CC     ?= gcc
-FORMAT ?= clang-format-19
 
 # Version identity, the same three variables the esp32 rule uses (target-esp32.mk), so a project
 # declares itself the same way whichever platform it targets. NAME is the name the node REPORTS --

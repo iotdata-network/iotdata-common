@@ -200,4 +200,4 @@ fullclean:
 	rm -rf $(RELEASE_DIR)
 	rm -f $(SDKCONFIG_DEFAULTS) sdkconfig sdkconfig.old
 format:
-	clang-format-19 -i $(SOURCES_TARGET)
+	$(FORMAT) -i $(SOURCES_TARGET)

@@ -391,7 +391,7 @@ static inline blackbox_handle_t *iotdata_node_diagnostics_handle(void) {
    recorder still answers a diagnostics request, emptily. */
 static inline bool iotdata_node_diagnostics_begin(const uint8_t reason, const bool cold) {
     iotdata_node_blackbox_begin(); /* seed the clock BEFORE init: see the note on the magic word */
-    if ((_iotdata_node_diagnostics_ready = (blackbox_init(&_iotdata_node_diagnostics_handle, &_iotdata_node_diagnostics_config) != 0)))
+    if ((_iotdata_node_diagnostics_ready = (blackbox_init(&_iotdata_node_diagnostics_handle, &_iotdata_node_diagnostics_config) == 0)))
         (void)iotdata_node_blackbox_lifecycle(&_iotdata_node_diagnostics_handle, cold ? IOTDATA_NODE_BB_LC_BOOT : IOTDATA_NODE_BB_LC_WAKE, reason);
     return _iotdata_node_diagnostics_ready;
 }
