@@ -108,14 +108,14 @@ static inline uint8_t iotdata_node_status_scope_from_name(const char *const s) {
     if (s == NULL)
         return 0;
     if (strcmp(s, "all") == 0)
-        return (uint8_t)(IOTDATA_NODE_STATUS_SCOPE_NODE | IOTDATA_NODE_STATUS_SCOPE_MESH | IOTDATA_NODE_STATUS_SCOPE_STATIONS | IOTDATA_NODE_STATUS_SCOPE_FILTERS | IOTDATA_NODE_STATUS_SCOPE_MESH_PEERS | IOTDATA_NODE_STATUS_SCOPE_CONTENT);
+        return (uint8_t)(IOTDATA_NODE_STATUS_SCOPE_NODE | IOTDATA_NODE_STATUS_SCOPE_MESH | IOTDATA_NODE_STATUS_SCOPE_PEERS | IOTDATA_NODE_STATUS_SCOPE_FILTERS | IOTDATA_NODE_STATUS_SCOPE_MESH_PEERS | IOTDATA_NODE_STATUS_SCOPE_CONTENT);
     uint8_t bits = 0;
     if (strstr(s, "node") != NULL)
         bits |= IOTDATA_NODE_STATUS_SCOPE_NODE;
     if (strstr(s, "mesh") != NULL)
         bits |= IOTDATA_NODE_STATUS_SCOPE_MESH;
     if (strstr(s, "stations") != NULL)
-        bits |= IOTDATA_NODE_STATUS_SCOPE_STATIONS;
+        bits |= IOTDATA_NODE_STATUS_SCOPE_PEERS;
     if (strstr(s, "filters") != NULL)
         bits |= IOTDATA_NODE_STATUS_SCOPE_FILTERS;
     if (strstr(s, "peers") != NULL)
@@ -144,7 +144,7 @@ static inline const char *iotdata_node_status_scope_name(const uint8_t scope, ch
         uint8_t bit;
         const char *name;
     } names[] = {
-        { IOTDATA_NODE_STATUS_SCOPE_NODE, "node" },       { IOTDATA_NODE_STATUS_SCOPE_MESH, "mesh" },        { IOTDATA_NODE_STATUS_SCOPE_STATIONS, "stations" },
+        { IOTDATA_NODE_STATUS_SCOPE_NODE, "node" },       { IOTDATA_NODE_STATUS_SCOPE_MESH, "mesh" },        { IOTDATA_NODE_STATUS_SCOPE_PEERS, "stations" },
         { IOTDATA_NODE_STATUS_SCOPE_FILTERS, "filters" }, { IOTDATA_NODE_STATUS_SCOPE_MESH_PEERS, "peers" }, { IOTDATA_NODE_STATUS_SCOPE_CONTENT, "content" },
     };
     const uint8_t want = (scope == 0) ? (uint8_t)IOTDATA_NODE_STATUS_SCOPE_DEFAULT : scope;

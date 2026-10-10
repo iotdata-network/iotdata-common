@@ -98,13 +98,13 @@ static void test_console(void) {
     iotdata_node_control_args_t a;
     int used = 0;
 
-    const iotdata_node_control_command_t *c = argv_find(&a, &used, 2, "diag", "enable");
-    CHECK(c != NULL && strcmp(c->name, "diag-enable") == 0, "`diag enable` is diag-enable");
-    CHECK(used == 2, "both words were the name");
+    const iotdata_node_control_command_t *c = argv_find(&a, &used, 3, "diag", "bbox", "enable");
+    CHECK(c != NULL && strcmp(c->name, "diag-bbox-enable") == 0, "`diag bbox enable` is diag-bbox-enable");
+    CHECK(used == 3, "three words were the name");
 
     /* the SAME command typed the other way -- neither spelling is a second vocabulary */
-    c = argv_find(&a, &used, 1, "diag-enable");
-    CHECK(c != NULL && strcmp(c->name, "diag-enable") == 0, "and so is `diag-enable`");
+    c = argv_find(&a, &used, 1, "diag-bbox-enable");
+    CHECK(c != NULL && strcmp(c->name, "diag-bbox-enable") == 0, "and so is `diag-bbox-enable`");
 
     /* the longest match matters: the trailing words here are ARGUMENTS, and a greedy join would
        go looking for a command called mesh-peers-update-0x537-remove */
@@ -114,12 +114,12 @@ static void test_console(void) {
     CHECK(a.station == 0x537, "the station was read");
     CHECK(a.action == IOTDATA_NODE_CONTROL_MESH_PEER_NONE, "and `remove` is the action");
 
-    c = argv_find(&a, &used, 4, "filters", "update", "0xABC", "block");
-    CHECK(c != NULL && a.action == IOTDATA_NODE_CONTROL_MESH_FILTERS_BLOCK, "`block` is an action");
-    c = argv_find(&a, &used, 2, "filters", "clear");
-    CHECK(c != NULL && a.scope_filter == IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_ALL, "no scope word = every entry");
-    c = argv_find(&a, &used, 3, "filters", "clear", "manual");
-    CHECK(c != NULL && a.scope_filter == IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_MANUAL, "and a scope word is read");
+    c = argv_find(&a, &used, 5, "node", "filters", "update", "0xABC", "block");
+    CHECK(c != NULL && a.action == IOTDATA_NODE_CONTROL_NODE_FILTERS_BLOCK, "`block` is an action");
+    c = argv_find(&a, &used, 3, "node", "filters", "clear");
+    CHECK(c != NULL && a.scope_filter == IOTDATA_NODE_CONTROL_NODE_FILTERS_SCOPE_ALL, "no scope word = every entry");
+    c = argv_find(&a, &used, 4, "node", "filters", "clear", "manual");
+    CHECK(c != NULL && a.scope_filter == IOTDATA_NODE_CONTROL_NODE_FILTERS_SCOPE_MANUAL, "and a scope word is read");
     c = argv_find(&a, &used, 2, "stat", "mesh");
     CHECK(c != NULL && a.scope_status == IOTDATA_NODE_STATUS_SCOPE_MESH, "`stat mesh` scopes the status");
 
@@ -149,9 +149,9 @@ static void test_media_agree(void) {
         const char *argv[5];
     } cases[] = {
         { "{\"cmd\":\"mesh-peers-update\",\"station\":\"0x537\",\"action\":\"remove\"}", 5, { "mesh", "peers", "update", "0x537", "remove" } },
-        { "{\"cmd\":\"filters-update\",\"station\":\"0xABC\",\"action\":\"block\"}", 4, { "filters", "update", "0xABC", "block" } },
-        { "{\"cmd\":\"filters-clear\",\"scope\":\"manual\"}", 3, { "filters", "clear", "manual" } },
-        { "{\"cmd\":\"diag-enable\"}", 2, { "diag", "enable" } },
+        { "{\"cmd\":\"node-filters-update\",\"station\":\"0xABC\",\"action\":\"block\"}", 5, { "node", "filters", "update", "0xABC", "block" } },
+        { "{\"cmd\":\"node-filters-clear\",\"scope\":\"manual\"}", 4, { "node", "filters", "clear", "manual" } },
+        { "{\"cmd\":\"diag-bbox-enable\"}", 3, { "diag", "bbox", "enable" } },
         { "{\"cmd\":\"stat\",\"scope\":\"mesh\"}", 2, { "stat", "mesh" } },
         { "{\"cmd\":\"vers\"}", 1, { "vers" } },
     };

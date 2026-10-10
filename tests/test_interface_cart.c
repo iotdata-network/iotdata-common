@@ -195,6 +195,35 @@ int main(void) {
         CHECK(!g_pin_out, "closing a closed one is harmless");
     }
 
+    printf("\na zero interval is ON DEMAND ONLY: the clock never opens it, a command still can\n");
+    {
+        /* The inverse reading is the trap this pins down. The OFF test is `elapsed >= wait`, and
+           with interval 0 the wait is 0, so without an explicit guard a zero interval would mean
+           "open on every tick" -- the exact opposite of what it is configured to mean. */
+        cart_config_t zero = small_config();
+        zero.interval_ms = 0u;
+        static cart_t d;
+        g_now = 1000u;
+        g_pin_in = false;
+        g_pin_out = false;
+        g_out_edges = 0;
+        cart_init(&d, &zero, g_now);
+        CHECK(run_ms(&d, 60000u, 0u) == CART_EVENT_NONE, "an hour of ticks, no beats: nothing happened");
+        CHECK(d.state == CART_OFF && !g_pin_out, "still closed, still cold");
+        CHECK(g_out_edges == 0, "and the pin was never driven, not even briefly");
+
+        CHECK(cart_open(&d, g_now), "but a command opens it");
+        CHECK(g_pin_out, "and the rail comes up");
+        /* No beats, so the boot test must fail and cut it -- and the failure must not then be
+           retried, because a retry wait is the interval plus a penalty, and there is no interval. */
+        CHECK(run_ms(&d, 10000u, 0u) == CART_EVENT_NO_BOOT, "a silent cart still fails its boot");
+        CHECK(!g_pin_out && d.state == CART_OFF, "which cuts the rail");
+        CHECK(d.fails > 0, "and is counted a failure");
+        const int edges = g_out_edges;
+        CHECK(run_ms(&d, 120000u, 0u) == CART_EVENT_NONE, "yet no retry ever reopens it");
+        CHECK(g_out_edges == edges, "the pin stayed exactly where the cut left it");
+    }
+
     printf("\nand the rail is never left on by any ending above\n");
     CHECK(!g_pin_out, "off at the end of every case");
 

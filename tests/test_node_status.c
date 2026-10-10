@@ -189,11 +189,11 @@ static void test_words(void) {
     CHECK(iotdata_node_status_scope_from_name("mesh") == IOTDATA_NODE_STATUS_SCOPE_MESH, "`mesh`");
     CHECK(iotdata_node_status_scope_from_name("node") == IOTDATA_NODE_STATUS_SCOPE_NODE, "`node`");
     CHECK(iotdata_node_status_scope_from_name("node,mesh") == (IOTDATA_NODE_STATUS_SCOPE_NODE | IOTDATA_NODE_STATUS_SCOPE_MESH), "both");
-    CHECK(iotdata_node_status_scope_from_name("stations") == IOTDATA_NODE_STATUS_SCOPE_STATIONS, "`stations`");
+    CHECK(iotdata_node_status_scope_from_name("stations") == IOTDATA_NODE_STATUS_SCOPE_PEERS, "`stations`");
     CHECK(iotdata_node_status_scope_from_name("filters") == IOTDATA_NODE_STATUS_SCOPE_FILTERS, "`filters`");
     CHECK(iotdata_node_status_scope_from_name("peers") == IOTDATA_NODE_STATUS_SCOPE_MESH_PEERS, "`peers`");
     /* `all` is a real value now, not 0: 0 means the scalars, so everything needs a word of its own */
-    CHECK((iotdata_node_status_scope_from_name("all") & IOTDATA_NODE_STATUS_SCOPE_STATIONS) != 0, "`all` includes the tables");
+    CHECK((iotdata_node_status_scope_from_name("all") & IOTDATA_NODE_STATUS_SCOPE_PEERS) != 0, "`all` includes the tables");
     CHECK(iotdata_node_status_scope_is_name("all") && !iotdata_node_status_scope_is_name("sideways"), "a word is ours, or it is not");
     /* round trip, so a console can echo back what it understood */
     CHECK(strcmp(iotdata_node_status_scope_name(IOTDATA_NODE_STATUS_SCOPE_MESH, b, sizeof(b)), "mesh") == 0, "renders back");

@@ -373,8 +373,12 @@ static inline void cart_init(cart_t *const c, const cart_config_t *const cfg, co
     c->state = CART_OFF;
     c->closed_ms = now_ms; /* the first window is one interval away, not immediate */
     c->live_level = hw_gpio_get(c->cfg.pin_live);
-    ESP_LOGI(__tag_cart, "init: power=%d live=%d, every %us, boot %us, silent %us, settle %us, limit %us", (int)c->cfg.pin_power, (int)c->cfg.pin_live, (unsigned)(c->cfg.interval_ms / 1000u), (unsigned)(c->cfg.boot_ms / 1000u),
-             (unsigned)(c->cfg.silent_ms / 1000u), (unsigned)(c->cfg.settle_ms / 1000u), (unsigned)(c->cfg.limit_ms / 1000u));
+    if (c->cfg.interval_ms == 0u)
+        ESP_LOGI(__tag_cart, "init: power=%d live=%d, ON DEMAND ONLY (no periodic window), boot %us, silent %us, settle %us, limit %us", (int)c->cfg.pin_power, (int)c->cfg.pin_live, (unsigned)(c->cfg.boot_ms / 1000u),
+                 (unsigned)(c->cfg.silent_ms / 1000u), (unsigned)(c->cfg.settle_ms / 1000u), (unsigned)(c->cfg.limit_ms / 1000u));
+    else
+        ESP_LOGI(__tag_cart, "init: power=%d live=%d, every %us, boot %us, silent %us, settle %us, limit %us", (int)c->cfg.pin_power, (int)c->cfg.pin_live, (unsigned)(c->cfg.interval_ms / 1000u), (unsigned)(c->cfg.boot_ms / 1000u),
+                 (unsigned)(c->cfg.silent_ms / 1000u), (unsigned)(c->cfg.settle_ms / 1000u), (unsigned)(c->cfg.limit_ms / 1000u));
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -452,7 +456,11 @@ static inline cart_event_t cart_tick(cart_t *const c, const uint32_t now_ms) {
     switch (c->state) {
 
     case CART_OFF:
-        if ((now_ms - c->closed_ms) >= cart_wait_ms(c))
+        /* interval_ms == 0 is ON DEMAND ONLY. Without this test it would mean the opposite: the
+           comparison below is `>= 0`, so a zero interval would re-open the window every tick. The
+           rail then only ever comes up through cart_open(), which the cart-open control command and
+           the console both call. */
+        if (c->cfg.interval_ms != 0u && (now_ms - c->closed_ms) >= cart_wait_ms(c))
             return cart_open(c, now_ms) ? CART_EVENT_OPENED : CART_EVENT_NONE;
         return CART_EVENT_NONE;
 

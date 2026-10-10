@@ -504,9 +504,9 @@ static inline bool iotdata_node_diagnostics_pump(void) {
 /* (subject, action) PAIRS, which is the shape the inventory emits and the shape a command takes on
    the wire -- so advertising one and sending one cannot drift apart. */
 static const uint8_t iotdata_node_diagnostics_control_actions[] = {
-    IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE, IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR,
+    IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_ENABLE, IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_CLEAR,
 #if IOTDATA_NODE_DIAGNOSTICS_DUMP
-    IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_DUMP,
+    IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_DUMP,
 #endif
 };
 #define IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTIONS_COUNT ((uint8_t)(sizeof(iotdata_node_diagnostics_control_actions) / (2 * sizeof(iotdata_node_diagnostics_control_actions[0]))))
@@ -525,18 +525,18 @@ static inline bool iotdata_node_diagnostics_control(const uint8_t subject, const
     if (_iotdata_node_diagnostics_ready)
         if (subject == IOTDATA_NODE_TLV_DIAGNOSTICS)
             switch (action) {
-            case IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE: {
+            case IOTDATA_NODE_ACTION_DIAG_BBOX_ENABLE: {
                 const bool on = (arglen >= 1) ? (args[0] != 0u) : true;
                 iotdata_node_diagnostics_enable(on);
                 _iotdata_node_diagnostics_say(on ? "diag: enabled" : "diag: disabled");
                 return true;
             }
-            case IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR:
+            case IOTDATA_NODE_ACTION_DIAG_BBOX_CLEAR:
                 iotdata_node_diagnostics_clear();
                 _iotdata_node_diagnostics_say("diag: cleared");
                 return true;
 #if IOTDATA_NODE_DIAGNOSTICS_DUMP
-            case IOTDATA_NODE_ACTION_DIAGNOSTICS_DUMP:
+            case IOTDATA_NODE_ACTION_DIAG_BBOX_DUMP:
                 iotdata_node_diagnostics_dump_start();
                 return true;
 #endif

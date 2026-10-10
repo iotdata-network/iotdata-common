@@ -112,27 +112,20 @@ static const iotdata_node_control_command_t iotdata_node_control_commands[] = {
     { "cont", _REQ(IOTDATA_NODE_TLV_CONTENT), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
     { "reports", 0, 0, 0, IOTDATA_NODE_CONTROL_ARG_REPORTS, 0 }, /* every report, in type order */
 
-    /* --- the node itself --------------------------------------------------------------------- */
+    /* --- node control ------------------------------------------------------------------------ */
     { "boot", _CMD(IOTDATA_NODE_SUBJECT_NODE, IOTDATA_NODE_ACTION_NODE_REBOOT), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
-
-    /* --- the recorder ------------------------------------------------------------------------ */
-    { "diag-enable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE), IOTDATA_NODE_CONTROL_ARG_FIXED, 1 },
-    { "diag-disable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_ENABLE), IOTDATA_NODE_CONTROL_ARG_FIXED, 0 },
-    { "diag-clear", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_CLEAR), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
-    { "diag-dump", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAGNOSTICS_DUMP), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
-
-    /* --- the tables ---------------------------------------------------------------------------
-       There is no word for "give me the stations table": it is `stat stations`, which the `stat`
-       command above already spells, since a table is a STATUS scope. Only the things a scope
-       CANNOT express -- dumping to a console, changing a table -- are commands of their own.
-
-       STATIONS and FILTERS are STATUS subjects, not MESH ones: neither is a mesh concept. Any node
-       that hears traffic has stations, and any node can refuse one. Only peers is mesh. */
-    { "stations-dump", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_STATUS_STATIONS_DUMP), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
-    { "filters-update", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_STATUS_FILTERS_UPDATE), IOTDATA_NODE_CONTROL_ARG_STATION_ACTION, 0 },
-    { "filters-clear", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_STATUS_FILTERS_CLEAR), IOTDATA_NODE_CONTROL_ARG_SCOPE_FILTER, IOTDATA_NODE_CONTROL_SCOPE_FROM_REQUEST },
-    { "filters-dump", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_STATUS_FILTERS_DUMP), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
-
+    /* --- diag -------------------------------------------------------------------------------- */
+    { "diag-bbox-enable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_ENABLE), IOTDATA_NODE_CONTROL_ARG_FIXED, 1 },
+    { "diag-bbox-disable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_ENABLE), IOTDATA_NODE_CONTROL_ARG_FIXED, 0 },
+    { "diag-bbox-clear", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_CLEAR), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+    { "diag-bbox-dump", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_DUMP), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+    { "diag-cart-enable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_CART_ENABLE), IOTDATA_NODE_CONTROL_ARG_FIXED, 1 },
+    { "diag-cart-disable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_CART_ENABLE), IOTDATA_NODE_CONTROL_ARG_FIXED, 0 },
+    /* --- node management --------------------------------------------------------------------- */
+    { "node-stations-dump", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_STATIONS_DUMP), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+    { "node-filters-update", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_UPDATE), IOTDATA_NODE_CONTROL_ARG_STATION_ACTION, 0 },
+    { "node-filters-clear", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_CLEAR), IOTDATA_NODE_CONTROL_ARG_SCOPE_FILTER, IOTDATA_NODE_CONTROL_SCOPE_FROM_REQUEST },
+    { "node-filters-dump", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_DUMP), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
     /* --- mesh management --------------------------------------------------------------------- */
     { "mesh-peers-update", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_UPDATE), IOTDATA_NODE_CONTROL_ARG_STATION_ACTION, 0 },
     { "mesh-peers-clear", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
@@ -141,8 +134,6 @@ static const iotdata_node_control_command_t iotdata_node_control_commands[] = {
 #undef _REQ
 #undef _CMD
 };
-
-#define IOTDATA_NODE_CONTROL_COMMANDS_COUNT ((uint8_t)(sizeof(iotdata_node_control_commands) / sizeof(iotdata_node_control_commands[0])))
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -164,7 +155,7 @@ static inline void iotdata_node_control_init(const iotdata_node_control_command_
 static inline const iotdata_node_control_command_t *iotdata_node_control_find(const char *const name) {
     if (name == NULL)
         return NULL;
-    for (uint8_t i = 0; i < IOTDATA_NODE_CONTROL_COMMANDS_COUNT; i++) // builtins first
+    for (uint8_t i = 0; i < ((uint8_t)(sizeof(iotdata_node_control_commands) / sizeof(iotdata_node_control_commands[0]))); i++) // builtins first
         if (strcmp(iotdata_node_control_commands[i].name, name) == 0)
             return &iotdata_node_control_commands[i];
     for (uint8_t i = 0; i < _iotdata_node_control_app_count; i++)
@@ -176,9 +167,9 @@ static inline const iotdata_node_control_command_t *iotdata_node_control_find(co
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline const iotdata_node_control_command_t *iotdata_node_control_at(const uint8_t index) {
-    if (index < IOTDATA_NODE_CONTROL_COMMANDS_COUNT)
+    if (index < ((uint8_t)(sizeof(iotdata_node_control_commands) / sizeof(iotdata_node_control_commands[0]))))
         return &iotdata_node_control_commands[index];
-    const uint8_t i = (uint8_t)(index - IOTDATA_NODE_CONTROL_COMMANDS_COUNT);
+    const uint8_t i = (uint8_t)(index - ((uint8_t)(sizeof(iotdata_node_control_commands) / sizeof(iotdata_node_control_commands[0]))));
     return (i < _iotdata_node_control_app_count) ? &_iotdata_node_control_app[i] : NULL;
 }
 
@@ -297,21 +288,21 @@ static inline int iotdata_node_control_pack(iotdata_kvr_t *const kv, const iotda
 static inline uint8_t iotdata_node_control_scope_filter(const char *const s) {
     if (s != NULL) {
         if (strcmp(s, "manual") == 0)
-            return IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_MANUAL;
+            return IOTDATA_NODE_CONTROL_NODE_FILTERS_SCOPE_MANUAL;
         if (strcmp(s, "auto") == 0)
-            return IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_AUTO;
+            return IOTDATA_NODE_CONTROL_NODE_FILTERS_SCOPE_AUTO;
     }
-    return IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_ALL;
+    return IOTDATA_NODE_CONTROL_NODE_FILTERS_SCOPE_ALL;
 }
 
 static inline uint8_t iotdata_node_control_action(const char *const s) {
     if (s != NULL) {
         if (strcmp(s, "block") == 0)
-            return IOTDATA_NODE_CONTROL_MESH_FILTERS_BLOCK;
+            return IOTDATA_NODE_CONTROL_NODE_FILTERS_BLOCK;
         if (strcmp(s, "allow") == 0)
-            return IOTDATA_NODE_CONTROL_MESH_FILTERS_ALLOW;
+            return IOTDATA_NODE_CONTROL_NODE_FILTERS_ALLOW;
     }
-    return IOTDATA_NODE_CONTROL_MESH_FILTERS_NONE; /* "none", "remove", absent: no entry */
+    return IOTDATA_NODE_CONTROL_NODE_FILTERS_NONE; /* "none", "remove", absent: no entry */
 }
 
 static inline bool _iotdata_node_control_is_station(const char *const s) {
@@ -425,7 +416,7 @@ static inline const iotdata_node_control_command_t *iotdata_node_control_from_ar
     *args = (iotdata_node_control_args_t){ 0 };
     args->target = args->targets[0] = IOTDATA_STATION_BROADCAST;
     args->targets_count = 1;
-    args->scope_filter = IOTDATA_NODE_CONTROL_MESH_FILTERS_SCOPE_ALL;
+    args->scope_filter = IOTDATA_NODE_CONTROL_NODE_FILTERS_SCOPE_ALL;
 
     for (int words = argc; words >= 1; words--) {
         char name[IOTDATA_NODE_CONTROL_ARGV_NAME_MAX];
