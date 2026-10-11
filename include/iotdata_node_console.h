@@ -7,7 +7,7 @@
  *
  * Non-blocking and verb-based: a set of built-in consoles (help, vers, stat, logl, boot) plus any
  * consoles the app plugs in on top. Designed to be driven from a cooperative main loop — call
- * iotdata_node_console_poll() each pass; it drains whatever the console has and dispatches a full line.
+ * iotdata_node_console_tick() each pass; it drains whatever the console has and dispatches a full line.
  * Output is plain printf (over the same USB-serial-JTAG console the app logs on), so records/status
  * come straight back over USB.
  *
@@ -18,7 +18,7 @@
  *   static const iotdata_node_console_t app_cons[] = { { "foo", con_foo, "do the foo thing" } };
  *   iotdata_node_console_init(app_cons, sizeof app_cons / sizeof app_cons[0]);   // after boot
  *   ...
- *   for (;;) { ...; iotdata_node_console_poll(); }                                // non-blocking, each pass
+ *   for (;;) { ...; iotdata_node_console_tick(hw_time_ms()); }                     // non-blocking, each pass
  *
  * Pass (NULL, 0) for no app consoles. The cons array must live for the program's lifetime (static).
  * On non-esp32 (host) builds this compiles to no-ops, so shared code can include it unconditionally.
@@ -87,6 +87,35 @@ typedef struct {
 } iotdata_node_console_t;
 
 // ------------------------------------------------------------------------------------------------------------------------
+// A SINK TAKES THE BYTES AWAY FROM THE VERB TABLE
+//
+// A verb is a line, and a line here is at most IOTDATA_NODE_CONSOLE_LINE_MAX bytes -- plenty for a
+// command and far too little for a transfer. Rather than size that buffer for the largest thing
+// anyone might ever send, a verb that is about to be sent bulk data installs a SINK: while one is
+// installed every byte goes straight to it, and the line buffer and the verb table are not involved
+// at all. The sink brings its own buffer, sized for its own framing, and only where it is used.
+//
+// It takes BYTES and not lines deliberately. The console then needs to know nothing about how the
+// transfer is framed -- base64 lines, hex, offsets, acks, none of it -- and whoever adds a second
+// bulk verb does not come back here to change this file.
+//
+// IT SAYS WHEN IT IS DONE BY TAKING LESS THAN IT WAS OFFERED, which is also what a sink does with
+// the last line of its transfer: it consumes to the end of the data it was promised and leaves the
+// rest, so a command typed on the far side of a transfer is dispatched instead of swallowed.
+// Returning 0 is therefore the ordinary way to finish.
+//
+// NOTHING HERE TIMES IT OUT. A sink that is never finished with would hold the console shut, so
+// whatever installs one is responsible for clearing it -- which in practice means its own tick
+// noticing that the transfer it belongs to has been abandoned. The console cannot know that.
+// ------------------------------------------------------------------------------------------------------------------------
+
+typedef size_t (*iotdata_node_console_sink_fn)(void *ctx, const uint32_t now_ms, const uint8_t *buf, size_t len);
+
+void iotdata_node_console_sink_set(iotdata_node_console_sink_fn fn, void *ctx);
+void iotdata_node_console_sink_clear(void);
+bool iotdata_node_console_sink_active(void);
+
+// ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
 void iotdata_node_console_reply(const char *fmt, ...) {
@@ -107,6 +136,34 @@ void iotdata_node_console_reply(const char *fmt, ...) {
 #ifndef IOTDATA_NODE_CONSOLE_LINE_MAX
 #define IOTDATA_NODE_CONSOLE_LINE_MAX 128
 #endif
+
+/*
+ * THE RECEIVE RING, AND WHY IT IS FOUR TIMES A COMMAND LINE.
+ *
+ * This is the esp32 driver's buffer, and it is the real limit on how much can be written at the
+ * console in one go -- not LINE_MAX above, which only bounds a typed command.
+ *
+ * IT IS NOT FLOW CONTROLLED, AND THIS WAS MEASURED NOT ASSUMED. USB-serial-JTAG looks as though it
+ * should NAK a host that is ahead of the device, and it does not: what will not fit here is
+ * dropped. At 256 bytes a single 261-byte line arrived short every time. At 1024 a burst of ten
+ * such lines landed as four -- with logging off, so this is the receive path and not a device
+ * blocked in printf. The symptom is a base64 line whose length is no longer a multiple of four,
+ * which the decoder refuses; the transport lost the bytes and the layers above merely noticed.
+ *
+ * Two things follow, and a module that streams through a SINK needs both. One LINE must fit here
+ * with margin, which is a build-time property and is asserted in iotdata_node_console_content.h.
+ * And the host must be told how far ahead it may run, because no error check at the far end can
+ * recover bytes that were never received -- which is why the upload has a credit window.
+ *
+ * 2 KB of RAM is nothing on a node with a quarter of a megabyte free, and it buys a window several
+ * lines wide: one round trip per kilobyte and a half instead of one per line.
+ */
+#ifndef IOTDATA_NODE_CONSOLE_RX_BYTES
+#define IOTDATA_NODE_CONSOLE_RX_BYTES 2048
+#endif
+#ifndef IOTDATA_NODE_CONSOLE_TX_BYTES
+#define IOTDATA_NODE_CONSOLE_TX_BYTES 256
+#endif
 #ifndef IOTDATA_NODE_CONSOLE_ARGC_MAX
 #define IOTDATA_NODE_CONSOLE_ARGC_MAX 8
 #endif
@@ -121,6 +178,8 @@ static const iotdata_node_console_t *iotdata_node_con_app = NULL;
 static size_t iotdata_node_con_app_n = 0;
 static char iotdata_node_con_line[IOTDATA_NODE_CONSOLE_LINE_MAX];
 static size_t iotdata_node_con_len = 0;
+static iotdata_node_console_sink_fn iotdata_node_con_sink = NULL;
+static void *iotdata_node_con_sink_ctx = NULL;
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -297,7 +356,7 @@ void iotdata_node_console_init(const iotdata_node_console_t *cons, size_t count)
     iotdata_node_con_app_n = count;
     iotdata_node_con_len = 0;
 #if defined(ESP_PLATFORM)
-    if (usb_serial_jtag_driver_install(&(usb_serial_jtag_driver_config_t){ .tx_buffer_size = 256, .rx_buffer_size = 256 }) == ESP_OK)
+    if (usb_serial_jtag_driver_install(&(usb_serial_jtag_driver_config_t){ .tx_buffer_size = IOTDATA_NODE_CONSOLE_TX_BYTES, .rx_buffer_size = IOTDATA_NODE_CONSOLE_RX_BYTES }) == ESP_OK)
         usb_serial_jtag_vfs_use_driver(); /* route stdio through the driver so reads + printf agree */
 #else
     /* Nothing to set up: the poll in getc() asks before it reads, so stdin is left exactly as the
@@ -309,15 +368,19 @@ void iotdata_node_console_init(const iotdata_node_console_t *cons, size_t count)
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* One byte if there is one, -1 if there is not. NEVER BLOCKS on either platform, because this is
-   called from the middle of a main loop that has a radio to service. */
-static int iotdata_node_con_getc(void) {
+/* Whatever is waiting, up to `max`, or 0 if nothing is. NEVER BLOCKS on either platform, because
+   this is called from the middle of a main loop that has a radio to service.
+ *
+ * A RUN AND NOT A BYTE, because a sink handed 200 KB one byte at a time through a function pointer
+ * is doing a quarter of a million calls to copy a buffer it could have been given whole. The line
+ * path walks the run itself, which costs it nothing. */
+static size_t iotdata_node_con_read(uint8_t *const buf, const size_t max) {
 #if defined(ESP_PLATFORM)
-    uint8_t c;
-    return (usb_serial_jtag_read_bytes(&c, 1, 0) == 1) ? (int)c : -1; /* timeout 0 -> drain the FIFO */
+    const int n = usb_serial_jtag_read_bytes(buf, max, 0); /* timeout 0 -> drain the FIFO */
+    return (n > 0) ? (size_t)n : 0u;
 #else
     if (!iotdata_node_con_open)
-        return -1;
+        return 0u;
     /* ASKED FIRST, and only read once the answer is yes.
      *
      * The obvious alternative is O_NONBLOCK on stdin, and it is a trap on the host this runs on:
@@ -327,32 +390,68 @@ static int iotdata_node_con_getc(void) {
      * one descriptor we mean, changes nothing, and cannot block with a zero timeout. */
     struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
     if (poll(&pfd, 1, 0) <= 0 || (pfd.revents & POLLIN) == 0)
-        return -1;
-    unsigned char c;
-    const ssize_t n = read(STDIN_FILENO, &c, 1);
-    if (n == 1)
-        return (int)c;
+        return 0u;
+    const ssize_t n = read(STDIN_FILENO, buf, max);
+    if (n > 0)
+        return (size_t)n;
     if (n == 0)
         iotdata_node_con_open = false; /* EOF: stop asking, or a closed stdin spins the loop */
-    return -1;
+    return 0u;
 #endif
 }
 
-void iotdata_node_console_poll(void) {
-    int ch;
-    while ((ch = iotdata_node_con_getc()) >= 0) {
-        const char c = (char)ch;
-        if (c == '\r') {
-            //
-        } else if (c == '\n') {
-            iotdata_node_con_line[iotdata_node_con_len] = '\0';
-            iotdata_node_console_dispatch(iotdata_node_con_line);
-            iotdata_node_con_len = 0;
-        } else if (iotdata_node_con_len < sizeof(iotdata_node_con_line) - 1) {
-            iotdata_node_con_line[iotdata_node_con_len++] = c;
-        } else {
-            iotdata_node_con_len = 0; /* overlong line -> drop it */
+// ------------------------------------------------------------------------------------------------------------------------
+
+void iotdata_node_console_sink_set(const iotdata_node_console_sink_fn fn, void *const ctx) {
+    iotdata_node_con_sink = fn;
+    iotdata_node_con_sink_ctx = ctx;
+    iotdata_node_con_len = 0; /* a part-typed line is not part of the transfer */
+}
+
+void iotdata_node_console_sink_clear(void) {
+    iotdata_node_con_sink = NULL;
+    iotdata_node_con_sink_ctx = NULL;
+}
+
+bool iotdata_node_console_sink_active(void) {
+    return iotdata_node_con_sink != NULL;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* The sink is re-checked every byte rather than once per run, because both transitions happen in
+   the middle of one: a verb installs a sink and the data follows it in the same USB packet, and a
+   sink finishes and leaves the next command behind it in the same buffer. */
+void iotdata_node_console_tick(const uint32_t now_ms) {
+    uint8_t chunk[64];
+    size_t n;
+    while ((n = iotdata_node_con_read(chunk, sizeof(chunk))) > 0u) {
+        for (size_t i = 0; i < n;) {
+            if (iotdata_node_con_sink != NULL) {
+                const size_t avail = n - i;
+                size_t took = iotdata_node_con_sink(iotdata_node_con_sink_ctx, now_ms, chunk + i, avail);
+                if (took > avail)
+                    took = avail; /* a sink cannot have taken more than it was shown */
+                i += took;
+                if (took < avail)
+                    iotdata_node_console_sink_clear(); /* less than it was offered: finished */
+                continue;
+            }
+            const char c = (char)chunk[i++];
+            if (c == '\r') {
+                //
+            } else if (c == '\n') {
+                iotdata_node_con_line[iotdata_node_con_len] = '\0';
+                iotdata_node_con_len = 0; /* cleared BEFORE the dispatch, which may install a sink */
+                iotdata_node_console_dispatch(iotdata_node_con_line);
+            } else if (iotdata_node_con_len < sizeof(iotdata_node_con_line) - 1) {
+                iotdata_node_con_line[iotdata_node_con_len++] = c;
+            } else {
+                iotdata_node_con_len = 0; /* overlong line -> drop it */
+            }
         }
+        if (n < sizeof(chunk))
+            break; /* a short read is everything there was */
     }
 }
 

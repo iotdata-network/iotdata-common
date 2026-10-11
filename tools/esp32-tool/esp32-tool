@@ -16,6 +16,10 @@ Subcommands:
               Does NOT reset by default (so it won't reboot a running node) — pass -r to reset.
     command   issue ONE command to a running device and print just its response (C-tagged
               lines), filtering out log noise — for scripting. e.g. `command vers`.
+    content   put a file into a node's content store over the console, or pull one back out
+              (`content insert <id> <file>` / `content get <id> <file>`). The device paces the
+              upload itself -- see the window note in iotdata_node_console_content.h -- so this
+              runs as fast as the node can write flash and no faster.
     diag      pull the blackbox diagnostics partition off the chip and decode it to CSV
               (`diag extract`), or decode an image pulled earlier (`diag decode <file>`).
               Uses esptool only — no IDF toolchain — and is much faster than streaming the
@@ -44,6 +48,11 @@ Examples:
     # flash only, no monitor:
     esp32-tool flash -p /dev/ttyACM0 -b ../relay/build
 
+    # put an OTA bundle on a node and ask it what it makes of it (nothing applies it):
+    esp32-tool content insert -p /dev/ttyACM0 0537a1 relay-0.9.9+full+deflate.bin
+    esp32-tool command -p /dev/ttyACM0 "content inspect 0537a1"
+    esp32-tool content get -p /dev/ttyACM0 0537a1 back.bin      # and check it round-tripped
+
     # pull weeks of field diagnostics off a node (flush first: the read resets it):
     esp32-tool command -p /dev/ttyACM0 "diag flush"
     esp32-tool diag extract -p /dev/ttyACM0 --raw diag.bin --out diag.csv
@@ -70,6 +79,7 @@ Dependencies on the target host (none are the compiler toolchain):
 # --------------------------------------------------------------------------------------
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -411,6 +421,213 @@ def command_oneshot(port, cmd, reset=False, timeout=2.0):
     return 0 if out else 1
 
 # --------------------------------------------------------------------------------------
+# CONTENT
+#
+# The console's two bulk words. Both are plain text over the same line the CLI uses, so this needs
+# nothing but pyserial -- no esptool, no toolchain, and no reset: a node stays up and keeps relaying
+# while a file goes onto it.
+#
+# A READER THREAD, because the device's own log lines have to be taken off it. A node that is
+# logging LoRa frames fills its 256-byte transmit buffer in a few lines, and its printf then BLOCKS
+# -- taking the main loop, and the console reads, down with it. Draining continuously is not an
+# optimisation here, it is what keeps the transfer moving.
+# --------------------------------------------------------------------------------------
+
+CONTENT_ACK_RE = re.compile(r"insert ([0-9a-f]{6}) ack (\d+)")
+CONTENT_READY_RE = re.compile(r"insert ([0-9a-f]{6}) ready, (\d+) bytes, lines of up to (\d+), window (\d+)")
+CONTENT_DATA_RE = re.compile(r"^d (\d+) ([A-Za-z0-9+/=]+)$")
+
+_CRC64_TABLE = []
+for _i in range(256):
+    _c = _i
+    for _ in range(8):
+        _c = (_c >> 1) ^ (0xC96C5795D7870F42 if _c & 1 else 0)
+    _CRC64_TABLE.append(_c)
+
+def crc64(data, crc=0):
+    """CRC-64/XZ, liblzma's convention: start from 0 and the running value IS the answer, which is
+    what iotdata_node_crc64() does and what the node will compare against."""
+    c = (~crc) & 0xFFFFFFFFFFFFFFFF
+    for b in data:
+        c = (c >> 8) ^ _CRC64_TABLE[(c ^ b) & 0xFF]
+    return (~c) & 0xFFFFFFFFFFFFFFFF
+
+class _ConsoleLink:
+    """A line-oriented view of the console, drained by a thread. `take()` empties the queue."""
+
+    def __init__(self, port):
+        import serial, threading
+        self._s = serial.Serial(port, 115200, timeout=0.05)
+        self._lines = []
+        self._buf = b""
+        self._lock = threading.Lock()
+        self._stop = False
+        try:
+            self._s.reset_input_buffer()
+        except OSError:
+            pass
+        self._t = threading.Thread(target=self._pump, daemon=True)
+        self._t.start()
+
+    def _pump(self):
+        while not self._stop:
+            try:
+                data = self._s.read(4096)
+            except Exception:
+                return
+            if not data:
+                continue
+            with self._lock:
+                self._buf += data
+                while b"\n" in self._buf:
+                    one, self._buf = self._buf.split(b"\n", 1)
+                    self._lines.append(one.decode("utf-8", "replace").rstrip("\r"))
+
+    def send(self, line):
+        self._s.write((line + "\n").encode())
+        self._s.flush()
+
+    def take(self):
+        with self._lock:
+            out, self._lines = self._lines, []
+        return out
+
+    def until(self, predicate, timeout):
+        """Collect lines until one satisfies `predicate`. Returns (hit, lines)."""
+        got = []
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            new = self.take()
+            got += new
+            for line in new:
+                if predicate(line):
+                    return True, got
+            if not new:
+                time.sleep(0.002)
+        return False, got
+
+    def close(self):
+        self._stop = True
+        time.sleep(0.1)
+        try:
+            self._s.close()
+        except OSError:
+            pass
+
+def do_content_insert(port, cid, path, timeout=60.0):
+    """Upload a file, paced by the device's own credit window."""
+    try:
+        data = open(path, "rb").read()
+    except OSError as e:
+        die(f"content insert: {e}")
+    if not data:
+        die("content insert: nothing to send")
+    link = _ConsoleLink(port)
+    try:
+        time.sleep(0.2)
+        link.take()
+        link.send(f"content insert {cid} {len(data)} {crc64(data):016x}")
+        hit, got = link.until(lambda l: "ready," in l or "refused" in l, 5.0)
+        ready = None
+        for line in got:
+            m = CMD_RE.match(line)
+            if m:
+                print(m.group(1))
+                ready = ready or CONTENT_READY_RE.search(m.group(1))
+        if ready is None:
+            print("content insert: the node did not accept it", file=sys.stderr)
+            return 1
+        # THE DEVICE SAYS how big a line it will take and how far ahead we may run. Hardcoding
+        # either would break silently the day the console's receive ring is resized.
+        payload, window = int(ready.group(3)), int(ready.group(4))
+        acked, failed, started = 0, False, time.time()
+        for off in range(0, len(data), payload):
+            while off - acked >= window and not failed:
+                moved, lines = link.until(lambda l: CONTENT_ACK_RE.search(l) is not None, 20.0)
+                for line in lines:
+                    m = CMD_RE.match(line)
+                    if not m:
+                        continue
+                    ack = CONTENT_ACK_RE.search(m.group(1))
+                    if ack:
+                        acked = max(acked, int(ack.group(2)))
+                    else:
+                        print(m.group(1))
+                        failed = failed or ("failed" in m.group(1) or "gave up" in m.group(1) or "abandoned" in m.group(1))
+                if not moved:
+                    print(f"content insert: no credit past {off} of {len(data)} (acked {acked})", file=sys.stderr)
+                    return 1
+            if failed:
+                break
+            link.send("d %d %s" % (off, base64.b64encode(data[off:off + payload]).decode()))
+        elapsed = time.time() - started
+        # The verdict comes from the TICK, after the checksum and the rename -- not from the last
+        # line being accepted, which only means it was written somewhere.
+        hit, got = link.until(lambda l: "arrived" in l or "failed" in l, timeout)
+        for line in got:
+            m = CMD_RE.match(line)
+            if m and " ack " not in m.group(1):
+                print(m.group(1))
+        rate = len(data) / elapsed if elapsed > 0 else 0
+        print(f"--- {len(data)} bytes in {elapsed:.1f}s ({rate:.0f} B/s), {payload}B lines, {window}B window")
+        return 0 if (hit and not failed) else 1
+    finally:
+        link.close()
+
+def do_content_get(port, cid, path, timeout=180.0):
+    """Download a file and verify it against the sum the node reports."""
+    link = _ConsoleLink(port)
+    try:
+        time.sleep(0.2)
+        link.take()
+        link.send(f"content download {cid}")
+        hit, got = link.until(lambda l: "done," in l or "FAILED" in l or "refused" in l, timeout)
+        parts, said, want, bad = {}, [], None, False
+        for line in got:
+            m = CMD_RE.match(line)
+            if not m:
+                continue
+            body = m.group(1)
+            data = CONTENT_DATA_RE.match(body)
+            if data:
+                parts[int(data.group(1))] = base64.b64decode(data.group(2))
+            else:
+                said.append(body)
+                bad = bad or ("refused" in body or "FAILED" in body)
+                found = re.search(r"crc64=0x([0-9A-Fa-f]{16})", body)
+                if found:
+                    want = int(found.group(1), 16)
+        for line in said:
+            print(line)
+        # A REFUSAL ENDS THE WAIT AND IS NOT AN END: `done,` is the only line that means the node
+        # sent everything. Without this an unknown id wrote a zero-byte file and exited 0.
+        if bad:
+            return 1
+        if not hit:
+            print("content get: the node never finished", file=sys.stderr)
+            return 1
+        blob, gap = b"", None
+        for off in sorted(parts):
+            if off != len(blob) and gap is None:
+                gap = off
+            blob += parts[off]
+        if gap is not None:
+            print(f"content get: a line is missing around offset {gap}", file=sys.stderr)
+            return 1
+        got_crc = crc64(blob)
+        if want is not None and want != got_crc:
+            print(f"content get: crc64 0x{got_crc:016X} but the node said 0x{want:016X}", file=sys.stderr)
+            return 1
+        try:
+            open(path, "wb").write(blob)
+        except OSError as e:
+            die(f"content get: {e}")
+        print(f"--- {len(blob)} bytes, crc64=0x{got_crc:016X}{' (agrees)' if want is not None else ''} -> {path}")
+        return 0
+    finally:
+        link.close()
+
+# --------------------------------------------------------------------------------------
 
 def find_esptool():
     """Return an argv prefix that runs esptool, or None. Prefer the module form so a
@@ -743,6 +960,13 @@ def main():
     p_diag.add_argument("--baud", type=int, default=460800, help="read baud (default 460800)")
     p_diag.add_argument("--verbose", "-v", action="store_true", help="show the esptool invocation and partition lookup")
     p_diag.add_argument("--confirm", action="store_true", help="required by `diag clear`: yes, really erase it")
+    p_content = sub.add_parser("content", help="put a file into a node's content store, or pull one back")
+    p_content.add_argument("action", choices=("insert", "get"), help="insert <id> <file> | get <id> <file>")
+    p_content.add_argument("id", help="the content id, in hex (§4: 24 bits, e.g. 0537a1)")
+    p_content.add_argument("file", help="the file to send, or where to write what comes back")
+    add_common(p_content)
+    p_content.add_argument("--timeout", type=float, default=None, help="seconds to wait for the node's verdict")
+
     p_cmd = sub.add_parser("command", help="issue one command to a running device and print its response")
     add_common(p_cmd)
     p_cmd.add_argument("-r", "--reset", action="store_true", help="reset the device before issuing (off by default)")
@@ -786,6 +1010,15 @@ def main():
             sys.exit(do_diag_clear(args.port, args.partition, args.baud, args.offset, args.size, args.confirm))
         try:
             sys.exit(do_diag_extract(args.port, args.partition, args.baud, args.raw, args.out, args.offset, args.size))
+        except KeyboardInterrupt:
+            print()
+            sys.exit(130)
+    if args.cmd == "content":
+        require_port(args)
+        try:
+            if args.action == "insert":
+                sys.exit(do_content_insert(args.port, args.id, args.file, **({"timeout": args.timeout} if args.timeout else {})))
+            sys.exit(do_content_get(args.port, args.id, args.file, **({"timeout": args.timeout} if args.timeout else {})))
         except KeyboardInterrupt:
             print()
             sys.exit(130)

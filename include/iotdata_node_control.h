@@ -45,6 +45,7 @@ typedef enum {
     IOTDATA_NODE_CONTROL_ARG_STATION,        /* { u16 station, u8 action } -- the action fixed by the command */
     IOTDATA_NODE_CONTROL_ARG_STATION_ACTION, /* { u16 station, u8 action } -- the action named in the request */
     IOTDATA_NODE_CONTROL_ARG_REPORTS,        /* not one key: every report that can be asked for */
+    IOTDATA_NODE_CONTROL_ARG_CONTENT,        /* u24 content id -- §4's width, which is not a station's */
 } iotdata_node_control_arg_t;
 
 #define IOTDATA_NODE_CONTROL_SCOPE_FROM_REQUEST 0xFF
@@ -87,6 +88,7 @@ typedef struct {
     uint8_t scope_status;  /* STATUS_SCOPE_* bits; 0 = every group */
     uint8_t scope_filter;  /* FILTER_SCOPE_*; ALL when unsaid */
     uint8_t action;        /* FILTERS_BLOCK / _ALLOW / _NONE */
+    uint32_t content;      /* a content id: 24 bits, 0 when unsaid (and 0x000xxx is unaddressable) */
 } iotdata_node_control_args_t;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -126,6 +128,14 @@ static const iotdata_node_control_command_t iotdata_node_control_commands[] = {
     { "node-filters-update", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_UPDATE), IOTDATA_NODE_CONTROL_ARG_STATION_ACTION, 0 },
     { "node-filters-clear", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_CLEAR), IOTDATA_NODE_CONTROL_ARG_SCOPE_FILTER, IOTDATA_NODE_CONTROL_SCOPE_FROM_REQUEST },
     { "node-filters-dump", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_DUMP), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+    /* --- content -----------------------------------------------------------------------------
+       The store's words that have a wire equivalent. `insert` and `download` are NOT here and
+       never will be in this shape: both are a byte stream, and the wire's answer to that is the
+       CONTENT TLVs rather than a command with a very large argument. */
+    { "content-list", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_LIST), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+    { "content-delete", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE), IOTDATA_NODE_CONTROL_ARG_CONTENT, 0 },
+    { "content-inspect", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT), IOTDATA_NODE_CONTROL_ARG_CONTENT, 0 },
+    { "content-validate", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_VALIDATE), IOTDATA_NODE_CONTROL_ARG_CONTENT, 0 },
     /* --- mesh management --------------------------------------------------------------------- */
     { "mesh-peers-update", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_UPDATE), IOTDATA_NODE_CONTROL_ARG_STATION_ACTION, 0 },
     { "mesh-peers-clear", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
@@ -213,6 +223,14 @@ static inline bool iotdata_node_control_build(iotdata_kvr_t *const kv, const iot
         v[n++] = (uint8_t)(a->station >> 8);
         v[n++] = (uint8_t)a->station;
         v[n++] = (c->arg == IOTDATA_NODE_CONTROL_ARG_STATION) ? c->fixed : a->action;
+        break;
+    case IOTDATA_NODE_CONTROL_ARG_CONTENT:
+        /* Big-endian u24, like every other multi-byte field here. Sent even when zero: a content
+           command with no id is not a command with a default, it is one that will be refused, and
+           refusing it at the node keeps that decision in one place. */
+        v[n++] = (uint8_t)(a->content >> 16);
+        v[n++] = (uint8_t)(a->content >> 8);
+        v[n++] = (uint8_t)a->content;
         break;
     case IOTDATA_NODE_CONTROL_ARG_REPORTS:
         /* every report that can be asked for, which is now every system type: a node with nothing
@@ -334,6 +352,22 @@ static inline bool _iotdata_node_control_is_scope_status(const char *const s) {
 
 #include <stdlib.h> /* strtol: both media parse a station id, JSON or not */
 
+/* A content id is typed in hex far more often than in decimal -- §4's allocation is
+   (station << 12) | counter, which is only legible as hex -- so a bare `1a2b3c` is read as hex and
+   an explicit `0x`/`0` prefix still means what C says it means. */
+static inline bool _iotdata_node_control_is_content(const char *const s) {
+    if (s == NULL || s[0] == '\0')
+        return false;
+    char *end = NULL;
+    const unsigned long v = strtoul(s, &end, (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) ? 0 : 16);
+    return end != NULL && *end == '\0' && v <= 0xFFFFFFuL;
+}
+static inline uint32_t iotdata_node_control_content(const char *const s) {
+    if (s == NULL)
+        return 0u;
+    return (uint32_t)(strtoul(s, NULL, (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) ? 0 : 16) & 0xFFFFFFuL);
+}
+
 #define IOTDATA_NODE_CONTROL_ARGV_NAME_MAX 48
 
 /* Read the words after the name, positionally, as the arguments THIS command takes. Returns false
@@ -360,6 +394,11 @@ static inline bool _iotdata_node_control_argv_args(const iotdata_node_control_co
         if (n != 1 || !_iotdata_node_control_is_scope_filter(argv[first]))
             return false;
         args->scope_filter = iotdata_node_control_scope_filter(argv[first]);
+        return true;
+    case IOTDATA_NODE_CONTROL_ARG_CONTENT:
+        if (n != 1 || !_iotdata_node_control_is_content(argv[first]))
+            return false;
+        args->content = iotdata_node_control_content(argv[first]);
         return true;
     case IOTDATA_NODE_CONTROL_ARG_STATION:
     case IOTDATA_NODE_CONTROL_ARG_STATION_ACTION: {
@@ -405,6 +444,8 @@ static inline const char *iotdata_node_control_argv_help(const iotdata_node_cont
         return " [all|manual|auto]";
     case IOTDATA_NODE_CONTROL_ARG_SCOPE_STATUS:
         return " [node|mesh]";
+    case IOTDATA_NODE_CONTROL_ARG_CONTENT:
+        return " <id>";
     default:
         return "";
     }
@@ -522,6 +563,14 @@ static inline const iotdata_node_control_command_t *iotdata_node_control_from_js
     args->scope_status = iotdata_node_control_scope_status(scope);
     args->scope_filter = iotdata_node_control_scope_filter(scope);
     args->action = iotdata_node_control_action(_iotdata_node_control_json_str(root, "action"));
+    /* A content id as a JSON STRING, read the same way the console reads it -- bare hex -- so that
+       `{"cmd":"content-delete","content":"1a2b3c"}` and `content delete 1a2b3c` name one file. A
+       number is accepted too and is then plainly decimal, which is what JSON means by a number. */
+    const cJSON *const jcontent = cJSON_GetObjectItem(root, "content");
+    if (cJSON_IsString(jcontent) && jcontent->valuestring != NULL)
+        args->content = iotdata_node_control_content(jcontent->valuestring);
+    else if (cJSON_IsNumber(jcontent) && jcontent->valuedouble >= 0.0 && jcontent->valuedouble <= 16777215.0)
+        args->content = (uint32_t)jcontent->valuedouble;
     return iotdata_node_control_find(_iotdata_node_control_json_str(root, "cmd"));
 }
 

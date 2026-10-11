@@ -57,8 +57,10 @@
                        not a power cycle
      2  RAM backed  -- the ring is written through to the `diag` partition on esp32, or to a file
                        on a host, so records outlive a power loss
-   An application that manages its own handle -- the gateway, whose recorder is configured at run
-   time from the command line -- leaves this at 0 and uses the adapter alone. */
+   A host application whose recorder is configured at RUN TIME -- the gateway, out of its config
+   file -- still uses the recorder below: see iotdata_node_diagnostics_begin_conf. It used to be
+   told to leave this at 0 and drive a handle of its own, which is how the gateway ended up with
+   two recorders, one of them dormant, and a tick of its own that read the wall clock. */
 #ifndef IOTDATA_NODE_DIAGNOSTICS
 #define IOTDATA_NODE_DIAGNOSTICS 0
 #endif
@@ -317,9 +319,9 @@ static inline uint8_t iotdata_node_diagnostics_reason(const uint32_t count) {
 #endif
 /* Whether this node services DIAGNOSTICS_DUMP, which prints the store on the node's own console.
    ON by default -- every node has one, and a sensor on the bench over USB is exactly when you want
-   it. The obligation that comes with it is iotdata_node_diagnostics_pump() every loop pass: a dump is
-   drained a chunk at a time, so a node that advertises DUMP and never pumps accepts the command
-   and then produces nothing. Turn it OFF on a node that cannot pump -- and it then disappears from
+   it. The obligation that comes with it is iotdata_node_diagnostics_tick() every loop pass: a dump
+   is drained a chunk at a time, so a node that advertises DUMP and never ticks accepts the command
+   and then produces nothing. Turn it OFF on a node that cannot tick -- and it then disappears from
    the advertised list as well as the handler, so the node is not promising what it will not do. */
 #ifndef IOTDATA_NODE_DIAGNOSTICS_DUMP
 #define IOTDATA_NODE_DIAGNOSTICS_DUMP 1
@@ -329,6 +331,11 @@ static inline uint8_t iotdata_node_diagnostics_reason(const uint32_t count) {
 #endif
 #ifndef IOTDATA_NODE_DIAGNOSTICS_STAT_MAX
 #define IOTDATA_NODE_DIAGNOSTICS_STAT_MAX 192
+#endif
+/* Room for the store's name when it is given at run time: a partition label is tiny, a path is
+   not, and a path that was silently truncated would write the records to the wrong file. */
+#ifndef IOTDATA_NODE_DIAGNOSTICS_PERSIST_MAX
+#define IOTDATA_NODE_DIAGNOSTICS_PERSIST_MAX 256u
 #endif
 
 #if defined(ESP_PLATFORM)
@@ -351,7 +358,9 @@ static struct {
     int count;
 } _iotdata_node_diagnostics_dump;
 
-static const blackbox_config_t _iotdata_node_diagnostics_config = {
+/* NOT const, because iotdata_node_diagnostics_begin_conf writes it before init. The handle keeps a
+   POINTER to this, so it has to be here and not on anybody's stack. */
+static blackbox_config_t _iotdata_node_diagnostics_config = {
     .pool = _iotdata_node_diagnostics_pool,
     .pool_sz = sizeof(_iotdata_node_diagnostics_pool),
     .flush = IOTDATA_NODE_DIAGNOSTICS_FLUSH,
@@ -359,6 +368,11 @@ static const blackbox_config_t _iotdata_node_diagnostics_config = {
     .persist_arg = IOTDATA_NODE_DIAGNOSTICS_PARTITION,
     .enabled = true, /* compiled in == collecting; the compile-time knob is the gate */
 };
+
+/* And the store's name is copied in, for the same reason: the FILE backend keeps the POINTER it is
+   given rather than a copy of the string, so a path composed on a caller's stack would dangle the
+   moment that caller returned. Copying it here means a caller may compose one and forget it. */
+static char _iotdata_node_diagnostics_persist[IOTDATA_NODE_DIAGNOSTICS_PERSIST_MAX];
 
 /* True once the store exists. Everything below asks first, because a failed init leaves a handle
    whose backend is NULL, and reaching through it faults rather than doing nothing. */
@@ -389,13 +403,88 @@ static inline blackbox_handle_t *iotdata_node_diagnostics_handle(void) {
    the difference between the two lifecycle events a sleeping node alternates between. Returns
    false if the store could not be opened -- worth logging, but never fatal: a node with no
    recorder still answers a diagnostics request, emptily. */
-static inline bool iotdata_node_diagnostics_begin(const uint8_t reason, const bool cold) {
+static inline bool _iotdata_node_diagnostics_start(const iotdata_node_bb_lc_event_t ev, const uint8_t reason) {
     iotdata_node_blackbox_begin(); /* seed the clock BEFORE init: see the note on the magic word */
     if ((_iotdata_node_diagnostics_ready = (blackbox_init(&_iotdata_node_diagnostics_handle, &_iotdata_node_diagnostics_config) == 0)))
-        (void)iotdata_node_blackbox_lifecycle(&_iotdata_node_diagnostics_handle, cold ? IOTDATA_NODE_BB_LC_BOOT : IOTDATA_NODE_BB_LC_WAKE, reason);
+        (void)iotdata_node_blackbox_lifecycle(&_iotdata_node_diagnostics_handle, ev, reason);
     return _iotdata_node_diagnostics_ready;
 }
 
+static inline bool iotdata_node_diagnostics_begin(const uint8_t reason, const bool cold) {
+    return _iotdata_node_diagnostics_start(cold ? IOTDATA_NODE_BB_LC_BOOT : IOTDATA_NODE_BB_LC_WAKE, reason);
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// A RECORDER CONFIGURED AT RUN TIME, FOR A HOST THAT IS TOLD WHERE TO PUT IT
+//
+// A device's recorder is settled when the firmware is built: the partition is in the partition
+// table, the pool is in RTC RAM, and the flush policy is a property of how that node sleeps. A
+// host is not. The gateway is told its directory, its bounds and whether to record at all, out of
+// the same config file as everything else, and none of that is knowable at compile time.
+//
+// SO THE CONFIG IS WRITTEN ONCE, HERE, BEFORE init -- not held by the caller. It used to be the
+// caller's, which meant the caller also owned the handle, the pool and the tick, and a second
+// recorder existed in parallel with this one. What it kept was a pool, a 512-byte path and a
+// clock; what it got wrong was the clock. There is one recorder on a node, and this is how an
+// application that cannot name its store at compile time still uses it.
+//
+// THE LIFECYCLE EVENT IS THE CALLER'S TO NAME, unlike iotdata_node_diagnostics_begin, which infers
+// BOOT or WAKE from `cold`. Neither is right for a process: a gateway that restarts has not booted
+// anything and has not woken from anything, it has STARTed, and the host it runs on may have been
+// up for months. The caller knows which of those happened and this cannot.
+//
+// A TRUNCATED PATH IS A REFUSAL, not a shrug. Records written to a path that is nearly the one
+// asked for are records nobody will look for, so an over-long one fails to start and says so --
+// the same verdict as an unwritable directory, which is what it amounts to.
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+typedef struct {
+    bool enabled;            /* whether to record at all; blackbox_enable still moves it later    */
+    const char *persist_arg; /* FILE: the path. ESP_FLASH: the partition label. Copied, not kept.  */
+    blackbox_flush_t flush;
+    uint32_t flush_ms;               /* BATCH_TIME only                                         */
+    uint32_t max_records, max_bytes; /* 0 = unbounded on that axis                              */
+    uint8_t generations;             /* FILE at max_bytes: how many rotated backups to keep     */
+} iotdata_node_diagnostics_conf_t;
+
+static inline bool iotdata_node_diagnostics_begin_conf(const iotdata_node_diagnostics_conf_t *const conf, const iotdata_node_bb_lc_event_t ev, const uint8_t reason) {
+    if (conf == NULL)
+        return false;
+    const char *const arg = (conf->persist_arg != NULL) ? conf->persist_arg : IOTDATA_NODE_DIAGNOSTICS_PARTITION;
+    if (strlen(arg) >= sizeof(_iotdata_node_diagnostics_persist)) {
+        _iotdata_node_diagnostics_ready = false;
+        return false; /* see A TRUNCATED PATH IS A REFUSAL */
+    }
+    (void)snprintf(_iotdata_node_diagnostics_persist, sizeof(_iotdata_node_diagnostics_persist), "%s", arg);
+    _iotdata_node_diagnostics_config.flush = conf->flush;
+    _iotdata_node_diagnostics_config.flush_ms = conf->flush_ms;
+    _iotdata_node_diagnostics_config.max_records = conf->max_records;
+    _iotdata_node_diagnostics_config.max_bytes = conf->max_bytes;
+    _iotdata_node_diagnostics_config.generations = conf->generations;
+    _iotdata_node_diagnostics_config.persist_arg = _iotdata_node_diagnostics_persist;
+    _iotdata_node_diagnostics_config.enabled = conf->enabled;
+    return _iotdata_node_diagnostics_start(ev, reason);
+}
+
+/* The store's name as it was actually opened, for the line an application logs at startup. */
+static inline const char *iotdata_node_diagnostics_persist_arg(void) {
+    return _iotdata_node_diagnostics_config.persist_arg;
+}
+
+/* STOPPING, which only a host does. A device's recorder ends when the power does, and there is
+   nothing to hand back; a process exits, and the backend it opened was a malloc. Records the event
+   first, then flushes, so the last thing in the store is the fact that the store was closed
+   properly -- which is how a reader tells a clean shutdown from the kill that left no such line. */
+static inline void iotdata_node_diagnostics_end(const iotdata_node_bb_lc_event_t ev, const uint8_t reason) {
+    if (_iotdata_node_diagnostics_ready) {
+        (void)iotdata_node_blackbox_lifecycle(&_iotdata_node_diagnostics_handle, ev, reason);
+        (void)blackbox_flush(&_iotdata_node_diagnostics_handle);
+        blackbox_deinit(&_iotdata_node_diagnostics_handle);
+        _iotdata_node_diagnostics_ready = false;
+    }
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 static inline void iotdata_node_diagnostics_event(const iotdata_node_bb_lc_event_t ev, const uint8_t reason) {
     if (_iotdata_node_diagnostics_ready)
         (void)iotdata_node_blackbox_lifecycle(&_iotdata_node_diagnostics_handle, ev, reason);
@@ -440,7 +529,7 @@ static inline size_t iotdata_node_diagnostics_pull(size_t *const cursor, char *c
     return 0;
 }
 
-static inline void iotdata_node_diagnostics_tick(const uint32_t now_ms) {
+static inline void _iotdata_node_diagnostics_tick(const uint32_t now_ms) {
     if (_iotdata_node_diagnostics_ready) {
         if (_iotdata_node_diagnostics_ticked_ms == 0)
             _iotdata_node_diagnostics_ticked_ms = now_ms;
@@ -493,6 +582,32 @@ static inline bool iotdata_node_diagnostics_pump(void) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// THE ONE CALL AN APP MAKES: ONCE A PASS, AND FIRST
+//
+// Everything above is reachable on its own, and an app should reach for none of it. This is the
+// whole obligation: call it once per pass of the main loop, as the first thing in the pass, with
+// the now_ms the rest of the pass is working to.
+//
+// IT IS ONE FUNCTION BECAUSE IT WAS TWO AND THAT WAS A TRAP. The clock-and-canary half and the
+// dump-draining half have nothing to do with each other, so an app would wire up whichever one it
+// happened to think of -- and two of them wired up only the drain, which meant the guard bands
+// were never checked and `diag stat` reported uptime=0 for the life of the node. Neither one
+// failed loudly, because neither one is load-bearing until the day it is. There is now nothing to
+// half-remember.
+//
+// FIRST IN THE PASS, because the canary check is worth most before this pass's records are
+// written rather than after, and because the clock a record is accounted against should be this
+// pass's and not the last one's. The cost is that a `diag dump` typed at the console -- which is
+// read later in the pass -- starts draining on the next one, which is milliseconds away.
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline void iotdata_node_diagnostics_tick(const uint32_t now_ms) {
+    _iotdata_node_diagnostics_tick(now_ms); /* the clock, and the pool's guard bands */
+    (void)iotdata_node_diagnostics_pump();  /* and one chunk of a dump, if one is running */
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // THE NODE'S CONTROL KEYS
 //
 // What a device with a recorder accepts over the air, and the one handler for it. ENABLE and CLEAR
@@ -503,12 +618,25 @@ static inline bool iotdata_node_diagnostics_pump(void) {
 
 /* (subject, action) PAIRS, which is the shape the inventory emits and the shape a command takes on
    the wire -- so advertising one and sending one cannot drift apart. */
-static const uint8_t iotdata_node_diagnostics_control_actions[] = {
-    IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_ENABLE, IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_CLEAR,
+/* THE PAIRS AS A MACRO, so an app can SPLICE them into an array of its own rather than copy them
+   into one at run time. A node with two modules that both answer control keys has to advertise the
+   union of them, and there is no way to concatenate two arrays at compile time in C -- so every
+   such app had a mutable array, two copy loops and a count assigned at startup. Five of them did,
+   identically, and the failure mode was silent: forget the init and the node advertises pairs of
+   zeroes, which reads as a node that answers subject 0 action 0 and nothing else.
+ *
+ * Spliced instead, the array is `static const`, the count is a sizeof, and there is nothing left to
+ * forget. The trailing comma is deliberate and is what makes two of these sit next to each other. */
+#define IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTION_PAIRS IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_ENABLE, IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_CLEAR, _IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTION_PAIRS_DUMP
+
 #if IOTDATA_NODE_DIAGNOSTICS_DUMP
-    IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_DUMP,
+#define _IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTION_PAIRS_DUMP IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_DUMP,
+#else
+#define _IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTION_PAIRS_DUMP /* absent from the list as well as the handler */
 #endif
-};
+
+/* Kept for an app that advertises nothing else and wants the module's list as it stands. */
+static const uint8_t iotdata_node_diagnostics_control_actions[] = { IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTION_PAIRS };
 #define IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTIONS_COUNT ((uint8_t)(sizeof(iotdata_node_diagnostics_control_actions) / (2 * sizeof(iotdata_node_diagnostics_control_actions[0]))))
 
 /*
@@ -554,9 +682,13 @@ static inline bool iotdata_node_diagnostics_node_control(__attribute__((unused))
 
 static const uint8_t *const iotdata_node_diagnostics_control_actions = NULL;
 #define IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTIONS_COUNT ((uint8_t)0)
+/* Expands to NOTHING, so an app that splices this and the content module's pairs into one array
+   still compiles with the recorder off -- and advertises only the other module's keys, which is
+   exactly what a node with no recorder should say. */
+#define IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTION_PAIRS
 /* NULL, so a node with no recorder reports no diagnostics rather than an empty blackbox */
-#define IOTDATA_NODE_DIAGNOSTICS_PULL                  NULL
-#define IOTDATA_NODE_DIAGNOSTICS_CONTROL               NULL
+#define IOTDATA_NODE_DIAGNOSTICS_PULL    NULL
+#define IOTDATA_NODE_DIAGNOSTICS_CONTROL NULL
 
 static inline iotdata_node_diagnostics_emit_fn iotdata_node_diagnostics_emit_set(__attribute__((unused)) const iotdata_node_diagnostics_emit_fn fn) {
     return NULL;
@@ -569,6 +701,22 @@ static inline blackbox_handle_t *iotdata_node_diagnostics_handle(void) {
 }
 static inline bool iotdata_node_diagnostics_begin(__attribute__((unused)) const uint8_t reason, __attribute__((unused)) const bool cold) {
     return false;
+}
+typedef struct {
+    bool enabled;
+    const char *persist_arg;
+    blackbox_flush_t flush;
+    uint32_t flush_ms;
+    uint32_t max_records, max_bytes;
+    uint8_t generations;
+} iotdata_node_diagnostics_conf_t;
+static inline bool iotdata_node_diagnostics_begin_conf(__attribute__((unused)) const iotdata_node_diagnostics_conf_t *const conf, __attribute__((unused)) const iotdata_node_bb_lc_event_t ev, __attribute__((unused)) const uint8_t reason) {
+    return false;
+}
+static inline const char *iotdata_node_diagnostics_persist_arg(void) {
+    return NULL;
+}
+static inline void iotdata_node_diagnostics_end(__attribute__((unused)) const iotdata_node_bb_lc_event_t ev, __attribute__((unused)) const uint8_t reason) {
 }
 static inline void iotdata_node_diagnostics_event(__attribute__((unused)) const iotdata_node_bb_lc_event_t ev, __attribute__((unused)) const uint8_t reason) {
 }
@@ -587,7 +735,7 @@ static inline void iotdata_node_diagnostics_clear(void) {
 static inline size_t iotdata_node_diagnostics_pull(__attribute__((unused)) size_t *const cursor, __attribute__((unused)) char *const out, __attribute__((unused)) const size_t outsize) {
     return 0;
 }
-static inline void iotdata_node_diagnostics_tick(__attribute__((unused)) const uint32_t now_ms) {
+static inline void _iotdata_node_diagnostics_tick(__attribute__((unused)) const uint32_t now_ms) {
 }
 static inline void iotdata_node_diagnostics_stat(void) {
 }
@@ -595,6 +743,8 @@ static inline void iotdata_node_diagnostics_dump_start(void) {
 }
 static inline bool iotdata_node_diagnostics_pump(void) {
     return false;
+}
+static inline void iotdata_node_diagnostics_tick(__attribute__((unused)) const uint32_t now_ms) {
 }
 static inline bool iotdata_node_diagnostics_control(__attribute__((unused)) const uint8_t subject, __attribute__((unused)) const uint8_t action, __attribute__((unused)) const uint8_t *const args,
                                                     __attribute__((unused)) const uint8_t arglen) {

@@ -28,7 +28,7 @@ const fs = require('fs'),
    exists to prevent. */
 const MAGIC = 'IOTA';
 const HASH_LEN = 16;
-const KEY = { END: 0x00, APP: 0x01, SEMVER: 0x02, STAMP: 0x03, FORM: 0x04, CODEC: 0x05, FLAGS: 0x06, BOOTLOADER_MIN: 0x07, OUTPUT_SIZE: 0x08, TARGET_HASH: 0x09, BASE_HASH: 0x0a };
+const KEY = { END: 0x00, APP: 0x01, SEMVER: 0x02, STAMP: 0x03, FORM: 0x04, CODEC: 0x05, FLAGS: 0x06, BOOTLOADER_MIN: 0x07, OUTPUT_SIZE: 0x08, TARGET_HASH: 0x09, BASE_HASH: 0x0a, PAYLOAD_SIZE: 0x0b, PAYLOAD_HASH: 0x0c };
 const FORM = { full: 0x00, delta: 0x01 };
 const CODEC = { none: 0x00, deflate: 0x01, heatshrink: 0x02 };
 const FLAG = { 'downgrade-okay': 0x01 };
@@ -161,6 +161,9 @@ put(KEY.BOOTLOADER_MIN, u32(t.bootloader_min === undefined ? 1 : t.bootloader_mi
 put(KEY.OUTPUT_SIZE, u32(t.ota.size));
 put(KEY.TARGET_HASH, hash16(t.ota.sha256));
 if (base) put(KEY.BASE_HASH, hash16(base.ota.sha256));
+const payload_hash = crypto.createHash('sha256').update(payload).digest().subarray(0, HASH_LEN);
+put(KEY.PAYLOAD_SIZE, u32(payload.length));
+put(KEY.PAYLOAD_HASH, payload_hash);
 put(KEY.END, Buffer.alloc(0));
 
 const header = Buffer.concat([Buffer.from(MAGIC, 'ascii'), ...kvr]);
@@ -193,6 +196,7 @@ const lines = [
     ...(base ? [`base_release=${basename}`, `base_semver=${base.version}`, `base_hash=${hash16(base.ota.sha256).toString('hex')}`] : []),
     `payload_raw=${raw}`,
     `payload_wire=${payload.length}`,
+    `payload_hash=${payload_hash.toString('hex')}`,
     /* of the full image, measured on the BLOB -- that is what actually crosses the link. */
     `of_full_image=${((100 * blob.length) / t.ota.size).toFixed(1)}%`,
 ];

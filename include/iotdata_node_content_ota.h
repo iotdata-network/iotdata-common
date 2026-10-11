@@ -51,6 +51,8 @@
 //   0x08 OUTPUT_SIZE    u32   the size of the resulting app image
 //   0x09 TARGET_HASH    16B   what the result must hash to
 //   0x0A BASE_HASH      16B   DELTA ONLY: the one image this patch applies to -- EXACT
+//   0x0B PAYLOAD_SIZE   u32   the bytes AFTER END -- what the blob should weigh on arrival
+//   0x0C PAYLOAD_HASH   16B   of those same bytes, before any decoding
 //
 // WHY THE STAMP AND NOT THE SEMVER. iotdata_node_version.h already rules on this: the semver is
 // "normative and hand-set at release points, NOT the ordering key", while the stamp is "the ONLY
@@ -63,6 +65,27 @@
 // else it produces a plausible-looking corrupt image. A bootloader is DEPENDED ON, and one app
 // build is usually good with several, so a floor is the honest expression. An exact hash there would
 // force a lockstep the fleet does not have.
+//
+// WHY THE PAYLOAD DESCRIBES ITSELF, when the transfer already had integrity. The content layer
+// checks a CRC-64 as the bytes arrive and then FORGETS it -- nothing persists it -- so after a
+// restart a stored blob is just bytes. Three things then have no check at all: a blob that sat in
+// flash for weeks and rotted, a blob a filesystem mangled during unrelated housekeeping, and a blob
+// baked into a factory image that never crossed a link in the first place.
+//
+// Without these two keys the only remaining check is TARGET_HASH, which is verified AFTER the
+// assembly -- and assembly begins with esp_ota_begin(), which ERASES THE INACTIVE SLOT. That slot
+// holds the image a rollback would return to. So the real argument is not extra assurance: it is
+// that a blob which was never going to apply must be refused BEFORE it costs us the thing that
+// makes a bad update survivable.
+//
+// SIZE IS O(1) AND IS THE ONE THAT WAS ACTUALLY MISSING. A truncated or appended-to blob was
+// previously undetectable until inflate ran dry; now it costs one comparison, and nothing needs to
+// be read. The hash is O(n) with no decode, which is still far cheaper than the decode it guards.
+//
+// WHY NOT A THIRD ALGORITHM. CRC-64/XZ is the CONTENT layer's (it covers a transfer); sha256-16 is
+// this header's (it covers identity). Reusing sha256 here means the device needs no second
+// primitive beyond the one TARGET_HASH already forces on it, and nobody has to remember which of
+// three checks covers which bytes.
 //
 // WHY 16-BYTE HASHES. These are identity and compatibility checks, not authenticity ones -- the
 // deployer's blob signature already carries authenticity. Truncated sha256 at 128 bits is far past
@@ -88,14 +111,23 @@
 //
 //   1. the magic                      not ours at all
 //   2. APP vs IOTDATA_NODE_VERSION_APP     a relay image on a sensor bricks it just as thoroughly
-//   3. FORM / CODEC supported         refuse what cannot be decoded before fetching it
-//   4. BOOTLOADER_MIN vs ours         needs a cable visit, not a download
-//   5. OUTPUT_SIZE vs the free slot   do not spend airtime on something that cannot land
-//   6. BASE_HASH vs the running app   DELTA ONLY, and before a single byte is written
-//   7. TARGET_HASH vs the result      after assembly, before the boot slot is flipped
+//   3. PAYLOAD_SIZE vs the file       truncated or added to: nothing below it means anything
+//   4. FORM / CODEC supported         refuse what cannot be decoded before fetching it
+//   5. BOOTLOADER_MIN vs ours         needs a cable visit, not a download
+//   6. OUTPUT_SIZE vs the free slot   do not spend airtime on something that cannot land
+//   7. BASE_HASH vs the running app   DELTA ONLY, and before a single byte is written
+//   8. PAYLOAD_HASH vs the bytes      O(n), no decode -- the last check before the slot is ERASED
+//   9. TARGET_HASH vs the result      after assembly, before the boot slot is flipped
 //
-// Steps 1-6 are answerable from the header alone, which is the reason the header leads the blob:
-// everything that can refuse an update does so before the expensive part begins.
+// Steps 1-7 are answerable from the header and the file's length alone, which is the reason the
+// header leads the blob: everything that can refuse an update cheaply does so before the expensive
+// part begins. Step 3 sits where it does because the header itself survived the parse -- a
+// truncation can only have taken payload -- so the fields above it are trustworthy and none of the
+// ones below it are worth evaluating on a blob that is not all there.
+//
+// STEP 8 IS NOT IN iotdata_node_ota_check(), because it needs the bytes and this header reads none.
+// The caller hashes (its platform already has sha256 for step 9) and asks
+// iotdata_node_ota_payload_hash_matches().
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* kvr framing comes from the library (iotdata_fields.h, via iotdata.h); include that first. */
@@ -118,6 +150,8 @@
 #define IOTDATA_NODE_OTA_KEY_OUTPUT_SIZE    0x08
 #define IOTDATA_NODE_OTA_KEY_TARGET_HASH    0x09
 #define IOTDATA_NODE_OTA_KEY_BASE_HASH      0x0A
+#define IOTDATA_NODE_OTA_KEY_PAYLOAD_SIZE   0x0B
+#define IOTDATA_NODE_OTA_KEY_PAYLOAD_HASH   0x0C
 
 #define IOTDATA_NODE_OTA_FORM_FULL          0x00
 #define IOTDATA_NODE_OTA_FORM_DELTA         0x01
@@ -139,23 +173,27 @@ typedef struct {
     uint32_t output_size;
     uint8_t target_hash[IOTDATA_NODE_OTA_HASH_LEN];
     uint8_t base_hash[IOTDATA_NODE_OTA_HASH_LEN];
-    bool has_target_hash, has_base_hash;
+    uint8_t payload_hash[IOTDATA_NODE_OTA_HASH_LEN];
+    bool has_target_hash, has_base_hash, has_payload_hash, has_payload_size;
+    uint32_t payload_size; /* what the payload SHOULD weigh; 0/absent means nothing is claimed */
     size_t payload_offset; /* where the payload starts -- the byte after END */
 } iotdata_node_ota_header_t;
 
 typedef enum {
     IOTDATA_NODE_OTA_OK = 0,
-    IOTDATA_NODE_OTA_ERR_MAGIC,      /* not an iotdata OTA blob                     */
-    IOTDATA_NODE_OTA_ERR_TRUNCATED,  /* ran off the end before END                  */
-    IOTDATA_NODE_OTA_ERR_NO_END,     /* kvr walked out without the END sentinel     */
-    IOTDATA_NODE_OTA_ERR_APP,        /* a different application entirely            */
-    IOTDATA_NODE_OTA_ERR_FORM,       /* form we cannot decode                       */
-    IOTDATA_NODE_OTA_ERR_CODEC,      /* codec we cannot decode                      */
-    IOTDATA_NODE_OTA_ERR_BOOTLOADER, /* needs a newer bootloader -- cable visit     */
-    IOTDATA_NODE_OTA_ERR_SIZE,       /* will not fit the slot it must land in       */
-    IOTDATA_NODE_OTA_ERR_BASE,       /* delta against an image we are not running   */
-    IOTDATA_NODE_OTA_ERR_NO_BASE,    /* delta with no BASE_HASH at all              */
-    IOTDATA_NODE_OTA_ERR_OLDER,      /* older stamp without FLAG_DOWNGRADE          */
+    IOTDATA_NODE_OTA_ERR_MAGIC,        /* not an iotdata OTA blob                     */
+    IOTDATA_NODE_OTA_ERR_TRUNCATED,    /* ran off the end before END                  */
+    IOTDATA_NODE_OTA_ERR_NO_END,       /* kvr walked out without the END sentinel     */
+    IOTDATA_NODE_OTA_ERR_APP,          /* a different application entirely            */
+    IOTDATA_NODE_OTA_ERR_FORM,         /* form we cannot decode                       */
+    IOTDATA_NODE_OTA_ERR_CODEC,        /* codec we cannot decode                      */
+    IOTDATA_NODE_OTA_ERR_BOOTLOADER,   /* needs a newer bootloader -- cable visit     */
+    IOTDATA_NODE_OTA_ERR_SIZE,         /* will not fit the slot it must land in       */
+    IOTDATA_NODE_OTA_ERR_BASE,         /* delta against an image we are not running   */
+    IOTDATA_NODE_OTA_ERR_NO_BASE,      /* delta with no BASE_HASH at all              */
+    IOTDATA_NODE_OTA_ERR_OLDER,        /* older stamp without FLAG_DOWNGRADE          */
+    IOTDATA_NODE_OTA_ERR_PAYLOAD_SIZE, /* the blob is not the length it says it is     */
+    IOTDATA_NODE_OTA_ERR_PAYLOAD_HASH, /* it is the right length and the wrong bytes   */
 } iotdata_node_ota_status_t;
 
 static inline const char *iotdata_node_ota_status_name(const iotdata_node_ota_status_t s) {
@@ -179,11 +217,17 @@ static inline const char *iotdata_node_ota_status_name(const iotdata_node_ota_st
     case IOTDATA_NODE_OTA_ERR_SIZE:
         return "will not fit the slot";
     case IOTDATA_NODE_OTA_ERR_BASE:
-        return "delta base is not what we are running";
+        return "delta base is not running";
     case IOTDATA_NODE_OTA_ERR_NO_BASE:
-        return "delta without a base";
+        return "delta base is non-existant";
     case IOTDATA_NODE_OTA_ERR_OLDER:
-        return "older, and downgrade not flagged";
+        return "older (downgrade not flagged)";
+    case IOTDATA_NODE_OTA_ERR_PAYLOAD_SIZE:
+        return "not equal to the header length";
+    case IOTDATA_NODE_OTA_ERR_PAYLOAD_HASH:
+        return "not equal to the header hash";
+    default:
+        break; /* -Wswitch-default on the device: a value from a newer bundler is not a bug here */
     }
     return "unknown";
 }
@@ -197,9 +241,6 @@ static inline const char *iotdata_node_ota_codec_name(const uint8_t c) {
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Parse only -- says what the blob CLAIMS, never whether we should take it. Unknown keys are
-   skipped, which is what makes the format extensible; absent keys leave their field at zero, so a
-   caller tests has_* rather than comparing against a sentinel that could be real data. */
 static inline iotdata_node_ota_status_t iotdata_node_ota_parse(const uint8_t *const buf, const size_t len, iotdata_node_ota_header_t *const out) {
     if (buf == NULL || out == NULL || len < IOTDATA_NODE_OTA_MAGIC_LEN + 2u)
         return IOTDATA_NODE_OTA_ERR_TRUNCATED;
@@ -256,6 +297,18 @@ static inline iotdata_node_ota_status_t iotdata_node_ota_parse(const uint8_t *co
                 out->has_base_hash = true;
             }
             break;
+        case IOTDATA_NODE_OTA_KEY_PAYLOAD_SIZE:
+            /* has_* rather than a zero test: a zero-length payload is malformed, not absent, and the
+               two want different answers -- absent is an older bundler, zero is a broken one. */
+            out->payload_size = iotdata_kvr_u32(val, vlen, 0u);
+            out->has_payload_size = true;
+            break;
+        case IOTDATA_NODE_OTA_KEY_PAYLOAD_HASH:
+            if (vlen == IOTDATA_NODE_OTA_HASH_LEN) {
+                memcpy(out->payload_hash, val, IOTDATA_NODE_OTA_HASH_LEN);
+                out->has_payload_hash = true;
+            }
+            break;
         default:
             break; /* UNKNOWN KEYS ARE SKIPPED -- the whole reason this is kvr */
         }
@@ -265,6 +318,8 @@ static inline iotdata_node_ota_status_t iotdata_node_ota_parse(const uint8_t *co
     out->payload_offset = cursor;
     return IOTDATA_NODE_OTA_OK;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* Everything the device knows about itself that bears on whether it can take a blob. Passed in
    rather than read here, so this header stays free of esp_* and can be unit-tested on a host. */
@@ -279,12 +334,23 @@ typedef struct {
 } iotdata_node_ota_device_t;
 
 /* The checklist from the header comment, in that order: the cheapest and most fatal refusals come
-   first so nothing expensive starts on a blob that was never going to be taken. */
-static inline iotdata_node_ota_status_t iotdata_node_ota_check(const iotdata_node_ota_header_t *const h, const iotdata_node_ota_device_t *const d) {
+   first so nothing expensive starts on a blob that was never going to be taken.
+
+   `blob_len` is the WHOLE file, header included, and 0 means "I cannot say" -- the same convention
+   d->stamp == NULL and d->slot_size == 0 already use, so a caller that only has a header in hand
+   loses nothing. A blob with no PAYLOAD_SIZE key is likewise not refused: unknown and absent keys
+   are what makes this format extensible, and an older bundler's output stays acceptable. The cost
+   of both skips is named rather than hidden -- neither blob gets the length check, and truncation
+   then surfaces where it always did, at the far end of the decode. */
+static inline iotdata_node_ota_status_t iotdata_node_ota_check(const iotdata_node_ota_header_t *const h, const iotdata_node_ota_device_t *const d, const size_t blob_len) {
     if (h == NULL || d == NULL)
         return IOTDATA_NODE_OTA_ERR_TRUNCATED;
     if (d->app != NULL && h->app[0] != '\0' && strcmp(h->app, d->app) != 0)
         return IOTDATA_NODE_OTA_ERR_APP;
+    /* Before anything below it: the header survived the parse, so a truncation can only have taken
+       payload, and no field down there is worth weighing on a blob that is not all there. */
+    if (h->has_payload_size && blob_len != 0u && (uint64_t)h->payload_offset + (uint64_t)h->payload_size != (uint64_t)blob_len)
+        return IOTDATA_NODE_OTA_ERR_PAYLOAD_SIZE;
     if (h->form != IOTDATA_NODE_OTA_FORM_FULL && h->form != IOTDATA_NODE_OTA_FORM_DELTA)
         return IOTDATA_NODE_OTA_ERR_FORM;
     if ((h->codec == IOTDATA_NODE_OTA_CODEC_DEFLATE && !d->codec_deflate) || (h->codec == IOTDATA_NODE_OTA_CODEC_HEATSHRINK && !d->codec_heatshrink) || (h->codec > IOTDATA_NODE_OTA_CODEC_HEATSHRINK))
@@ -304,6 +370,25 @@ static inline iotdata_node_ota_status_t iotdata_node_ota_check(const iotdata_nod
     if (d->stamp != NULL && h->stamp[0] != '\0' && strcmp(h->stamp, d->stamp) <= 0 && (h->flags & IOTDATA_NODE_OTA_FLAG_DOWNGRADE) == 0u)
         return IOTDATA_NODE_OTA_ERR_OLDER;
     return IOTDATA_NODE_OTA_OK;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+/* Step 8, which iotdata_node_ota_check() cannot do: it needs the payload and this header reads
+   nothing. THE CALLER HASHES -- its platform already has sha256 for TARGET_HASH -- and asks here.
+   Truncated sha256 of the payload exactly as stored, before any decoding.
+
+   ABSENT IS A PASS, deliberately. A blob from a bundler older than the key is not refused; it simply
+   does not get this check, which is the same bargain every other optional key here strikes. A caller
+   that wants to insist can test has_payload_hash itself. */
+static inline iotdata_node_ota_status_t iotdata_node_ota_payload_hash_check(const iotdata_node_ota_header_t *const h, const uint8_t *const hash, const size_t hash_len) {
+    if (h == NULL)
+        return IOTDATA_NODE_OTA_ERR_TRUNCATED;
+    if (!h->has_payload_hash)
+        return IOTDATA_NODE_OTA_OK;
+    if (hash == NULL || hash_len < IOTDATA_NODE_OTA_HASH_LEN)
+        return IOTDATA_NODE_OTA_ERR_PAYLOAD_HASH;
+    return (memcmp(h->payload_hash, hash, IOTDATA_NODE_OTA_HASH_LEN) == 0) ? IOTDATA_NODE_OTA_OK : IOTDATA_NODE_OTA_ERR_PAYLOAD_HASH;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

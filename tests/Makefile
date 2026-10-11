@@ -45,6 +45,27 @@ test:
 	@$(TEST_DIR)/test_node_status
 	@$(TEST_CC) $(TEST_CFLAGS) test_node_content_ota.c -o $(TEST_DIR)/test_node_content_ota -lm
 	@$(TEST_DIR)/test_node_content_ota
+# both ways, because the table is a size/speed knob and an untested alternative implementation is
+# worse than no alternative. -ldl: the suite dlopens liblzma to check itself against the reference.
+	@$(TEST_CC) $(TEST_CFLAGS) test_node_crc64.c -o $(TEST_DIR)/test_node_crc64 -ldl
+	@$(TEST_DIR)/test_node_crc64
+	@$(TEST_CC) $(TEST_CFLAGS) -DIOTDATA_NODE_CRC64_TABLE=0 test_node_crc64.c -o $(TEST_DIR)/test_node_crc64_bitwise -ldl
+	@$(TEST_DIR)/test_node_crc64_bitwise
+# the RAM backend lives in include/device, so this needs that on the path as the cart test does
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_content.c -o $(TEST_DIR)/test_node_content -lm
+	@$(TEST_DIR)/test_node_content
+# again with a table smaller than the store, which is the only way the ownership overflow -- a
+# misdimensioning, counted rather than hidden -- is reachable at all
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device -DIOTDATA_NODE_CONTENT_OWNED_MAX=4 test_node_content.c -o $(TEST_DIR)/test_node_content_tight -lm
+	@$(TEST_DIR)/test_node_content_tight
+# the DIRECTORY backend, against a real filesystem -- and driven side by side with the exact RAM
+# model, which is the comparison that backend was written for and had no host counterpart until now
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_filestore_linux.c -o $(TEST_DIR)/test_node_filestore_linux -lm
+	@$(TEST_DIR)/test_node_filestore_linux
+# the console and CONTROL words over that same backend. The one suite here that catches stdout,
+# because for a download the reply IS the protocol that esp32-tool parses.
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_console_content.c -o $(TEST_DIR)/test_node_console_content -lm
+	@$(TEST_DIR)/test_node_console_content
 	@$(TEST_CC) $(TEST_CFLAGS) test_node_config_blocks.c -o $(TEST_DIR)/test_node_config_blocks -lm
 	@$(TEST_DIR)/test_node_config_blocks
 	@$(TEST_CC) $(TEST_CFLAGS) test_node_utils.c -o $(TEST_DIR)/test_node_utils -lm

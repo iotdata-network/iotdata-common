@@ -42,6 +42,7 @@
 #include "d_common.h"
 #include "d_format.h"
 #include "d_module_datastore_esp32.h"
+#include "d_module_filestore_esp32.h"
 #include "d_readings.h"
 #include "d_hardware_gpio.h"
 #if !defined(PIN_DEVICE_UART_TX) || !defined(PIN_DEVICE_UART_RX) || !defined(PIN_DEVICE_LORA_AUX) || !defined(PIN_DEVICE_LORA_M0) || !defined(PIN_DEVICE_LORA_M1)
@@ -92,6 +93,7 @@
 
 #define IOTDATA_NODE_DIAGNOSTICS_FLUSH BLACKBOX_FLUSH_MANUAL /* a sleeping node flushes before it sleeps */
 #include "iotdata_node_platform.h"
+#include "iotdata_node_content_control.h"
 static void _iapp_diagnostics_emit(const char *const line) {
     ESP_LOGI("app", "%s", line); // XXX
 }
@@ -105,10 +107,25 @@ static bool _iapp_on_batt_changed(const iotdata_node_config_row_t *row, const io
 #define IOTDATA_NODE_CONFIG_BATT_NOTIFY _iapp_on_batt_changed
 #include "iotdata_node_config_device_batt.h"
 
+/* CONTENT IS OFF BY DEFAULT ON A NODE THAT SLEEPS, which is the opposite of the shared default and
+   the one place this template overrides it. Mounting SPIFFS is not free: it scans the partition to
+   build its index, and a duty-cycled sensor pays that on EVERY wake -- out of an awake budget that
+   is the whole reason the node runs off a panel at all. A relay is mains-or-permanent and pays it
+   once a boot, so it defaults on there.
+ *
+ * Turning it on is a row, not a reflash, so a sensor that needs a calibration blob or a firmware
+ * bundle can be told to start keeping content and will from its next wake. That is the trade worth
+ * making: the capability is always present and the cost is only paid when it is asked for. */
+#ifndef IOTDATA_NODE_CONFIG_CONTENT_ENABLED
+#define IOTDATA_NODE_CONFIG_CONTENT_ENABLED false
+#endif
+#include "iotdata_node_config_content.h"
+
 #define IOTDATA_NODE_CONFIG_ENTRIES(X) \
     APP_CONFIG_ENTRIES(X) \
     IOTDATA_NODE_CONFIG_ENTRIES_LORA(X) \
-    IOTDATA_NODE_CONFIG_ENTRIES_BATT(X)
+    IOTDATA_NODE_CONFIG_ENTRIES_BATT(X) \
+    IOTDATA_NODE_CONFIG_ENTRIES_CONTENT(X)
 
 #include "iotdata_node_config.h"
 #include "iotdata_node_config_device_e22900t22.h"
@@ -138,11 +155,30 @@ static int _iapp_node_config_build(uint8_t *buf, size_t size, iotdata_node_parti
 static bool _iapp_node_config_apply(const uint8_t *buf, size_t len, bool *reboot_out);
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+static filestore_esp32_t _iapp_filestore;
+static iotdata_node_content_t _iapp_content;
+
+static bool _iapp_node_control(__attribute__((unused)) const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const val, const uint8_t vlen) {
+    switch (subject) {
+    case IOTDATA_NODE_TLV_DIAGNOSTICS:
+        return iotdata_node_diagnostics_control(subject, action, val, vlen);
+    case IOTDATA_NODE_TLV_CONTENT:
+        return iotdata_node_content_control(subject, action, val, vlen);
+    default:
+        return false; /* not ours: the node layer counts it unknown */
+    }
+}
+
+static const uint8_t _iapp_control_actions[] = { IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTION_PAIRS IOTDATA_NODE_CONTENT_CONTROL_ACTION_PAIRS };
+#define IAPP_CONTROL_ACTIONS_COUNT ((uint8_t)(sizeof(_iapp_control_actions) / 2u))
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // APP STATE
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IAPP_STATE_MAGIC 0xB1E28003UL
-#define IAPP_STATE_TAG   0xB1E28004UL
+#define IAPP_STATE_MAGIC           0xB1E28003UL
+#define IAPP_STATE_TAG             0xB1E28004UL
 
 typedef struct {
     _RTC_DATA_STAMP_ENTRY;
@@ -173,9 +209,9 @@ static iapp_running_t _iapp_running = { .node_config = {
                                             .caps = &_iapp_operating.caps,
                                             .status = _iapp_node_status,
                                             .tx = _iapp_node_transmit,
-                                            .control = IOTDATA_NODE_DIAGNOSTICS_CONTROL,
-                                            .control_actions = iotdata_node_diagnostics_control_actions,
-                                            .control_actions_count = IOTDATA_NODE_DIAGNOSTICS_CONTROL_ACTIONS_COUNT,
+                                            .control = _iapp_node_control,
+                                            .control_actions = _iapp_control_actions,
+                                            .control_actions_count = IAPP_CONTROL_ACTIONS_COUNT,
                                             .diag = IOTDATA_NODE_DIAGNOSTICS_PULL,
                                             .receive_every_ms = IOTDATA_NODE_RECEIVE_EVERY_MS,
                                             .receive_window_ms = IOTDATA_NODE_RECEIVE_WINDOW_MS,
@@ -331,13 +367,14 @@ static void iapp_node_receive(iapp_state_t *const as) {
     iotdata_node_diagnostics_event(IOTDATA_NODE_BB_LC_WAKE, 0);
     bool reboot = false;
     unsigned frames = 0, acted = 0;
-    while (iotdata_node_window_active(n, (uint32_t)hw_time_ms())) {
+    for (uint32_t now_ms = (uint32_t)hw_time_ms(); iotdata_node_window_active(n, now_ms); now_ms = (uint32_t)hw_time_ms()) {
+        iotdata_node_diagnostics_tick(now_ms); /* clock + canary, and a DUMP that arrived in this window drains inside it */
+        (void)iotdata_node_content_tick(&_iapp_content, now_ms);
         int len = 0, rssi_dbm = 0;
         if (lora_read(as->running->packet_buffer, sizeof(as->running->packet_buffer), &len, &rssi_dbm, 0) == ESP_OK && len > 0) {
             frames++;
             acted += iotdata_node_on_frame(n, as->running->packet_buffer, (size_t)len, &reboot) ? 1 : 0;
         }
-        iotdata_node_diagnostics_pump();        /* a DUMP that arrived in this window drains inside it */
         hw_delay_ms_yieldable(RECEIVE_POLL_MS); /* yield and pat the watchdog: the window is long by MCU standards */
     }
     iotdata_node_window_end(n);
@@ -457,6 +494,25 @@ static bool iapp_init(iapp_state_t *const as) {
     // record power state
     if (cold_boot)
         power_describe(as->operating->battery_present);
+
+    // the content store, last: it is the one thing here a sensor can do without, and on a node
+    // that sleeps it is off unless a row says otherwise -- see the note by the config entries
+    {
+        const bool enabled = iotdata_node_config_bool(CONTENT_ENABLED);
+        const iotdata_node_content_backend_t *const be = enabled ? filestore_esp32_mount(&_iapp_filestore) : NULL;
+        iotdata_node_content_init(&_iapp_content, be);
+        iotdata_node_content_control_init(&_iapp_content, NULL); /* no OTA device: not a target yet */
+        if (!enabled)
+            ESP_LOGI(__tag_iapp, "content: disabled -- the store is not mounted");
+        else if (be == NULL)
+            ESP_LOGW(__tag_iapp, "content: no store -- the `storage` partition would not mount");
+        else {
+            const int offered = iotdata_node_content_begin(&_iapp_content, (uint32_t)hw_time_ms());
+            uint32_t total = 0u, used = 0u;
+            (void)filestore_esp32_info(&_iapp_filestore, &total, &used);
+            ESP_LOGI(__tag_iapp, "content: %" PRIu32 " file(s), %d offered, %u owned, %" PRIu32 " of %" PRIu32 " bytes used", iotdata_node_content_count(&_iapp_content), offered, (unsigned)_iapp_content.owns, used, total);
+        }
+    }
 
     // any app specific final activities, failable
     if (ad->func_init_final && ad->func_init_final(&app_state, node, reset_reason) != IAPP_EV_OK)

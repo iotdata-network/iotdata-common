@@ -64,7 +64,7 @@ static inline void iotdata_node_diagnostics_filter(const int argc, char **const 
 }
 
 /* Returns whether this was a recorder word. `argv[0]` is the verb the console dispatched on. */
-static inline bool iotdata_node_diagnostics_console(const int argc, char **const argv) {
+static inline bool iotdata_node_diagnostics_console(__attribute__((unused)) const uint32_t now_ms, const int argc, char **const argv) {
     if (argc < 2 || argv == NULL)
         return false;
     if (strcmp(argv[1], "stat") == 0)
