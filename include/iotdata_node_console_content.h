@@ -98,9 +98,6 @@
 #include <inttypes.h>
 #include <stdlib.h>
 
-#include "iotdata_node_console.h"
-#include "iotdata_node_content.h"
-
 /* Six §4 chunks. 192 bytes is exactly 256 base64 characters, so a line needs no padding and moves
    200 KB in about a thousand lines.
  *
@@ -378,7 +375,7 @@ static inline void _iotdata_node_console_content_download(__attribute__((unused)
     s->down_id = id;
     s->down_off = 0u;
     s->down_size = held;
-    s->down_crc = IOTDATA_NODE_CRC64_INIT;
+    s->down_crc = _IOTDATA_CRC64_INIT;
     /* The length first so the far end can size its buffer; the sum LAST, because it is computed
        from what was actually read rather than from a second pass over the file. */
     iotdata_node_console_reply("content: download %06" PRIx32 " begin, %" PRIu32 " bytes%s\n", id, held, (held == total) ? "" : " (INCOMPLETE)");
@@ -442,7 +439,7 @@ static inline void _iotdata_node_console_content_tick_down(iotdata_node_console_
         }
         (void)_iotdata_node_console_content_encode(raw, want, b64);
         iotdata_node_console_reply("d %" PRIu32 " %s\n", s->down_off, b64);
-        s->down_crc = iotdata_node_crc64(raw, want, s->down_crc);
+        s->down_crc = _iotdata_crc64(raw, want, s->down_crc);
         s->down_off += want;
     }
 }

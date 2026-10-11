@@ -43,13 +43,14 @@ test:
 	@$(TEST_DIR)/test_node_diagnostics_off
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_status.c -o $(TEST_DIR)/test_node_status -lm -lcjson
 	@$(TEST_DIR)/test_node_status
-	@$(TEST_CC) $(TEST_CFLAGS) test_node_content_ota.c -o $(TEST_DIR)/test_node_content_ota -lm
+# the filestore SEAM lives in include/device now, and content.h is written against it
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_content_ota.c -o $(TEST_DIR)/test_node_content_ota -lm
 	@$(TEST_DIR)/test_node_content_ota
 # both ways, because the table is a size/speed knob and an untested alternative implementation is
 # worse than no alternative. -ldl: the suite dlopens liblzma to check itself against the reference.
-	@$(TEST_CC) $(TEST_CFLAGS) test_node_crc64.c -o $(TEST_DIR)/test_node_crc64 -ldl
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_crc64.c -o $(TEST_DIR)/test_node_crc64 -ldl
 	@$(TEST_DIR)/test_node_crc64
-	@$(TEST_CC) $(TEST_CFLAGS) -DIOTDATA_NODE_CRC64_TABLE=0 test_node_crc64.c -o $(TEST_DIR)/test_node_crc64_bitwise -ldl
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device -D_IOTDATA_CRC64_TABLE=0 test_node_crc64.c -o $(TEST_DIR)/test_node_crc64_bitwise -ldl
 	@$(TEST_DIR)/test_node_crc64_bitwise
 # the RAM backend lives in include/device, so this needs that on the path as the cart test does
 	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_content.c -o $(TEST_DIR)/test_node_content -lm
@@ -62,6 +63,10 @@ test:
 # model, which is the comparison that backend was written for and had no host counterpart until now
 	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_filestore_linux.c -o $(TEST_DIR)/test_node_filestore_linux -lm
 	@$(TEST_DIR)/test_node_filestore_linux
+# the OTA CONSUMER, with a scripted slot and a scripted digest -- which is why claim decisions, the
+# write failures and the attempt counter across a reboot are all reachable without a cable
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_content_ota_apply.c -o $(TEST_DIR)/test_node_content_ota_apply -lm
+	@$(TEST_DIR)/test_node_content_ota_apply
 # the console and CONTROL words over that same backend. The one suite here that catches stdout,
 # because for a download the reply IS the protocol that esp32-tool parses.
 	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_console_content.c -o $(TEST_DIR)/test_node_console_content -lm

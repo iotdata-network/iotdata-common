@@ -14,11 +14,6 @@
 // other: nvs_set_blob followed by nvs_commit either lands whole or not at all, so there is no
 // temporary file and no directory to flush.
 //
-// WEAR IS THE CONSTRAINT INSTEAD. A flash sector takes on the order of 10^5 erases, so a caller
-// that persists on every change of a per-packet counter will wear a partition out in the field.
-// That is why iotdata_node_state.h reserves ahead for sequence numbers rather than writing each
-// one: one commit per N packets, and N is free to be large because skipping forward is harmless.
-//
 // datastore_persistent() is unconditionally true. NVS is flash; the tmpfs trap the linux half
 // guards against does not exist here.
 //

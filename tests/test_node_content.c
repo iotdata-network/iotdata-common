@@ -18,6 +18,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* CRC-64 LIVES IN d_common.h, which needs a platform under it for its timer and delay helpers --
+   so the host platform goes in first, exactly as the gateway does it. This suite calls neither;
+   it is here for the checksum iotdata_node_content.h sums an upload with. */
+#include "d_platform_linux.h"
+#include "d_common.h"
+#include "d_module_filestore.h" /* the seam: content.h is written against it */
 #include "iotdata_node_content.h"
 #include "d_module_filestore_ram.h"
 
@@ -115,7 +121,7 @@ static void test_ids(void) {
 static void test_backend(void) {
     printf("\nthe backend on its own: byte ranges, and knowing which of them it has\n");
     filestore_ram_t fs;
-    const iotdata_node_content_backend_t *b = filestore_ram_init(&fs);
+    const d_filestore_t *b = filestore_ram_init(&fs);
     CHECK(b != NULL && b->ctx == &fs, "initialises and carries its own context");
 
     uint8_t data[100];
@@ -179,7 +185,7 @@ static void test_insert_happy(void) {
 
     uint8_t data[300];
     (void)fill(data, sizeof(data));
-    const uint64_t crc = iotdata_node_crc64(data, sizeof(data), IOTDATA_NODE_CRC64_INIT);
+    const uint64_t crc = _iotdata_crc64(data, sizeof(data), _IOTDATA_CRC64_INIT);
 
     CHECK(iotdata_node_content_insert_begin(&c, 0x5BF001u, sizeof(data), crc, now) == IOTDATA_NODE_CONTENT_OK, "the insert is declared");
     CHECK(iotdata_node_content_insert_active(&c), "and is in flight");
@@ -215,7 +221,7 @@ static void test_insert_refusals(void) {
     printf("\nand every way an insert does not become one\n");
     uint8_t data[300];
     (void)fill(data, sizeof(data));
-    const uint64_t crc = iotdata_node_crc64(data, sizeof(data), IOTDATA_NODE_CRC64_INIT);
+    const uint64_t crc = _iotdata_crc64(data, sizeof(data), _IOTDATA_CRC64_INIT);
 
     /* --- the wrong bytes, in the right number --- */
     {
@@ -322,7 +328,7 @@ static void test_supersede(void) {
     for (uint32_t i = 0; i < sizeof(second); i++)
         second[i] = (uint8_t)(0xA0u + (i & 0x0Fu));
 
-    CHECK(upload(&c, 0x5BF001u, first, sizeof(first), 64u, iotdata_node_crc64(first, sizeof(first), IOTDATA_NODE_CRC64_INIT), &now) == IOTDATA_NODE_CONTENT_EVENT_ARRIVED, "the first lands");
+    CHECK(upload(&c, 0x5BF001u, first, sizeof(first), 64u, _iotdata_crc64(first, sizeof(first), _IOTDATA_CRC64_INIT), &now) == IOTDATA_NODE_CONTENT_EVENT_ARRIVED, "the first lands");
     uint32_t total = 0u;
     CHECK(fs.backend.stat(&fs, 0x5BF001u, &total, NULL) && total == sizeof(first), "at its own size");
 
@@ -331,12 +337,12 @@ static void test_supersede(void) {
     uint8_t bent[200];
     memcpy(bent, second, sizeof(bent));
     bent[7] ^= 0xFFu;
-    CHECK(upload(&c, 0x5BF001u, bent, sizeof(bent), 64u, iotdata_node_crc64(second, sizeof(second), IOTDATA_NODE_CRC64_INIT), &now) == IOTDATA_NODE_CONTENT_EVENT_INSERT_FAILED, "a replacement that fails its checksum fails");
+    CHECK(upload(&c, 0x5BF001u, bent, sizeof(bent), 64u, _iotdata_crc64(second, sizeof(second), _IOTDATA_CRC64_INIT), &now) == IOTDATA_NODE_CONTENT_EVENT_INSERT_FAILED, "a replacement that fails its checksum fails");
     CHECK(fs.backend.stat(&fs, 0x5BF001u, &total, NULL) && total == sizeof(first), "and the file that was already there is UNTOUCHED");
     uint8_t back[100];
     CHECK(fs.backend.read(&fs, 0x5BF001u, 0u, back, sizeof(back)) == (int)sizeof(back) && memcmp(back, first, sizeof(first)) == 0, "byte for byte");
 
-    CHECK(upload(&c, 0x5BF001u, second, sizeof(second), 64u, iotdata_node_crc64(second, sizeof(second), IOTDATA_NODE_CRC64_INIT), &now) == IOTDATA_NODE_CONTENT_EVENT_ARRIVED, "a replacement that passes lands");
+    CHECK(upload(&c, 0x5BF001u, second, sizeof(second), 64u, _iotdata_crc64(second, sizeof(second), _IOTDATA_CRC64_INIT), &now) == IOTDATA_NODE_CONTENT_EVENT_ARRIVED, "a replacement that passes lands");
     CHECK(fs.backend.stat(&fs, 0x5BF001u, &total, NULL) && total == sizeof(second), "and the id now holds the new bytes");
     CHECK(iotdata_node_content_count(&c) == 1u, "with no second copy left over");
 }

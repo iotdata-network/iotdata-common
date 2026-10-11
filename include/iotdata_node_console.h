@@ -14,7 +14,7 @@
  * Single-header: in ONE translation unit (the app's unity TU) define IOTDATA_NODE_CONSOLE_IMPLEMENTATION
  * before including; other TUs just include it for the declarations.
  *
- *   static void con_foo(iotdata_node_console_emit_fn emit, int argc, char **argv) { (void)argc; (void)argv; emit("foo!\n"); }
+ *   static void con_foo(iotdata_node_console_emit_fn emit, uint32_t now_ms, int argc, char **argv) { emit("foo!\n"); }
  *   static const iotdata_node_console_t app_cons[] = { { "foo", con_foo, "do the foo thing" } };
  *   iotdata_node_console_init(app_cons, sizeof app_cons / sizeof app_cons[0]);   // after boot
  *   ...
@@ -77,8 +77,17 @@
 
 typedef void (*iotdata_node_console_emit_fn)(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-/* argv[0] is the console name. */
-typedef void (*iotdata_node_console_fn)(iotdata_node_console_emit_fn emit, int argc, char **argv);
+/* argv[0] is the console name.
+ *
+ * IT IS HANDED THE PASS'S CLOCK, AND MUST NOT READ ITS OWN. A handler that calls hw_time_ms()
+ * itself gets a value LATER than the now_ms the rest of the pass is using -- the dispatch runs
+ * after the radio work, so the two differ by however long that took. Hand such a stamp to anything
+ * that then has a deadline checked against the pass clock and the unsigned difference underflows to
+ * ~4.29e9, which clears every timeout at once. That is not a theoretical ordering: it is what made
+ * `content insert` fail instantly on a relay, the insert stamped a few milliseconds ahead of the
+ * tick that was to time it out. So the clock arrives as an argument, from the one read at the top
+ * of the pass, and a handler that wants the time has no reason to look for it anywhere else. */
+typedef void (*iotdata_node_console_fn)(iotdata_node_console_emit_fn emit, uint32_t now_ms, int argc, char **argv);
 
 typedef struct {
     const char *name;           /* the verb typed at the console            */
@@ -249,7 +258,7 @@ static const char *iotdata_node_con_reset_name(int r) {
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-static void iotdata_node_con_cmd_vers(const iotdata_node_console_emit_fn emit, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
+static void iotdata_node_con_cmd_vers(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
     const esp_app_desc_t *const d = esp_app_get_description();
     esp_chip_info_t chip;
     esp_chip_info(&chip);
@@ -259,14 +268,14 @@ static void iotdata_node_con_cmd_vers(const iotdata_node_console_emit_fn emit, _
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static void iotdata_node_con_cmd_stat(const iotdata_node_console_emit_fn emit, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
+static void iotdata_node_con_cmd_stat(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
     emit("uptime=%us reset=%s\n", (unsigned)(esp_timer_get_time() / 1000000), iotdata_node_con_reset_name((int)esp_reset_reason()));
     emit("heap: free=%u min=%u largest=%u\n", (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static void iotdata_node_con_cmd_logl(const iotdata_node_console_emit_fn emit, int argc, char **argv) {
+static void iotdata_node_con_cmd_logl(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, int argc, char **argv) {
     if (argc < 2) {
         emit("log level = %s\n", iotdata_node_con_log_name(iotdata_node_con_log_level));
         return;
@@ -283,7 +292,7 @@ static void iotdata_node_con_cmd_logl(const iotdata_node_console_emit_fn emit, i
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static void iotdata_node_con_cmd_boot(const iotdata_node_console_emit_fn emit, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
+static void iotdata_node_con_cmd_boot(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
     emit("rebooting\n");
     fflush(stdout);
     esp_rom_delay_us(50000); /* let the reply drain out of the USB TX buffer before the reset */
@@ -325,7 +334,7 @@ static void iotdata_node_con_cmd_help(const iotdata_node_console_emit_fn emit) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static void iotdata_node_console_dispatch(char *line) {
+static void iotdata_node_console_dispatch(const uint32_t now_ms, char *line) {
     char *argv[IOTDATA_NODE_CONSOLE_ARGC_MAX];
     int argc = 0;
     for (char *tok = strtok(line, " \t"); tok != NULL && argc < IOTDATA_NODE_CONSOLE_ARGC_MAX; tok = strtok(NULL, " \t"))
@@ -338,12 +347,12 @@ static void iotdata_node_console_dispatch(char *line) {
     }
     for (size_t i = 0; iotdata_node_con_builtin[i].name != NULL; i++) /* built-ins win a name clash */
         if (strcmp(argv[0], iotdata_node_con_builtin[i].name) == 0) {
-            iotdata_node_con_builtin[i].fn(iotdata_node_console_reply, argc, argv);
+            iotdata_node_con_builtin[i].fn(iotdata_node_console_reply, now_ms, argc, argv);
             return;
         }
     for (size_t i = 0; i < iotdata_node_con_app_n; i++)
         if (strcmp(argv[0], iotdata_node_con_app[i].name) == 0) {
-            iotdata_node_con_app[i].fn(iotdata_node_console_reply, argc, argv);
+            iotdata_node_con_app[i].fn(iotdata_node_console_reply, now_ms, argc, argv);
             return;
         }
     iotdata_node_console_reply("unknown command '%s' (try 'help')\n", argv[0]);
@@ -443,7 +452,7 @@ void iotdata_node_console_tick(const uint32_t now_ms) {
             } else if (c == '\n') {
                 iotdata_node_con_line[iotdata_node_con_len] = '\0';
                 iotdata_node_con_len = 0; /* cleared BEFORE the dispatch, which may install a sink */
-                iotdata_node_console_dispatch(iotdata_node_con_line);
+                iotdata_node_console_dispatch(now_ms, iotdata_node_con_line);
             } else if (iotdata_node_con_len < sizeof(iotdata_node_con_line) - 1) {
                 iotdata_node_con_line[iotdata_node_con_len++] = c;
             } else {

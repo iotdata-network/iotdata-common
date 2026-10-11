@@ -8,6 +8,7 @@
 // reason:
 //
 //     IOTDATA_NODE_CONFIG_ENTRIES_CONTENT(X)        what EVERY content store has
+//     IOTDATA_NODE_CONFIG_ENTRIES_CONTENT_OTA(X)    and a node that can APPLY a firmware bundle
 //     IOTDATA_NODE_CONFIG_ENTRIES_CONTENT_FILE(X)   what only a DIRECTORY-backed one has
 //
 // The general group is one row, and one row is the honest size of it: whether this node keeps
@@ -50,6 +51,7 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define IOTDATA_NODE_CFGID_CONTENT_ENABLED        0x0F0
+#define IOTDATA_NODE_CFGID_CONTENT_OTA_ENABLED    0x0F1
 
 #define IOTDATA_NODE_CFGID_CONTENT_FILE_DIRECTORY 0x110
 #define IOTDATA_NODE_CFGID_CONTENT_FILE_MAX_BYTES 0x111
@@ -58,6 +60,9 @@
 
 #ifndef IOTDATA_NODE_CONFIG_CONTENT_ENABLED
 #define IOTDATA_NODE_CONFIG_CONTENT_ENABLED true /* a node built with a store is a node meant to use it */
+#endif
+#ifndef IOTDATA_NODE_CONFIG_CONTENT_OTA_ENABLED
+#define IOTDATA_NODE_CONFIG_CONTENT_OTA_ENABLED true /* a node built with the consumer is meant to take one */
 #endif
 
 #ifndef IOTDATA_NODE_CONFIG_CONTENT_FILE_DIRECTORY
@@ -87,6 +92,18 @@ static inline bool iotdata_node_config_content_changed(__attribute__((unused)) c
 /* 0x0F0-0x0FF -- every content store, whatever backend it writes to */
 #define IOTDATA_NODE_CONFIG_ENTRIES_CONTENT(X) \
     X(CONTENT_ENABLED, IOTDATA_NODE_CFGID_CONTENT_ENABLED, BOOL, 0, 1, IOTDATA_NODE_CONFIG_CONTENT_ENABLED, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CONTENT_NOTIFY, "accept new content (what is held is kept either way)")
+
+/* TWO SWITCHES AND NOT ONE, because holding a bundle and running it are different risks. A relay is
+   a useful place to park a firmware image for the nodes behind it, and whether it HOLDS one is a
+   question about flash; whether it RUNS one is a question about whether you are prepared for that
+   node to reboot into something new tonight. A cautious rollout turns this off across a fleet,
+   loads the bundle everywhere, and turns it back on a few nodes at a time.
+ *
+ * It is also the brake. A bundle already sitting on a hundred nodes that turns out to be bad is
+ * stopped by this row, over the air, without having to reach any of their flash. */
+#define IOTDATA_NODE_CONFIG_ENTRIES_CONTENT_OTA(X) \
+    X(CONTENT_OTA_ENABLED, IOTDATA_NODE_CFGID_CONTENT_OTA_ENABLED, BOOL, 0, 1, IOTDATA_NODE_CONFIG_CONTENT_OTA_ENABLED, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CONTENT_NOTIFY, \
+      "apply a firmware bundle that is held (holding one is CONTENT_ENABLED)")
 
 /* 0x110-0x11F -- only when the backend is a directory; see why not 0x100 above */
 #define IOTDATA_NODE_CONFIG_ENTRIES_CONTENT_FILE(X) \

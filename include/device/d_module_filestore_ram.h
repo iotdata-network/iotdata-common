@@ -29,7 +29,7 @@
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-#include "iotdata_node_content.h"
+#include "d_module_filestore.h"
 
 #ifndef FILESTORE_RAM_SLOTS
 #define FILESTORE_RAM_SLOTS 8
@@ -51,7 +51,7 @@ typedef struct {
 
 typedef struct {
     filestore_ram_slot_t slot[FILESTORE_RAM_SLOTS];
-    iotdata_node_content_backend_t backend;
+    d_filestore_t backend;
     /* one-shot refusals, so the module's store-failure paths are reachable from a test */
     bool fail_create, fail_write, fail_rename;
     /* what was asked of it, for a test to assert on rather than infer from side effects */
@@ -200,10 +200,10 @@ static inline bool _filestore_ram_have(void *const ctx, const uint32_t id, const
     const filestore_ram_slot_t *const s = _filestore_ram_find(fs, id);
     if (s == NULL)
         return false;
-    const uint32_t from = (uint32_t)chunk * IOTDATA_NODE_CONTENT_CHUNK_BYTES;
+    const uint32_t from = (uint32_t)chunk * D_FILESTORE_CHUNK_BYTES;
     if (from >= s->total)
         return false;
-    uint32_t to = from + IOTDATA_NODE_CONTENT_CHUNK_BYTES;
+    uint32_t to = from + D_FILESTORE_CHUNK_BYTES;
     if (to > s->total)
         to = s->total;
     for (uint32_t i = from; i < to; i++)
@@ -221,11 +221,11 @@ static inline bool _filestore_ram_complete(void *const ctx, const uint32_t id) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline const iotdata_node_content_backend_t *filestore_ram_init(filestore_ram_t *const fs) {
+static inline const d_filestore_t *filestore_ram_init(filestore_ram_t *const fs) {
     if (fs == NULL)
         return NULL;
     *fs = (filestore_ram_t){ 0 };
-    fs->backend = (const iotdata_node_content_backend_t){
+    fs->backend = (const d_filestore_t){
         .ctx = fs,
         .create = _filestore_ram_create,
         .write = _filestore_ram_write,

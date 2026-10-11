@@ -18,6 +18,14 @@
 #include "iotdata_variant.h"
 #include "iotdata.c"
 #include "iotdata_node.h"
+/* CRC-64 LIVES IN d_common.h, which needs a platform under it for its timer and delay helpers --
+   so the host platform goes in first, exactly as the gateway does it. This suite calls neither;
+   it is here for the checksum iotdata_node_content.h sums an upload with. */
+#include "d_platform_linux.h"
+#include "d_common.h"
+#include "d_module_filestore.h" /* the seam content.h is written against; no store is used here */
+#include "iotdata_node_content.h"
+#include "d_module_otaslot.h"
 #include "iotdata_node_content_ota.h"
 
 static int fails = 0;

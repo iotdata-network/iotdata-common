@@ -31,7 +31,7 @@
 #include <sys/vfs.h>
 #include <unistd.h>
 
-#include "iotdata_node_content.h"
+#include "d_module_filestore.h"
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -61,7 +61,7 @@ typedef struct {
     bool persistent; /* false: nothing here survives a reboot -- see the header */
     char dir[FILESTORE_LINUX_PATH_MAX];
     uint32_t budget; /* 0 = whatever the filesystem has */
-    iotdata_node_content_backend_t backend;
+    d_filestore_t backend;
 
     FILE *wr; /* the insert in flight, and its intended size */
     uint32_t wr_id, wr_total, wr_held;
@@ -389,7 +389,7 @@ static inline bool _filestore_linux_have(void *const ctx, const uint32_t id, con
     if (!_filestore_linux_stat(ctx, id, &total, &held))
         return false;
     /* From the length, which is the truth only while writes are an append: see the header. */
-    return ((uint64_t)chunk + 1u) * IOTDATA_NODE_CONTENT_CHUNK_BYTES <= (uint64_t)held || ((uint64_t)chunk * IOTDATA_NODE_CONTENT_CHUNK_BYTES < (uint64_t)held && held == total);
+    return ((uint64_t)chunk + 1u) * D_FILESTORE_CHUNK_BYTES <= (uint64_t)held || ((uint64_t)chunk * D_FILESTORE_CHUNK_BYTES < (uint64_t)held && held == total);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -421,7 +421,7 @@ static inline bool _filestore_linux_complete(void *const ctx, const uint32_t id)
    is only the right answer for a directory on a volume of its own. Returns the vtable, or NULL if
    the directory could not be made or reached -- which a caller should report and carry on from, the
    same as a partition that would not mount. */
-static inline const iotdata_node_content_backend_t *filestore_linux_open(filestore_linux_t *const fs, const char *const location, const uint32_t budget) {
+static inline const d_filestore_t *filestore_linux_open(filestore_linux_t *const fs, const char *const location, const uint32_t budget) {
     if (fs == NULL || location == NULL)
         return NULL;
     *fs = (filestore_linux_t){ 0 };
@@ -439,7 +439,7 @@ static inline const iotdata_node_content_backend_t *filestore_linux_open(filesto
     fs->persistent = (statfs(fs->dir, &sb) != 0) || (sb.f_type != _FILESTORE_LINUX_TMPFS_MAGIC && sb.f_type != _FILESTORE_LINUX_RAMFS_MAGIC);
     fs->budget = budget;
     fs->open = true;
-    fs->backend = (const iotdata_node_content_backend_t){
+    fs->backend = (const d_filestore_t){
         .ctx = fs,
         .create = _filestore_linux_create,
         .write = _filestore_linux_write,

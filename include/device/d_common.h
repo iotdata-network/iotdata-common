@@ -70,7 +70,20 @@ const char *d_bytes_hex_str(char *const buf, const int buf_size, const uint8_t *
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size) {
+/* A LINE AT A TIME, THROUGH A CALLBACK, and not ESP_LOGD. This used to log directly, which made
+   d_common.h -- a header of pure byte and string helpers -- unusable anywhere a log macro is not
+   already in scope: a host suite that wanted a checksum from this file had to drag a platform
+   header in to satisfy a hex dumper it was never going to call. Worse, on a build where the debug
+   level compiles the macro away, `tag` became an unused parameter and the whole header stopped
+   compiling under -Werror.
+ *
+ * The caller owns its tag and its log level, which is where that knowledge belongs; this just
+   formats the rows. It is the same emit seam the recorder and the content store use. */
+typedef void (*d_bytes_emit_fn)(const char *line);
+
+void d_bytes_hex_log(const d_bytes_emit_fn emit, const uint8_t *const data, const int size) {
+    if (emit == NULL || data == NULL)
+        return;
     const int bpl = 16;
     for (int offset = 0; offset < size; offset += bpl) {
         char line[128];
@@ -83,7 +96,7 @@ void d_bytes_hex_log(const char *tag, const uint8_t *const data, const int size)
         pos += snprintf(line + pos, sizeof(line) - (size_t)pos, " ");
         for (int i = 0; i < bpl && offset + i < size; i++)
             pos += snprintf(line + pos, sizeof(line) - (size_t)pos, "%s%c", i == bpl / 2 ? " " : "", isprint(data[offset + i]) ? (char)data[offset + i] : '.');
-        ESP_LOGD(tag, "%s", line);
+        emit(line);
     }
 }
 
@@ -179,6 +192,57 @@ static inline uint32_t __JITTER(void) {
 }
 
 #define __RANDOM() (__JITTER() ^ (uint32_t)esp_timer_get_time() ^ (uint32_t)esp_random())
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#ifndef _IOTDATA_CRC64_TABLE
+#define _IOTDATA_CRC64_TABLE 1
+#endif
+
+/* The reflected form of 0x42F0E1EBA9EA3693 (CRC-64/ECMA-182's polynomial, which XZ shares). The
+   suite asserts the reversal rather than taking it on trust, and anchors the normal form on
+   ECMA-182's own published check value. */
+#define _IOTDATA_CRC64_POLY 0xC96C5795D7870F42ULL
+
+/* The running value to start from, and -- because of the convention above -- also the answer for no
+   bytes at all, which liblzma agrees with. */
+#define _IOTDATA_CRC64_INIT 0x0000000000000000ULL
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#if _IOTDATA_CRC64_TABLE
+
+/* crc64(nibble), four shifts each. Generated from _IOTDATA_CRC64_POLY, and the suite
+   REGENERATES it bitwise and compares -- so a typo in a literal below cannot survive a test run. */
+static const uint64_t _iotdata_crc64_table[16] = {
+    0x0000000000000000ULL, 0x7D9BA13851336649ULL, 0xFB374270A266CC92ULL, 0x86ACE348F355AADBULL, 0x64B62BCAEBC387A1ULL, 0x192D8AF2BAF0E1E8ULL, 0x9F8169BA49A54B33ULL, 0xE21AC88218962D7AULL,
+    0xC96C5795D7870F42ULL, 0xB4F7F6AD86B4690BULL, 0x325B15E575E1C3D0ULL, 0x4FC0B4DD24D2A599ULL, 0xADDA7C5F3C4488E3ULL, 0xD041DD676D77EEAAULL, 0x56ED3E2F9E224471ULL, 0x2B769F17CF112238ULL,
+};
+
+#endif
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline uint64_t _iotdata_crc64(const void *const data, const size_t len, const uint64_t crc_in) {
+    if (data == NULL || len == 0u)
+        return crc_in;
+    const uint8_t *p = (const uint8_t *)data;
+    uint64_t crc = ~crc_in;
+    for (size_t i = 0; i < len; i++) {
+#if _IOTDATA_CRC64_TABLE
+        crc = (crc >> 4) ^ _iotdata_crc64_table[(crc ^ (uint64_t)p[i]) & 0xFu];
+        crc = (crc >> 4) ^ _iotdata_crc64_table[(crc ^ ((uint64_t)p[i] >> 4)) & 0xFu];
+#else
+        crc ^= (uint64_t)p[i];
+        for (int bit = 0; bit < 8; bit++)
+            /* a conditional rather than the sign-extended-mask trick: the same instructions after
+               any optimiser, and no signed arithmetic for -Wconversion to object to */
+            crc = (crc & 1u) ? ((crc >> 1) ^ _IOTDATA_CRC64_POLY) : (crc >> 1);
+#endif
+    }
+    return ~crc;
+}
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------

@@ -67,7 +67,7 @@ static int fails = 0;
 static void conf(const char *a, const char *b) {
     char *argv[3] = { (char *)(uintptr_t)"conf", (char *)(uintptr_t)a, (char *)(uintptr_t)b };
     out_reset();
-    iotdata_node_config_console(test_emit, b != NULL ? 3 : (a != NULL ? 2 : 1), argv);
+    iotdata_node_config_console(test_emit, 1000u, b != NULL ? 3 : (a != NULL ? 2 : 1), argv);
 }
 
 int main(void) {

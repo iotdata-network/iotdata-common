@@ -37,7 +37,7 @@
 #include "esp_spiffs.h"
 #pragma GCC diagnostic pop
 
-#include "iotdata_node_content.h"
+#include "d_module_filestore.h"
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
@@ -66,7 +66,7 @@ const char *__tag_device_filestore = "device-filestore";
 
 typedef struct {
     bool mounted;
-    iotdata_node_content_backend_t backend;
+    d_filestore_t backend;
 
     FILE *wr; /* the insert in flight, and its intended size */
     uint32_t wr_id, wr_total, wr_held;
@@ -354,7 +354,7 @@ static inline bool _filestore_esp32_have(void *const ctx, const uint32_t id, con
     if (!_filestore_esp32_stat(ctx, id, &total, &held))
         return false;
     /* From the length, which is the truth only while writes are an append: see the header. */
-    return ((uint64_t)chunk + 1u) * IOTDATA_NODE_CONTENT_CHUNK_BYTES <= (uint64_t)held || ((uint64_t)chunk * IOTDATA_NODE_CONTENT_CHUNK_BYTES < (uint64_t)held && held == total);
+    return ((uint64_t)chunk + 1u) * D_FILESTORE_CHUNK_BYTES <= (uint64_t)held || ((uint64_t)chunk * D_FILESTORE_CHUNK_BYTES < (uint64_t)held && held == total);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -380,7 +380,7 @@ static inline bool _filestore_esp32_complete(void *const ctx, const uint32_t id)
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline const iotdata_node_content_backend_t *filestore_esp32_mount(filestore_esp32_t *const fs) {
+static inline const d_filestore_t *filestore_esp32_mount(filestore_esp32_t *const fs) {
     if (fs == NULL)
         return NULL;
     *fs = (filestore_esp32_t){ 0 };
@@ -395,7 +395,7 @@ static inline const iotdata_node_content_backend_t *filestore_esp32_mount(filest
         return NULL;
     }
     fs->mounted = true;
-    fs->backend = (const iotdata_node_content_backend_t){
+    fs->backend = (const d_filestore_t){
         .ctx = fs,
         .create = _filestore_esp32_create,
         .write = _filestore_esp32_write,

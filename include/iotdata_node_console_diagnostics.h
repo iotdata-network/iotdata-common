@@ -20,11 +20,6 @@
 // when the recorder is off -- the same contract diagnostics.h keeps for the rest of its surface.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* THE RECORDER ITSELF is a hard dependency and is included here, so this header works wherever it
-   is put. A header that still demanded a particular include order would have moved the trap this
-   split exists to remove, rather than removing it. */
-#include "iotdata_node_diagnostics.h"
-
 #if IOTDATA_NODE_DIAGNOSTICS
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

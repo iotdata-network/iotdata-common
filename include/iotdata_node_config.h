@@ -1104,7 +1104,7 @@ static inline void _iotdata_node_config_show(const iotdata_node_console_emit_fn 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* UNUSED IS NOT AN ERROR HERE: including the adapter and registering the command are separate decisions. */
-__attribute__((unused)) static void iotdata_node_config_console(const iotdata_node_console_emit_fn emit, const int argc, char **const argv) {
+__attribute__((unused)) static void iotdata_node_config_console(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, const int argc, char **const argv) {
     if (argc < 2) {
         emit("config: %u entries%s\n", (unsigned)IOTDATA_NODE_CFG_COUNT, iotdata_node_config_persists(_iotdata_node_config_console_ds) ? "" : " (NOT PERSISTED: nowhere to write them)");
         for (int i = 0; i < (int)IOTDATA_NODE_CFG_COUNT; i++)

@@ -50,8 +50,7 @@
 
 #include <inttypes.h>
 
-#include "iotdata_node_content.h"
-#include "iotdata_node_content_ota.h"
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #ifndef IOTDATA_NODE_CONTENT_CONTROL_LINE_MAX
 #define IOTDATA_NODE_CONTENT_CONTROL_LINE_MAX 160

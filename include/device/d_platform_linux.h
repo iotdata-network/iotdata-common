@@ -6,12 +6,9 @@
 // hardware attached to a host.
 //
 // WHY. The device drivers in this directory are written against ESP-IDF: esp_err_t, ESP_LOG*, the
-// ESP_RETURN_ON_* macros, and the hw_uart_* / hw_gpio_* abstraction. That is the right shape for
-// the boards, but the Linux gateway needs the same E22 driver, and duplicating it was how the
-// iotdata-depend/e22900t22 fork came to exist in the first place. So rather than a second driver,
-// this supplies the platform underneath the one driver.
+// ESP_RETURN_ON_* macros, and the hw_uart_* / hw_gpio_* abstraction.
 //
-// RELATIONSHIP TO THE EMULATOR. iotdata-device/emu/app_emu_espidf_esp32c3.c also implements this
+// RELATIONSHIP TO THE EMULATOR. app_emu_espidf_esp32c3.c also implements this
 // surface under the same EMU_LINUX define, but backs the peripherals with SIMULATORS -- it exists
 // to host-test a whole device app. This header instead backs the UART with a real serial port.
 // They are alternatives; include exactly one.

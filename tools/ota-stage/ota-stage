@@ -68,6 +68,34 @@ if (BUILD && APP) die('--build and --app are the two shapes; pick one');
 
 const sha256 = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 
+/*
+ * THE RAW IMAGE'S DIGEST, which is NOT sha256 of the .bin file and is the number an OTA header's
+ * TARGET_HASH and BASE_HASH are taken over.
+ *
+ * esptool appends 32 bytes of sha256 to an app image and sets hash_appended in the image header.
+ * That makes sha256(whole file) a number nothing else can reproduce -- it is a hash OF a hash OF
+ * the image -- and in particular a device cannot get it back: what a device can compute for an
+ * image in flash is the digest of the image WITHOUT those 32 bytes, because that is what they are.
+ *
+ * So the identity of an image here is the bare image: everything esptool actually built, and none
+ * of its metadata about it. That is a definition both ends can produce independently, and the
+ * device's version of it is verified rather than trusted -- esp_partition_get_sha256 recomputes it
+ * over image_len - 32 and refuses the partition if the appended bytes disagree.
+ *
+ * It is READ from the tail rather than recomputed, and then CHECKED by recomputing, so a file whose
+ * appended hash does not describe it is caught here at staging instead of on a node.
+ */
+const HASH_APPENDED_LEN = 32;
+function imageSha256(p) {
+    const buf = fs.readFileSync(p);
+    if (buf.length < 64 || buf[0] !== 0xe9) die(`${p} is not an esp32 app image (magic 0x${buf[0].toString(16)})`);
+    if (buf[23] !== 1) die(`${p} has no appended sha256 (hash_appended=${buf[23]}) -- nothing can identify it`);
+    const appended = buf.subarray(buf.length - HASH_APPENDED_LEN).toString('hex');
+    const computed = crypto.createHash('sha256').update(buf.subarray(0, buf.length - HASH_APPENDED_LEN)).digest('hex');
+    if (appended !== computed) die(`${p} is corrupt: its appended sha256 does not match its contents`);
+    return computed;
+}
+
 /* ---- identity recorded by the build, never re-derived here ------------------------------- */
 
 function buildIdentity() {
@@ -158,6 +186,7 @@ if (BUILD) {
         fs.copyFileSync(src, path.join(dest, leaf));
         const info = { size: fs.statSync(src).size, sha256: sha256(src), offset };
         if (role) info.role = role;
+        if (role === 'app') info.image_sha256 = imageSha256(src);
         files[leaf] = info;
         outFiles[offset] = leaf;
         if (role === 'app') appEntry = Object.assign({ file: leaf }, info);
@@ -167,7 +196,7 @@ if (BUILD) {
     const leaf = `${base}.app`;
     fs.copyFileSync(APP, path.join(dest, leaf));
     fs.chmodSync(path.join(dest, leaf), 0o755);
-    const info = { size: fs.statSync(APP).size, sha256: sha256(APP), role: 'app' };
+    const info = { size: fs.statSync(APP).size, sha256: sha256(APP), image_sha256: imageSha256(APP), role: 'app' };
     files[leaf] = info;
     appEntry = Object.assign({ file: leaf }, info);
 }

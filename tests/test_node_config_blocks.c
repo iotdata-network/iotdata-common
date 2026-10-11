@@ -27,7 +27,6 @@
 #include "device/d_format.h"                 /* snprintf_inline, the config formatter's return path */
 #include "device/d_module_datastore_linux.h" /* datastore_t, which the expansion persists through */
 #include "device/d_module_buffers.h"         /* the down store holds frames in a pool */
-#include "iotdata_node_mesh_tuning.h"        /* the numbers the MESH rows default to */
 
 /* THE DEVICE BLOCKS JOIN HERE WITHOUT ANY DEVICE, two mechanisms making it possible. Their defaults
    defer to the driver's own -- IOTDATA_NODE_CONFIG_LORA_AIR_RATE falls back to LORA_AIR_DATA_RATE_DEFAULT,

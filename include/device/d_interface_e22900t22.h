@@ -638,7 +638,7 @@ esp_err_t lora_read_channel_rssi(int *const rssi_dbm) {
 #define _LORA_RX_GAP_DIP_MS 50
 #define _LORA_RX_GAP_USB_MS 100
 
-/* The shortest thing that could be a frame: an iotdata/mesh header is 4 bytes (variant+station,
+/* The shortest thing that could be a frame: an iotd/mesh header is 4 bytes (variant+station,
    sequence). A read shorter than that PLUS the appended RSSI byte did not catch a whole frame, it
    caught a fragment -- and a fragment's last byte is DATA, not RSSI. Treating it as RSSI is how a
    1-byte fragment becomes `len = 0`, which the caller cannot tell from "nothing arrived", while
@@ -704,6 +704,12 @@ static const char *_lora_rx_hex(char *const out, const size_t size, const uint8_
     return out;
 }
 
+/* d_bytes_hex_log() takes an emit now rather than logging itself, so the tag and the level are
+   ours to supply -- this is the one line that used to be inside it. */
+static void _lora_hex_emit(const char *const line) {
+    ESP_LOGD(__tag_device_e22900t22, "%s", line);
+}
+
 esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, int *const out_rssi_dbm, const int first_byte_timeout_ms) {
 
     ESP_RETURN_ON_FALSE(buf != NULL && out_len != NULL && max > 0, ESP_ERR_INVALID_ARG, __tag_device_e22900t22, "read: bad args");
@@ -766,7 +772,7 @@ esp_err_t lora_read(uint8_t *const buf, const size_t max, int *const out_len, in
 
     if (*out_len > 0) {
         ESP_LOGD(__tag_device_e22900t22, "read: %d bytes, rssi=%d dBm", *out_len, out_rssi_dbm != NULL ? *out_rssi_dbm : 0);
-        d_bytes_hex_log(__tag_device_e22900t22, buf, *out_len);
+        d_bytes_hex_log(_lora_hex_emit, buf, *out_len);
     }
 
     return ESP_OK;
@@ -790,7 +796,7 @@ esp_err_t lora_write(const uint8_t *const data, const size_t len) {
 #endif
 
     ESP_LOGD(__tag_device_e22900t22, "write: sent %d bytes", (int)len);
-    d_bytes_hex_log(__tag_device_e22900t22, data, (int)len);
+    d_bytes_hex_log(_lora_hex_emit, data, (int)len);
 
     return ESP_OK;
 }

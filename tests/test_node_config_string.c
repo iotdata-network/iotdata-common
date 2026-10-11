@@ -60,7 +60,7 @@ static void conf(const char *a, const char *b) {
     char *argv[3] = { (char *)(uintptr_t)"conf", (char *)(uintptr_t)a, (char *)(uintptr_t)b };
     g_out[0] = '\0';
     g_out_len = 0;
-    iotdata_node_config_console(test_emit, b != NULL ? 3 : (a != NULL ? 2 : 1), argv);
+    iotdata_node_config_console(test_emit, 1000u, b != NULL ? 3 : (a != NULL ? 2 : 1), argv);
 }
 
 int main(void) {

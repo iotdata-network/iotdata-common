@@ -22,8 +22,6 @@
 // demanded an order would have moved the trap rather than removed it.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#include "iotdata_node_settings.h"
-
 #ifdef IOTDATA_NODE_CONSOLE_H
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -104,7 +102,7 @@ static inline void _iotdata_node_settings_show_report(const iotdata_node_console
 /* UNUSED IS NOT AN ERROR HERE: including the adapter and registering the command are separate
    decisions. A node with a console that does not offer this one still compiles it, and that is
    cheaper to allow than to make every application prove it wired the command up. */
-__attribute__((unused)) static void iotdata_node_settings_console(const iotdata_node_console_emit_fn emit, const int argc, char **const argv) {
+__attribute__((unused)) static void iotdata_node_settings_console(const iotdata_node_console_emit_fn emit, const uint32_t now_ms, const int argc, char **const argv) {
     iotdata_node_settings_t *const s = _iotdata_node_settings_console;
     if (s == NULL) {
         emit("node: this node keeps no protocol settings\n");
@@ -215,7 +213,7 @@ __attribute__((unused)) static void iotdata_node_settings_console(const iotdata_
         /* the answer is what is now true, and ONLY about what was asked: re-entering with the same
            subject and no value is the read that pairs with the write just made */
         char *nargv[3] = { argv[0], argv[1], (argc > 2) ? argv[2] : NULL };
-        iotdata_node_settings_console(emit, (strcmp(argv[1], "report") == 0) ? 3 : 2, nargv);
+        iotdata_node_settings_console(emit, now_ms, (strcmp(argv[1], "report") == 0) ? 3 : 2, nargv);
         if (!ok)
             emit("  (not persisted: this node has nowhere to write it)\n");
     }

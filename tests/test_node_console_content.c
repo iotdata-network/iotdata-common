@@ -30,11 +30,19 @@
 #include "iotdata.c"
 #include "iotdata_node.h"
 #include "device/d_format.h"
+/* CRC-64 LIVES IN d_common.h, which needs a platform under it for its timer and delay helpers --
+   so the host platform goes in first, exactly as the gateway does it. This suite calls neither;
+   it is here for the checksum iotdata_node_content.h sums an upload with. */
+#include "d_platform_linux.h"
+#include "d_common.h"
 #include "iotdata_node_status.h"
 #include "iotdata_node_control.h"
 #include "iotdata_node_console.h"
+#include "d_module_filestore.h" /* the seam: content.h is written against it */
 #include "iotdata_node_content.h"
 #include "d_module_filestore_ram.h"
+#include "d_module_otaslot.h"
+#include "iotdata_node_content_ota.h"
 #include "iotdata_node_content_control.h"
 #include "iotdata_node_console_content.h"
 
@@ -104,7 +112,7 @@ static iotdata_node_content_t store;
 static uint32_t clock_ms = 1000u;
 
 static void rig(void) {
-    const iotdata_node_content_backend_t *const be = filestore_ram_init(&fs);
+    const d_filestore_t *const be = filestore_ram_init(&fs);
     iotdata_node_content_init(&store, be);
     (void)iotdata_node_content_begin(&store, clock_ms); /* the tick does nothing until it has */
     iotdata_node_console_content_init(&store);
@@ -202,7 +210,7 @@ static void test_insert(void) {
     rig();
     uint8_t data[1000];
     fill(data, sizeof(data), 3u);
-    const uint64_t crc = iotdata_node_crc64(data, sizeof(data), IOTDATA_NODE_CRC64_INIT);
+    const uint64_t crc = _iotdata_crc64(data, sizeof(data), _IOTDATA_CRC64_INIT);
 
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "content insert 0537a1 %u %016llx", (unsigned)sizeof(data), (unsigned long long)crc);
@@ -254,7 +262,7 @@ static void test_dropped_line(void) {
     rig();
     uint8_t data[1000];
     fill(data, sizeof(data), 11u);
-    const uint64_t crc = iotdata_node_crc64(data, sizeof(data), IOTDATA_NODE_CRC64_INIT);
+    const uint64_t crc = _iotdata_crc64(data, sizeof(data), _IOTDATA_CRC64_INIT);
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "content insert 0537a2 %u %016llx", (unsigned)sizeof(data), (unsigned long long)crc);
     cap_begin();
@@ -367,7 +375,7 @@ static void test_window(void) {
         return;
     fill(data, len, 77u);
     char cmd[128];
-    snprintf(cmd, sizeof(cmd), "content insert 0537f9 %u %016llx", (unsigned)len, (unsigned long long)iotdata_node_crc64(data, len, IOTDATA_NODE_CRC64_INIT));
+    snprintf(cmd, sizeof(cmd), "content insert 0537f9 %u %016llx", (unsigned)len, (unsigned long long)_iotdata_crc64(data, len, _IOTDATA_CRC64_INIT));
 
     cap_begin();
     (void)verb(cmd);
@@ -415,7 +423,7 @@ static void test_sink_boundaries(void) {
     rig();
     uint8_t data[384];
     fill(data, sizeof(data), 21u);
-    const uint64_t crc = iotdata_node_crc64(data, sizeof(data), IOTDATA_NODE_CRC64_INIT);
+    const uint64_t crc = _iotdata_crc64(data, sizeof(data), _IOTDATA_CRC64_INIT);
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "content insert 0537b1 %u %016llx", (unsigned)sizeof(data), (unsigned long long)crc);
     cap_begin();
@@ -462,8 +470,11 @@ static void test_sink_boundaries(void) {
 /* The one case that needs poll() itself: a verb and the data behind it in the SAME read. The sink
    is installed by the dispatch, mid-buffer, and the bytes behind it must reach the sink rather than
    the verb table -- which is the whole reason poll() re-checks the sink per byte and not per read. */
-static void con_content(__attribute__((unused)) const iotdata_node_console_emit_fn emit, const int argc, char **const argv) {
-    (void)iotdata_node_console_content(clock_ms, argc, argv);
+static void con_content(__attribute__((unused)) const iotdata_node_console_emit_fn emit, const uint32_t now_ms, const int argc, char **const argv) {
+    /* now_ms AND NOT clock_ms, which is the whole point of the parameter: the dispatch is handed
+       the clock the pass began with, and a handler that reached for the test's own global would be
+       reproducing the bug this signature exists to prevent. */
+    (void)iotdata_node_console_content(now_ms, argc, argv);
 }
 
 static void test_through_poll(void) {
@@ -471,7 +482,7 @@ static void test_through_poll(void) {
     rig();
     uint8_t data[384];
     fill(data, sizeof(data), 33u);
-    const uint64_t crc = iotdata_node_crc64(data, sizeof(data), IOTDATA_NODE_CRC64_INIT);
+    const uint64_t crc = _iotdata_crc64(data, sizeof(data), _IOTDATA_CRC64_INIT);
     static const iotdata_node_console_t cons[] = { { "content", con_content, "the store" } };
     char a[IOTDATA_NODE_CONSOLE_CONTENT_LINE + 32], b[IOTDATA_NODE_CONSOLE_CONTENT_LINE + 32], all[2048];
     line_for(a, sizeof(a), data, 0u, 192u);
@@ -554,7 +565,7 @@ static void test_download(void) {
     CHECK(memcmp(got, data, sizeof(data)) == 0, "and they are the bytes that were there");
 
     char want[80];
-    snprintf(want, sizeof(want), "crc64=0x%016llX", (unsigned long long)iotdata_node_crc64(data, sizeof(data), IOTDATA_NODE_CRC64_INIT));
+    snprintf(want, sizeof(want), "crc64=0x%016llX", (unsigned long long)_iotdata_crc64(data, sizeof(data), _IOTDATA_CRC64_INIT));
     CHECK(strstr(out, want) != NULL, "and the trailer's sum is the file's sum");
     CHECK(strstr(out, "done, 1000 bytes") != NULL, "and it says it finished");
 }
@@ -609,7 +620,7 @@ static void test_control_words(void) {
     const uint8_t id_f1[3] = { 0x05u, 0x37u, 0xf1u };
     CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_VALIDATE, id_f1, 3u), "validate is ours");
     char want[80];
-    snprintf(want, sizeof(want), "crc64=0x%016llX", (unsigned long long)iotdata_node_crc64(a, sizeof(a), IOTDATA_NODE_CRC64_INIT));
+    snprintf(want, sizeof(want), "crc64=0x%016llX", (unsigned long long)_iotdata_crc64(a, sizeof(a), _IOTDATA_CRC64_INIT));
     CHECK(said_has(want), "and reports the store's own sum");
     CHECK(!said_has("INCOMPLETE"), "over a whole file");
 

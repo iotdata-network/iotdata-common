@@ -38,28 +38,30 @@ static int fails = 0;
 static struct {
     const char *who;
     int argc;
+    uint32_t now_ms;
     char argv[SEEN_ARGV_MAX][32];
 } seen;
 
 static void seen_reset(void) {
     memset(&seen, 0, sizeof(seen));
 }
-static void record(const char *const who, const int argc, char **const argv) {
+static void record(const char *const who, const uint32_t now_ms, const int argc, char **const argv) {
     seen.who = who;
+    seen.now_ms = now_ms;
     seen.argc = argc;
     for (int i = 0; i < argc && i < SEEN_ARGV_MAX; i++)
         (void)snprintf(seen.argv[i], sizeof(seen.argv[i]), "%s", argv[i]);
 }
 
-static void cmd_alpha(__attribute__((unused)) const iotdata_node_console_emit_fn emit, int argc, char **argv) {
-    record("alpha", argc, argv);
+static void cmd_alpha(__attribute__((unused)) const iotdata_node_console_emit_fn emit, const uint32_t now_ms, int argc, char **argv) {
+    record("alpha", now_ms, argc, argv);
 }
-static void cmd_beta(__attribute__((unused)) const iotdata_node_console_emit_fn emit, int argc, char **argv) {
-    record("beta", argc, argv);
+static void cmd_beta(__attribute__((unused)) const iotdata_node_console_emit_fn emit, const uint32_t now_ms, int argc, char **argv) {
+    record("beta", now_ms, argc, argv);
 }
 /* tries to take `help`, which dispatch intercepts before either table */
-static void cmd_help_impostor(__attribute__((unused)) const iotdata_node_console_emit_fn emit, int argc, char **argv) {
-    record("impostor", argc, argv);
+static void cmd_help_impostor(__attribute__((unused)) const iotdata_node_console_emit_fn emit, const uint32_t now_ms, int argc, char **argv) {
+    record("impostor", now_ms, argc, argv);
 }
 
 static const iotdata_node_console_t app_cmds[] = {
@@ -68,12 +70,17 @@ static const iotdata_node_console_t app_cmds[] = {
     { "help", cmd_help_impostor, "cannot have it" },
 };
 
-/* dispatch takes a mutable line because it tokenises in place with strtok. */
-static void feed(const char *const s) {
+/* dispatch takes a mutable line because it tokenises in place with strtok, and the pass's clock
+   because a handler is never allowed to read one of its own. */
+static void feed_at(const uint32_t now_ms, const char *const s) {
     char line[128];
     (void)snprintf(line, sizeof(line), "%s", s);
     seen_reset();
-    iotdata_node_console_dispatch(line);
+    iotdata_node_console_dispatch(now_ms, line);
+}
+
+static void feed(const char *const s) {
+    feed_at(1000u, s);
 }
 
 /* ------------------------------------------------------------------------------------------- */
@@ -128,6 +135,27 @@ static void test_help_is_not_overridable(void) {
        no clash to have. That rule needs a device, or a built-in that means something on a host. */
 }
 
+/* ------------------------------------------------------------------------------------------- */
+
+/* WHAT THIS IS FOR, and it is not tidiness. A handler used to reach for hw_time_ms() itself, and
+   on a relay that cost an afternoon: the dispatch runs after the radio work, so its own reading is
+   LATER than the now_ms the pass is using, and `content insert` stamped its deadline a few
+   milliseconds ahead of the tick that was to enforce it. now_ms - last_ms then underflows to about
+   4.29e9, every timeout is instantly past, and the upload died in the pass that began it.
+ *
+ * So the one thing worth asserting is that the clock a handler sees is the clock the caller named,
+ * exactly -- no rounding, no re-reading, no clock of its own. Nothing else can be checked here,
+ * because a handler that reads its own would still pass every test about argv. */
+static void test_the_handler_is_given_the_passs_clock(void) {
+    printf("\na handler is handed the caller's clock exactly, and never reads one of its own\n");
+    feed_at(0u, "alpha");
+    CHECK(seen.now_ms == 0u, "zero is a clock like any other, and is passed through unaltered");
+    feed_at(1234567u, "alpha");
+    CHECK(seen.now_ms == 1234567u, "the value reaches the handler unchanged");
+    feed_at(0xFFFFFFFFu, "beta");
+    CHECK(seen.now_ms == 0xFFFFFFFFu, "and so does the last millisecond before the wrap");
+}
+
 int main(void) {
     printf("test_node_console\n");
     /* registers the application table; on a host this also marks the console open, and the greeting
@@ -137,6 +165,7 @@ int main(void) {
     test_arguments();
     test_blank_and_unknown();
     test_help_is_not_overridable();
+    test_the_handler_is_given_the_passs_clock();
     printf(fails ? "\nFAILED (%d)\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;
 }

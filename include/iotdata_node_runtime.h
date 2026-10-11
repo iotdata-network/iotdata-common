@@ -42,8 +42,6 @@
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#include "iotdata_node.h"
-
 #ifndef IOTDATA_NODE_RECEIVE_EVERY_MS
 #define IOTDATA_NODE_RECEIVE_EVERY_MS (6u * 60u * 60u * 1000u) /* 6 hours between windows */
 #endif

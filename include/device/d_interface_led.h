@@ -304,9 +304,6 @@ void led_term(void *const _handle) {
 // NOT PORTED: led_test_poweron() and led_test_factory(). Both speak the SDS
 // application's own startup vocabulary -- poweron_result_t, APP_FLAGS_CIRCUIT_BOARD -- which is an
 // application's way of reporting its own health, not anything an LED driver needs in order to be
-// one. The original, framework and all, is parked at iotdata-device/src.deprecated/led.h.
-//
-// What they were checking is still here: led_status() drives the pin both ways and reads it back,
-// which is what detects a GPIO shorted to ground or a missing pull-up.
+// one.
 //
 // ------------------------------------------------------------------------------------------------------------------------

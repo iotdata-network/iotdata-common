@@ -98,10 +98,20 @@ function manifest(name) {
     return m.iotdata;
 }
 
-/* 16 bytes of the staged sha256. The manifest carries the full digest; the header carries half of
-   it, because these are identity checks and the blob's authenticity comes from the deployer's
-   signature (see WHY 16-BYTE HASHES in the format header). */
+/* 16 bytes of the staged digest. The manifest carries the full one; the header carries half of it,
+   because these are identity checks and the blob's authenticity comes from the deployer's signature
+   (see WHY 16-BYTE HASHES in the format header). */
 const hash16 = (hex) => Buffer.from(hex, 'hex').subarray(0, HASH_LEN);
+
+/* WHICH DIGEST IDENTIFIES AN IMAGE: `image_sha256`, the RAW image, and not `sha256`, the file.
+   esptool appends 32 bytes of sha256 to an app image, so the file's own digest is a hash of a hash
+   and no device can reproduce it -- see the long note in ota-stage. A manifest from before that
+   field existed cannot be bundled, and says so rather than emitting a TARGET_HASH nothing can
+   check. */
+const imageHash = (m, name) => {
+    if (!m.ota.image_sha256) die(`${name} was staged before image_sha256 existed -- restage it`);
+    return hash16(m.ota.image_sha256);
+};
 
 const kvr = [];
 const put = (key, val) => {
@@ -129,7 +139,7 @@ if (FORM_S === 'delta') {
     basename = BASE.includes('-') ? BASE : `${t.name}-${BASE}`;
     base = manifest(basename);
     if (base.name !== t.name) die(`a delta between different applications makes no sense: ${base.name} -> ${t.name}`);
-    if (base.ota.sha256 === t.ota.sha256) die(`${BASE} and ${RELEASE} have identical app images -- there is nothing to diff`);
+    if (base.ota.image_sha256 === t.ota.image_sha256) die(`${BASE} and ${RELEASE} have identical app images -- there is nothing to diff`);
     fs.mkdirSync(OUT, { recursive: true });
     const tmp = path.join(OUT, '.' + RELEASE + '.hdiff');
     /* hdiffz with no compression flag, so FORM and CODEC stay independent and the codec below is the
@@ -159,8 +169,8 @@ put(KEY.CODEC, u8(CODEC[CODEC_S]));
 put(KEY.FLAGS, u8(flags));
 put(KEY.BOOTLOADER_MIN, u32(t.bootloader_min === undefined ? 1 : t.bootloader_min));
 put(KEY.OUTPUT_SIZE, u32(t.ota.size));
-put(KEY.TARGET_HASH, hash16(t.ota.sha256));
-if (base) put(KEY.BASE_HASH, hash16(base.ota.sha256));
+put(KEY.TARGET_HASH, imageHash(t, RELEASE));
+if (base) put(KEY.BASE_HASH, imageHash(base, basename));
 const payload_hash = crypto.createHash('sha256').update(payload).digest().subarray(0, HASH_LEN);
 put(KEY.PAYLOAD_SIZE, u32(payload.length));
 put(KEY.PAYLOAD_HASH, payload_hash);
@@ -192,8 +202,8 @@ const lines = [
     `flags=${FLAGS_S || 'none'}`,
     `bootloader_min=${t.bootloader_min === undefined ? 1 : t.bootloader_min}`,
     `output_size=${t.ota.size}`,
-    `target_hash=${hash16(t.ota.sha256).toString('hex')}`,
-    ...(base ? [`base_release=${basename}`, `base_semver=${base.version}`, `base_hash=${hash16(base.ota.sha256).toString('hex')}`] : []),
+    `target_hash=${imageHash(t, RELEASE).toString('hex')}`,
+    ...(base ? [`base_release=${basename}`, `base_semver=${base.version}`, `base_hash=${imageHash(base, basename).toString('hex')}`] : []),
     `payload_raw=${raw}`,
     `payload_wire=${payload.length}`,
     `payload_hash=${payload_hash.toString('hex')}`,

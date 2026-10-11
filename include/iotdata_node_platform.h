@@ -15,9 +15,16 @@
 #define IOTDATA_NODE_BLACKBOX_IMPLEMENTATION
 #include "iotdata_node_diagnostics.h"
 #include "iotdata_node_content.h"
+#include "iotdata_node_content_ota.h"
 
 #include "iotdata_node_console.h"
 // #include "iotdata_node_console_config.h"
 #include "iotdata_node_console_settings.h"
 #include "iotdata_node_console_diagnostics.h"
+#include "iotdata_node_console_content.h"
+
+#include "iotdata_node_content_control.h"
+
+#include "iotdata_node_firmware.h"
+
 #include "iotdata_node_runtime.h"

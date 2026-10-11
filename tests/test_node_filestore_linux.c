@@ -26,6 +26,12 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+/* CRC-64 LIVES IN d_common.h, which needs a platform under it for its timer and delay helpers --
+   so the host platform goes in first, exactly as the gateway does it. This suite calls neither;
+   it is here for the checksum iotdata_node_content.h sums an upload with. */
+#include "d_platform_linux.h"
+#include "d_common.h"
+#include "d_module_filestore.h" /* the seam: content.h is written against it */
 #include "iotdata_node_content.h"
 #include "d_module_filestore_linux.h"
 #include "d_module_filestore_ram.h"
@@ -60,7 +66,7 @@ static void rmrf(const char *const dir) {
 
 /* A fresh store, every time: a test that inherited the previous one's files would be testing the
    order the suite happens to run in. */
-static const iotdata_node_content_backend_t *rig(filestore_linux_t *const fs, const uint32_t budget) {
+static const d_filestore_t *rig(filestore_linux_t *const fs, const uint32_t budget) {
     rmrf(g_dir);
     return filestore_linux_open(fs, g_dir, budget);
 }
@@ -70,7 +76,7 @@ static void fill(uint8_t *const p, const uint32_t n, const uint8_t seed) {
         p[i] = (uint8_t)(seed + i * 31u);
 }
 
-static bool plant(const iotdata_node_content_backend_t *const be, const uint32_t id, const uint8_t *const data, const uint32_t len) {
+static bool plant(const d_filestore_t *const be, const uint32_t id, const uint8_t *const data, const uint32_t len) {
     return be->create(be->ctx, id, len) && be->write(be->ctx, id, 0u, data, len) == (int)len && be->complete(be->ctx, id);
 }
 
@@ -79,7 +85,7 @@ static bool plant(const iotdata_node_content_backend_t *const be, const uint32_t
 static void test_open(void) {
     printf("\na directory becomes a store, and says whether it can keep anything\n");
     filestore_linux_t fs;
-    const iotdata_node_content_backend_t *const be = rig(&fs, 0u);
+    const d_filestore_t *const be = rig(&fs, 0u);
     CHECK(be != NULL, "a directory that did not exist is created");
     CHECK(be->ctx == &fs, "and the vtable carries the store it belongs to");
     /* NOT asserted of this directory: /tmp is tmpfs on some of the boxes this suite runs on and a
@@ -118,7 +124,7 @@ static void test_open(void) {
 static void test_roundtrip(void) {
     printf("\nwhat goes in comes back out, in pieces and at offsets\n");
     filestore_linux_t fs;
-    const iotdata_node_content_backend_t *const be = rig(&fs, 0u);
+    const d_filestore_t *const be = rig(&fs, 0u);
     uint8_t data[1000], back[1000];
     fill(data, sizeof(data), 7u);
 
@@ -151,7 +157,7 @@ static void test_roundtrip(void) {
 static void test_append_only(void) {
     printf("\na write is an append, and anything else is refused\n");
     filestore_linux_t fs;
-    const iotdata_node_content_backend_t *const be = rig(&fs, 0u);
+    const d_filestore_t *const be = rig(&fs, 0u);
     uint8_t data[100];
     fill(data, sizeof(data), 3u);
 
@@ -174,7 +180,7 @@ static void test_append_only(void) {
 static void test_rename_is_atomic(void) {
     printf("\nthe rename replaces, which is what makes an insert atomic\n");
     filestore_linux_t fs;
-    const iotdata_node_content_backend_t *const be = rig(&fs, 0u);
+    const d_filestore_t *const be = rig(&fs, 0u);
     uint8_t older[50], newer[80], back[80];
     fill(older, sizeof(older), 1u);
     fill(newer, sizeof(newer), 9u);
@@ -199,7 +205,7 @@ static void test_rename_is_atomic(void) {
 static void test_walk(void) {
     printf("\nthe walk finds content, ignores everything else, and survives being disturbed\n");
     filestore_linux_t fs;
-    const iotdata_node_content_backend_t *const be = rig(&fs, 0u);
+    const d_filestore_t *const be = rig(&fs, 0u);
     uint8_t data[10];
     fill(data, sizeof(data), 5u);
     CHECK(plant(be, 0x0537e1u, data, sizeof(data)), "three files");
@@ -262,7 +268,7 @@ static void test_walk(void) {
 static void test_budget(void) {
     printf("\nthe budget is the edge a directory does not otherwise have\n");
     filestore_linux_t fs;
-    const iotdata_node_content_backend_t *const be = rig(&fs, 1000u);
+    const d_filestore_t *const be = rig(&fs, 1000u);
     uint8_t data[400];
     fill(data, sizeof(data), 11u);
 
@@ -304,7 +310,7 @@ static void test_budget(void) {
 static void test_survives_reopen(void) {
     printf("\nand it is still there after the process that wrote it has gone\n");
     filestore_linux_t fs;
-    const iotdata_node_content_backend_t *be = rig(&fs, 0u);
+    const d_filestore_t *be = rig(&fs, 0u);
     uint8_t data[333], back[333];
     fill(data, sizeof(data), 23u);
     CHECK(plant(be, 0x053701u, data, sizeof(data)), "a file is written");
@@ -331,8 +337,8 @@ static void test_agrees_with_the_model(void) {
     printf("\nthe directory and the exact RAM model answer identically\n");
     filestore_linux_t lfs;
     filestore_ram_t rfs;
-    const iotdata_node_content_backend_t *const l = rig(&lfs, 0u);
-    const iotdata_node_content_backend_t *const r = filestore_ram_init(&rfs);
+    const d_filestore_t *const l = rig(&lfs, 0u);
+    const d_filestore_t *const r = filestore_ram_init(&rfs);
     CHECK(l != NULL && r != NULL, "two stores of different kinds");
 
     uint8_t data[600], lb[600], rb[600];
@@ -399,7 +405,7 @@ static void test_agrees_with_the_model(void) {
 static void test_the_module_drives_it(void) {
     printf("\nand the content module itself runs on a directory\n");
     filestore_linux_t fs;
-    const iotdata_node_content_backend_t *const be = rig(&fs, 0u);
+    const d_filestore_t *const be = rig(&fs, 0u);
     iotdata_node_content_t c;
     iotdata_node_content_init(&c, be);
     CHECK(iotdata_node_content_begin(&c, 1000u) == 0, "a fresh store offers nothing");
@@ -408,7 +414,7 @@ static void test_the_module_drives_it(void) {
     fill(data, sizeof(data), 59u);
     uint64_t crc = 0u;
     for (uint32_t i = 0; i < sizeof(data); i++)
-        crc = iotdata_node_crc64(&data[i], 1u, crc);
+        crc = _iotdata_crc64(&data[i], 1u, crc);
 
     CHECK(iotdata_node_content_insert_begin(&c, 0x053721u, sizeof(data), crc, 1000u) == IOTDATA_NODE_CONTENT_OK, "an insert starts");
     for (uint32_t off = 0; off < sizeof(data); off += 100u)

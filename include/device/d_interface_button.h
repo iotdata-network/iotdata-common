@@ -378,14 +378,10 @@ void button_term(__attribute__((unused)) void *const _handle) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 //
-// NOT PORTED: button_test_poweron() and button_test_factory(). Both are written
-// against the SDS application's own test framework -- poweron_result_t, POWERON_OK/WARN/FAIL,
+// NOT PORTED: button_test_poweron() and button_test_factory(). Both are written against the SDS
+// application's own test framework -- poweron_result_t, POWERON_OK/WARN/FAIL,
 // APP_FLAGS_BUTTON_STUCK -- which is an application's vocabulary for reporting its own startup,
 // not anything a button driver needs in order to be one. Bringing them here would have dragged
 // that framework into every project that wants a button.
-//
-// The original, framework and all, is parked at iotdata-device/src.deprecated/button.h.
-// What a caller needs to answer the same question is already here: button_status() reports
-// STUCK for a button reading pressed while idle, which is the check the poweron test was making.
 //
 // ------------------------------------------------------------------------------------------------------------------------

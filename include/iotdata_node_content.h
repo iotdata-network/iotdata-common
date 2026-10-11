@@ -79,10 +79,6 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#include "iotdata_node_crc64.h"
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_NODE_CONTENT_CONSUMERS_MAX
 #define IOTDATA_NODE_CONTENT_CONSUMERS_MAX 4
 #endif
@@ -120,24 +116,18 @@
 #define IOTDATA_NODE_CONTENT_BLOCK_BYTES 256u
 #endif
 
-/* §4: "32-byte chunks, system-wide, with no negotiation", which fixes the u16 chunk index's ceiling
-   at 2 MiB. NOT a configurable -- it is the one number every node on the mesh has to agree on
-   without being told, and the only thing it is used for here is giving have() a meaning. */
-#define IOTDATA_NODE_CONTENT_CHUNK_BYTES 32u
-
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// THE BACKEND: §9'S SEAM, PLUS A CONTEXT AND THREE ADDITIONS
+// THE BACKEND LIVES IN device/d_module_filestore.h, as d_filestore_t
 //
-// §9 wrote these as bare functions. They take a ctx here, because every other store in this tree
-// does (datastore_t is passed explicitly to every datastore_* call) and because the host harness
-// wants two of them at once -- one that works and one that fails -- to reach the error paths.
+// It moved there because it had to be includable without this header: a d_ module must come before
+// any iotdata header, and the three filestores that implement the seam were reaching back through
+// the whole framework to get at a struct of function pointers that depends on none of it. The
+// dependency runs one way now -- this module consumes the interface, the interface knows nothing
+// about content -- and the reasoning about what is in the seam and why lives beside it.
 //
-// iterate() and stat() are new: §9's have() answers per CHUNK, and a listing wants bytes. rename()
-// is what makes the scratch-then-rename insert atomic.
-//
-// have() and complete() are the wire path's, and the module does not call them yet. They stay in
-// the seam because it is §9's contract: a backend written now against the whole thing does not
-// change shape when the transfer lands, and a backend is the one thing here there will be four of.
+// This header does not include it. Nothing here does: an application, or iotdata_node_platform.h on
+// its behalf, names its includes explicitly and in order, and every d_ module is already in by the
+// time the node framework is read.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // WHERE ITS WORDS GO
 //
@@ -166,28 +156,6 @@ static inline void _iotdata_node_content_say(const char *const line) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-
-typedef struct {
-    void *ctx;
-
-    /* bytes. read and write return the count transferred, or negative. A backend must be able to
-       read back whatever it can write -- verification depends on it (§9). */
-    bool (*create)(void *ctx, uint32_t id, uint32_t total);
-    int (*write)(void *ctx, uint32_t id, uint32_t off, const void *buf, size_t len);
-    int (*read)(void *ctx, uint32_t id, uint32_t off, void *buf, size_t len);
-    void (*destroy)(void *ctx, uint32_t id);
-    bool (*rename)(void *ctx, uint32_t from, uint32_t to);
-
-    /* what is here. iterate() walks from *cursor == 0 and returns false when done; the module never
-       holds a cursor across a tick, so a backend need not keep a directory handle open. */
-    bool (*iterate)(void *ctx, uint32_t *cursor, uint32_t *id);
-    bool (*stat)(void *ctx, uint32_t id, uint32_t *total, uint32_t *held);
-    uint32_t (*space)(void *ctx);
-
-    /* the wire path's, unused by this module so far */
-    bool (*have)(void *ctx, uint32_t id, uint16_t chunk);
-    bool (*complete)(void *ctx, uint32_t id);
-} iotdata_node_content_backend_t;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // WHAT A CONSUMER SAYS, AS BITS
@@ -302,7 +270,7 @@ typedef struct {
 } iotdata_node_content_insert_t;
 
 typedef struct {
-    const iotdata_node_content_backend_t *backend;
+    const d_filestore_t *backend;
     const iotdata_node_content_consumer_t *consumer[IOTDATA_NODE_CONTENT_CONSUMERS_MAX];
     uint8_t consumers;
     iotdata_node_content_owned_t owned[IOTDATA_NODE_CONTENT_OWNED_MAX];
@@ -408,7 +376,7 @@ static inline iotdata_node_content_result_t iotdata_node_content_announce(iotdat
 // LIFECYCLE
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void iotdata_node_content_init(iotdata_node_content_t *const c, const iotdata_node_content_backend_t *const backend) {
+static inline void iotdata_node_content_init(iotdata_node_content_t *const c, const d_filestore_t *const backend) {
     if (c == NULL)
         return;
     *c = (iotdata_node_content_t){ 0 };
@@ -514,7 +482,7 @@ static inline iotdata_node_content_status_t iotdata_node_content_insert_begin(io
         .scratch = scratch,
         .size = size,
         .crc_want = crc,
-        .crc_have = IOTDATA_NODE_CRC64_INIT,
+        .crc_have = _IOTDATA_CRC64_INIT,
         .started_ms = now_ms,
         .last_ms = now_ms,
     };
@@ -551,7 +519,7 @@ static inline iotdata_node_content_status_t iotdata_node_content_insert_write(io
         c->rx.why = IOTDATA_NODE_CONTENT_ERR_STORE;
         return c->rx.why;
     }
-    c->rx.crc_have = iotdata_node_crc64(buf, len, c->rx.crc_have);
+    c->rx.crc_have = _iotdata_crc64(buf, len, c->rx.crc_have);
     c->rx.offset += (uint32_t)len;
     if (c->rx.offset == c->rx.size)
         c->rx.ready = true;
@@ -840,7 +808,7 @@ static inline int iotdata_node_content_describe(iotdata_node_content_t *const c,
 
 static inline iotdata_node_content_status_t iotdata_node_content_checksum(iotdata_node_content_t *const c, const uint32_t id, uint64_t *const crc, uint32_t *const len) {
     if (crc != NULL)
-        *crc = IOTDATA_NODE_CRC64_INIT;
+        *crc = _IOTDATA_CRC64_INIT;
     if (len != NULL)
         *len = 0u;
     if (c == NULL || c->backend == NULL || c->backend->read == NULL || c->backend->stat == NULL)
@@ -848,13 +816,13 @@ static inline iotdata_node_content_status_t iotdata_node_content_checksum(iotdat
     uint32_t total = 0u, held = 0u;
     if (!c->backend->stat(c->backend->ctx, id, &total, &held))
         return IOTDATA_NODE_CONTENT_ERR_ABSENT;
-    uint64_t sum = IOTDATA_NODE_CRC64_INIT;
+    uint64_t sum = _IOTDATA_CRC64_INIT;
     uint8_t buf[IOTDATA_NODE_CONTENT_BLOCK_BYTES];
     for (uint32_t off = 0u; off < held;) {
         const uint32_t want = ((held - off) < (uint32_t)sizeof(buf)) ? (held - off) : (uint32_t)sizeof(buf);
         if (c->backend->read(c->backend->ctx, id, off, buf, want) != (int)want)
             return IOTDATA_NODE_CONTENT_ERR_STORE;
-        sum = iotdata_node_crc64(buf, want, sum);
+        sum = _iotdata_crc64(buf, want, sum);
         off += want;
     }
     if (crc != NULL)

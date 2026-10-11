@@ -18,7 +18,6 @@
 
 #include "device/d_format.h" /* snprintf_inline, which the config formatter returns through */
 #include "device/d_module_datastore_linux.h"
-#include "iotdata_node_mesh_tuning.h" /* the numbers the rows default to */
 #include "iotdata_node_config.h"      /* the types */
 #include "device/d_module_buffers.h"  /* the down store holds frames in a pool, so its types come first */
 #include "iotdata_node_down.h"        /* iotdata_node_down_t, for the DOWN block */

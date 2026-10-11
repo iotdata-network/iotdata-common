@@ -56,7 +56,7 @@ static void node(const char *a, const char *b, const char *c, const char *d) {
     const int argc = (d != NULL) ? 5 : (c != NULL) ? 4 : (b != NULL) ? 3 : (a != NULL) ? 2 : 1;
     g_out[0] = '\0';
     g_out_len = 0;
-    iotdata_node_settings_console(test_emit, argc, argv);
+    iotdata_node_settings_console(test_emit, 1000u, argc, argv);
 }
 
 int main(void) {

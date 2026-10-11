@@ -43,6 +43,7 @@
 #include "d_format.h"
 #include "d_module_datastore_esp32.h"
 #include "d_module_filestore_esp32.h"
+#include "d_module_otaslot_esp32.h"
 #include "d_readings.h"
 #include "d_hardware_gpio.h"
 #if !defined(PIN_DEVICE_UART_TX) || !defined(PIN_DEVICE_UART_RX) || !defined(PIN_DEVICE_LORA_AUX) || !defined(PIN_DEVICE_LORA_M0) || !defined(PIN_DEVICE_LORA_M1)
@@ -93,7 +94,6 @@
 
 #define IOTDATA_NODE_DIAGNOSTICS_FLUSH BLACKBOX_FLUSH_MANUAL /* a sleeping node flushes before it sleeps */
 #include "iotdata_node_platform.h"
-#include "iotdata_node_content_control.h"
 static void _iapp_diagnostics_emit(const char *const line) {
     ESP_LOGI("app", "%s", line); // XXX
 }
@@ -106,16 +106,6 @@ static bool _iapp_on_lora_changed(const iotdata_node_config_row_t *row, const io
 static bool _iapp_on_batt_changed(const iotdata_node_config_row_t *row, const iotdata_node_config_value_t *was, const iotdata_node_config_info_t *info);
 #define IOTDATA_NODE_CONFIG_BATT_NOTIFY _iapp_on_batt_changed
 #include "iotdata_node_config_device_batt.h"
-
-/* CONTENT IS OFF BY DEFAULT ON A NODE THAT SLEEPS, which is the opposite of the shared default and
-   the one place this template overrides it. Mounting SPIFFS is not free: it scans the partition to
-   build its index, and a duty-cycled sensor pays that on EVERY wake -- out of an awake budget that
-   is the whole reason the node runs off a panel at all. A relay is mains-or-permanent and pays it
-   once a boot, so it defaults on there.
- *
- * Turning it on is a row, not a reflash, so a sensor that needs a calibration blob or a firmware
- * bundle can be told to start keeping content and will from its next wake. That is the trade worth
- * making: the capability is always present and the cost is only paid when it is asked for. */
 #ifndef IOTDATA_NODE_CONFIG_CONTENT_ENABLED
 #define IOTDATA_NODE_CONFIG_CONTENT_ENABLED false
 #endif
@@ -128,6 +118,7 @@ static bool _iapp_on_batt_changed(const iotdata_node_config_row_t *row, const io
     IOTDATA_NODE_CONFIG_ENTRIES_CONTENT(X)
 
 #include "iotdata_node_config.h"
+
 #include "iotdata_node_config_device_e22900t22.h"
 static bool _iapp_on_lora_changed(const iotdata_node_config_row_t *row, const iotdata_node_config_value_t *was, __attribute__((unused)) const iotdata_node_config_info_t *info) {
     ESP_LOGW("config", "lora %s changed (was %llu), restart required", row->name, (unsigned long long)was->u);
@@ -139,6 +130,7 @@ static bool _iapp_on_batt_changed(const iotdata_node_config_row_t *row, __attrib
         ESP_LOGW("config", "batt %s changed, but values not accepted", row->name);
     return false;
 }
+#include "iotdata_node_config_content.h"
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -499,7 +491,7 @@ static bool iapp_init(iapp_state_t *const as) {
     // that sleeps it is off unless a row says otherwise -- see the note by the config entries
     {
         const bool enabled = iotdata_node_config_bool(CONTENT_ENABLED);
-        const iotdata_node_content_backend_t *const be = enabled ? filestore_esp32_mount(&_iapp_filestore) : NULL;
+        const d_filestore_t *const be = enabled ? filestore_esp32_mount(&_iapp_filestore) : NULL;
         iotdata_node_content_init(&_iapp_content, be);
         iotdata_node_content_control_init(&_iapp_content, NULL); /* no OTA device: not a target yet */
         if (!enabled)
