@@ -18,24 +18,13 @@ awake, and a missed window costs a whole sleep interval. And `diag` pulls the bl
 the chip with esptool and decodes it to CSV — far faster than streaming the records over the console,
 and it still works on a device that has stopped talking.
 
-## [`dialout`](dialout/README.md)
+## dialout — moved
 
-Reach a box that cannot be reached. A node behind CGNAT, on a mobile APN, or on somebody else's
-router has no inbound path — nothing to port-forward, nothing to ssh to — so it dials **out** on a
-timer and leaves a reverse ssh tunnel behind for you to come back through. Standalone: nothing in it
-imports iotdata.
-
-The server publishes an SRV record, which carries port as well as host, so one domain tells a client
-the whole endpoint and the server can move without anybody touching a client. Beside it sits an
-invite list, and that is what makes the scheme cheap: a client not on the list does two DNS lookups
-and goes back to sleep having opened no socket at all, so a resting fleet costs nothing at either end
-and a dial-out happens only when someone is actually waiting. Entries are 6-hex-digit md5 tokens
-rather than names, because the record is world-readable and a public roll-call of your field sites is
-nobody else's business; each client's loopback port is derived from its name the same way, so there is
-nothing to register, distribute or keep in sync.
-
-One ergonomic consequence worth knowing before you use it: the waiting session *is* the invitation.
-Ctrl-C withdraws it, and a withdrawn invitation is precisely what tells the client to hang up.
+It became its own repository, `github.com/matthewgream/dialout`, and arrives here as a submodule of
+iotdata-depend: `iotdata-depend/dialout`. It was always standalone — nothing in it imports iotdata —
+and it is installed on boxes rather than built into anything, so carrying it inside iotdata-common
+only tied its history to a repo it had no dependency on. The cart's ESP32 side stays where it was,
+in `iotdata-common/include/device/d_interface_cart.h`.
 
 ## [`topology`](topology/README.md)
 
