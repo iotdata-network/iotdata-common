@@ -403,19 +403,15 @@ static inline void _iotdata_node_console_content_status(__attribute__((unused)) 
 static inline bool iotdata_node_console_content(const uint32_t now_ms, const int argc, char **const argv) {
     if (_iotdata_node_console_content.store == NULL)
         return false;
-    if (argc < 2) {
+    if (argc < 2)
         _iotdata_node_console_content_status(now_ms);
-        return true;
-    }
-    if (strcmp(argv[1], "insert") == 0) {
+    else if (strcmp(argv[1], "insert") == 0)
         _iotdata_node_console_content_insert(now_ms, argc, argv);
-        return true;
-    }
-    if (strcmp(argv[1], "download") == 0) {
+    else if (strcmp(argv[1], "download") == 0)
         _iotdata_node_console_content_download(now_ms, argc, argv);
-        return true;
-    }
-    return false;
+    else
+        return false;
+    return true;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

@@ -139,15 +139,32 @@ if (FORM_S === 'delta') {
     basename = BASE.includes('-') ? BASE : `${t.name}-${BASE}`;
     base = manifest(basename);
     if (base.name !== t.name) die(`a delta between different applications makes no sense: ${base.name} -> ${t.name}`);
+    /* BOTH MUST BE KNOWN BEFORE THEY CAN BE COMPARED. Two releases staged before image_sha256
+       existed both read `undefined`, and `undefined === undefined` reported them as the same image
+       -- so a perfectly good delta was refused with the one message guaranteed to send somebody
+       looking at the wrong thing. Absent is not equal; it is absent, and it is the restage below
+       that fixes it. */
+    if (!base.ota.image_sha256 || !t.ota.image_sha256)
+        die(`${!base.ota.image_sha256 ? basename : RELEASE} was staged before image hashes were recorded -- restage it, a delta cannot be checked against an unknown base`);
     if (base.ota.image_sha256 === t.ota.image_sha256) die(`${BASE} and ${RELEASE} have identical app images -- there is nothing to diff`);
     fs.mkdirSync(OUT, { recursive: true });
     const tmp = path.join(OUT, '.' + RELEASE + '.hdiff');
-    /* hdiffz with no compression flag, so FORM and CODEC stay independent and the codec below is the
-       only thing that squeezed it -- see FORM AND CODEC ARE INDEPENDENT in the format header. */
+    /* hdiffI, NOT hdiffz. The two are the same project and not the same format: hdiffz's output is
+       read by hpatchz, and the device here runs HPatchLite, whose format comes from hdiffi and is
+       the smaller of the two to decode -- 662 bytes of applier against a full HPatch. A patch cut
+       with the wrong one parses as nothing at all, which is the safe way to be wrong but still
+       wrong, so the name is load-bearing. See iotdata-depend/hpatchlite/README.md.
+     *
+     * NO COMPRESSION FLAG, so FORM and CODEC stay independent and the codec below is the only thing
+     * that squeezed it -- see FORM AND CODEC ARE INDEPENDENT in the format header. hdiffi defaults
+     * to uncompressed, so this is the default rather than a flag, but it is the point of the design
+     * and not an accident: measured on relay 0.9.8 -> 0.9.9, an uncompressed hdiffi patch through
+     * deflate is 6616 bytes on the wire against 7003 for the hdiffz patches this replaces, and the
+     * inflater costs nothing because it is in the chip's ROM. */
     try {
-        execFileSync('hdiffz', ['-f', appfile(base), appfile(t), tmp], { stdio: 'pipe' });
+        execFileSync('hdiffi', ['-f', '-d', appfile(base), appfile(t), tmp], { stdio: 'pipe' });
     } catch (e) {
-        die(`hdiffz failed: ${e.stderr ? e.stderr.toString().trim() : e.message}`);
+        die(`hdiffi failed: ${e.stderr ? e.stderr.toString().trim() : e.message} -- built from https://github.com/sisong/HPatchLite`);
     }
     payload = fs.readFileSync(tmp);
     fs.unlinkSync(tmp);

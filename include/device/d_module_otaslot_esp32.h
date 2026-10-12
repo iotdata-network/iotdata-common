@@ -4,7 +4,7 @@
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 //
-// d_module_otaslot_esp32.h - the other app partition, and sha256. The device half of the two seams
+// d_module_ota_slot_esp32.h - the other app partition, and sha256. The device half of the two seams
 // iotdata_node_content_ota_apply.h defines, and the ONLY code in the update path that cannot run on
 // a host.
 //
@@ -47,17 +47,20 @@
 
 const char *__tag_device_otaslot = "device-otaslot";
 
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
 typedef struct {
+    ota_slot_t _ota_slot;
     esp_ota_handle_t handle;
     const esp_partition_t *part;
     bool open;
-    ota_slot_t slot;
-} otaslot_esp32_t;
+} ota_slot_esp32_t;
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline bool _otaslot_esp32_begin(void *const ctx, const uint32_t size) {
-    otaslot_esp32_t *const s = (otaslot_esp32_t *)ctx;
+static inline bool _ota_slot_esp32_begin(void *const ctx, const uint32_t size) {
+    ota_slot_esp32_t *const s = (ota_slot_esp32_t *)ctx;
     if (s == NULL)
         return false;
     if (s->open)
@@ -85,8 +88,8 @@ static inline bool _otaslot_esp32_begin(void *const ctx, const uint32_t size) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline int _otaslot_esp32_write(void *const ctx, const void *const buf, const size_t len) {
-    otaslot_esp32_t *const s = (otaslot_esp32_t *)ctx;
+static inline int _ota_slot_esp32_write(void *const ctx, const void *const buf, const size_t len) {
+    ota_slot_esp32_t *const s = (ota_slot_esp32_t *)ctx;
     if (s == NULL || !s->open || buf == NULL)
         return -1;
     const esp_err_t err = esp_ota_write(s->handle, buf, len);
@@ -102,8 +105,8 @@ static inline int _otaslot_esp32_write(void *const ctx, const void *const buf, c
 /* Finalises and VERIFIES, and boots nothing. A failure here is the image being malformed -- the
    wrong magic, a bad appended hash -- which is the one refusal that says the bundle is wrong rather
    than the flash being unlucky. */
-static inline bool _otaslot_esp32_end(void *const ctx) {
-    otaslot_esp32_t *const s = (otaslot_esp32_t *)ctx;
+static inline bool _ota_slot_esp32_end(void *const ctx) {
+    ota_slot_esp32_t *const s = (ota_slot_esp32_t *)ctx;
     if (s == NULL || !s->open)
         return false;
     const esp_err_t err = esp_ota_end(s->handle);
@@ -120,8 +123,8 @@ static inline bool _otaslot_esp32_end(void *const ctx) {
 /* THE IRREVERSIBLE ONE. After this the next reset runs the new image, and the only things standing
    between a bad image and a dead node are the bootloader's rollback and the consumer's attempt
    counter -- both of which are in place before this is called. */
-static inline bool _otaslot_esp32_activate(void *const ctx) {
-    otaslot_esp32_t *const s = (otaslot_esp32_t *)ctx;
+static inline bool _ota_slot_esp32_activate(void *const ctx) {
+    ota_slot_esp32_t *const s = (ota_slot_esp32_t *)ctx;
     if (s == NULL || s->part == NULL)
         return false;
     const esp_err_t err = esp_ota_set_boot_partition(s->part);
@@ -142,8 +145,28 @@ static inline bool _otaslot_esp32_activate(void *const ctx) {
  * ESP_ERR_IMAGE_INVALID if the two disagree (bootloader_common_get_sha256_of_partition). So the
  * number it returns is a verified digest of the raw image -- not a value taken on trust from bytes
  * that could themselves be the corruption -- and it is the same definition ota-stage records. */
-static inline bool _otaslot_esp32_digest(void *const ctx, uint8_t *const out, const size_t outlen) {
-    otaslot_esp32_t *const s = (otaslot_esp32_t *)ctx;
+/* THE IMAGE WE ARE RUNNING, at an arbitrary offset, for a delta to patch against.
+ *
+ * THE RUNNING PARTITION AND NOT THE SLOT'S, which is the whole reason a delta works at all: the
+ * base is what this node is executing, and we read it while writing the other partition. Reading
+ * the partition we are running from is safe -- it is memory-mapped for execution and
+ * esp_partition_read goes through the same cache -- and it is the only copy of the base there is.
+ *
+ * WHAT IT RETURNS IS THE .bin AS THE BUNDLER SAW IT, including esptool's appended 32 bytes of
+ * sha256: the partition holds the file verbatim, and hdiffi computed the patch against that same
+ * file. Trimming the tail here would shift every offset past the end of the image and the patch
+ * would reconstruct garbage from the first copy instruction that reached it. */
+static inline bool _ota_slot_esp32_read_base(__attribute__((unused)) void *const ctx, const uint32_t at, void *const buf, const size_t len) {
+    const esp_partition_t *const running = esp_ota_get_running_partition();
+    if (running == NULL || buf == NULL)
+        return false;
+    if ((uint64_t)at + (uint64_t)len > (uint64_t)running->size)
+        return false;
+    return esp_partition_read(running, (size_t)at, buf, len) == ESP_OK;
+}
+
+static inline bool _ota_slot_esp32_digest(void *const ctx, uint8_t *const out, const size_t outlen) {
+    ota_slot_esp32_t *const s = (ota_slot_esp32_t *)ctx;
     if (s == NULL || s->part == NULL || out == NULL)
         return false;
     uint8_t full[32];
@@ -159,8 +182,8 @@ static inline bool _otaslot_esp32_digest(void *const ctx, uint8_t *const out, co
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline void _otaslot_esp32_abort(void *const ctx) {
-    otaslot_esp32_t *const s = (otaslot_esp32_t *)ctx;
+static inline void _ota_slot_esp32_abort(void *const ctx) {
+    ota_slot_esp32_t *const s = (ota_slot_esp32_t *)ctx;
     if (s == NULL || !s->open)
         return;
     (void)esp_ota_abort(s->handle);
@@ -171,34 +194,48 @@ static inline void _otaslot_esp32_abort(void *const ctx) {
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline const ota_slot_t *otaslot_esp32_init(otaslot_esp32_t *const s) {
+static inline const ota_slot_t *ota_slot_esp32_init(ota_slot_esp32_t *const s) {
     if (s == NULL)
         return NULL;
-    *s = (otaslot_esp32_t){ 0 };
-    s->slot = (const ota_slot_t){
+    *s = (ota_slot_esp32_t){ 0 };
+    s->_ota_slot = (const ota_slot_t){
         .ctx = s,
-        .begin = _otaslot_esp32_begin,
-        .write = _otaslot_esp32_write,
-        .end = _otaslot_esp32_end,
-        .activate = _otaslot_esp32_activate,
-        .abort = _otaslot_esp32_abort,
-        .digest = _otaslot_esp32_digest,
+        .begin = _ota_slot_esp32_begin,
+        .write = _ota_slot_esp32_write,
+        .end = _ota_slot_esp32_end,
+        .activate = _ota_slot_esp32_activate,
+        .abort = _ota_slot_esp32_abort,
+        .digest = _ota_slot_esp32_digest,
+        .read_base = _ota_slot_esp32_read_base,
     };
-    return &s->slot;
+    return &s->_ota_slot;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 /* What an update would land in, for the device descriptor's slot_size -- 0 when there is no second
    slot at all, which ota_check reads as "I cannot say" and so does not refuse on size. */
-static inline uint32_t otaslot_esp32_size(void) {
+/* THE BOOTLOADER'S VERSION, which a bundle may demand a floor of. Read from the bootloader's own
+   description block rather than remembered anywhere: it is whatever is actually in flash, which is
+   the only thing a BOOTLOADER_MIN check is about. 0 is "I cannot say", and the check treats that as
+   satisfying nothing rather than everything. */
+static inline uint32_t ota_slot_esp32_bootloader(void) {
+    esp_bootloader_desc_t bl;
+    return (esp_ota_get_bootloader_description(NULL, &bl) == ESP_OK) ? bl.version : 0u;
+}
+
+static inline uint32_t ota_slot_esp32_size(void) {
     const esp_partition_t *const next = esp_ota_get_next_update_partition(NULL);
     return (next != NULL) ? (uint32_t)next->size : 0u;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 /* WHAT WE ARE RUNNING, by the same definition a bundle's TARGET_HASH uses -- so a delta's BASE_HASH
    can be compared against it. Fills the device descriptor's base_hash, and returns false when the
    running image cannot be digested, which leaves that field NULL and means "I cannot say" rather
    than "no". A wrong answer here would accept a patch against the wrong image. */
-static inline bool otaslot_esp32_running_digest(uint8_t *const out, const size_t outlen) {
+static inline bool ota_slot_esp32_running_digest(uint8_t *const out, const size_t outlen) {
     const esp_partition_t *const running = esp_ota_get_running_partition();
     if (running == NULL || out == NULL)
         return false;
@@ -221,13 +258,15 @@ static inline bool otaslot_esp32_running_digest(uint8_t *const out, const size_t
 // ------------------------------------------------------------------------------------------------------------------------
 
 typedef struct {
+    ota_hash_t _ota_hash;
     psa_hash_operation_t op;
     bool open;
-    ota_hash_t hash;
-} otahash_esp32_t;
+} ota_hash_esp32_t;
 
-static inline void _otahash_esp32_begin(void *const ctx) {
-    otahash_esp32_t *const h = (otahash_esp32_t *)ctx;
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline void _ota_hash_esp32_begin(void *const ctx) {
+    ota_hash_esp32_t *const h = (ota_hash_esp32_t *)ctx;
     if (h->open)
         (void)psa_hash_abort(&h->op); /* a previous run that was never finished */
     h->op = (psa_hash_operation_t)PSA_HASH_OPERATION_INIT;
@@ -236,13 +275,17 @@ static inline void _otahash_esp32_begin(void *const ctx) {
         ESP_LOGE(__tag_device_otaslot, "hash: psa_hash_setup failed -- a payload hash cannot be checked");
 }
 
-static inline void _otahash_esp32_update(void *const ctx, const void *const buf, const size_t len) {
-    otahash_esp32_t *const h = (otahash_esp32_t *)ctx;
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline void _ota_hash_esp32_update(void *const ctx, const void *const buf, const size_t len) {
+    ota_hash_esp32_t *const h = (ota_hash_esp32_t *)ctx;
     if (h->open && psa_hash_update(&h->op, (const uint8_t *)buf, len) != PSA_SUCCESS) {
         (void)psa_hash_abort(&h->op);
         h->open = false;
     }
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 /* TRUNCATED TO WHAT THE HEADER CARRIES: the format keeps 16 bytes of the digest and not 32 -- see
    WHY 16-BYTE HASHES in iotdata_node_content_ota.h -- so the full digest is computed and its first
@@ -251,8 +294,8 @@ static inline void _otahash_esp32_update(void *const ctx, const void *const buf,
  * A HASH THAT FAILED COMES BACK AS ZEROES, which the consumer will compare against the header and
  * refuse. That is the right way round: a digest that could not be computed must not be allowed to
  * pass as a digest that matched. */
-static inline void _otahash_esp32_final(void *const ctx, uint8_t *const out, const size_t outlen) {
-    otahash_esp32_t *const h = (otahash_esp32_t *)ctx;
+static inline void _ota_hash_esp32_final(void *const ctx, uint8_t *const out, const size_t outlen) {
+    ota_hash_esp32_t *const h = (ota_hash_esp32_t *)ctx;
     uint8_t full[32];
     size_t got = 0u;
     memset(out, 0, outlen);
@@ -267,20 +310,39 @@ static inline void _otahash_esp32_final(void *const ctx, uint8_t *const out, con
     memcpy(out, full, (outlen < got) ? outlen : got);
 }
 
-static inline const ota_hash_t *otahash_esp32_init(otahash_esp32_t *const h) {
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline const ota_hash_t *ota_hash_esp32_init(ota_hash_esp32_t *const h) {
     if (h == NULL)
         return NULL;
-    *h = (otahash_esp32_t){ 0 };
-    h->hash = (const ota_hash_t){
+    *h = (ota_hash_esp32_t){ 0 };
+    h->_ota_hash = (const ota_hash_t){
         .ctx = h,
-        .begin = _otahash_esp32_begin,
-        .update = _otahash_esp32_update,
-        .final = _otahash_esp32_final,
+        .begin = _ota_hash_esp32_begin,
+        .update = _ota_hash_esp32_update,
+        .final = _ota_hash_esp32_final,
     };
-    return &h->hash;
+    return &h->_ota_hash;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
+
+// ------------------------------------------------------------------------------------------------------------------------
+// THE NEUTRAL NAMES, which are how iotdata_node_otaupdate.h reaches this implementation without
+// knowing which platform it is. Every backend of these seams declares the same three spellings --
+// an instance type and an init -- and the application decides which backend by which d_ module it
+// includes. That keeps the platform choice where it belongs (one include in an app) instead of
+// inside a framework header behind an #ifdef.
+// ------------------------------------------------------------------------------------------------------------------------
+
+typedef ota_slot_esp32_t ota_slot_impl_t;
+typedef ota_hash_esp32_t ota_hash_impl_t;
+#define ota_slot_impl_init           ota_slot_esp32_init
+#define ota_hash_impl_init           ota_hash_esp32_init
+#define ota_slot_impl_size           ota_slot_esp32_size
+#define ota_slot_impl_bootloader     ota_slot_esp32_bootloader
+#define ota_slot_impl_running_digest ota_slot_esp32_running_digest
+#define OTA_SLOT_IMPL_PRESENT        1
 
 #endif /* D_MODULE_OTASLOT_ESP32_H */

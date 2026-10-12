@@ -50,6 +50,32 @@
 #define FILESTORE_ESP32_BASE "/content"
 #endif
 
+/* WHAT FRACTION OF esp_spiffs_info()'s `total` CAN ACTUALLY HOLD A FILE, as a percentage.
+ *
+ * Not a safety margin, and not tuning: SPIFFS reports a `total` it will not let you fill, and the
+ * shortfall is large and repeatable. Measured on a 'storage' partition that reports 956561 bytes:
+ *
+ *     6 x 120000 bytes, written in turn   refused after 728904 bytes   76.2% of total
+ *     1 x 800000 bytes into an empty one  refused after 733824 bytes   76.7% of total
+ *
+ * The second case is the one that settles it. An empty volume and a single sequential file hit the
+ * same wall as six files did, so this is not fragmentation and cannot be garbage-collected away --
+ * it is a fixed reserve inside SPIFFS that `total` counts and a write can never reach.
+ *
+ * WHY IT MATTERS MORE THAN IT LOOKS. The content store's one job is to hold a firmware bundle,
+ * which is the largest thing it will ever be given; insert_begin() refuses an upload it has no room
+ * for, and it does so by asking space(). With the raw figure the arithmetic said yes, the host spent
+ * three minutes sending 384KB over a 4.7KB/s console, and the write failed at 93% -- the worst
+ * possible place, because every byte was paid for. Reporting the truth turns that into an immediate
+ * refusal with a number the operator can act on.
+ *
+ * 75 leaves about 11KB of margin under the lower measurement. Raise it only with the same experiment
+ * run on the geometry in question: the reserve is a property of the SPIFFS build and page size, not
+ * of this code. */
+#ifndef FILESTORE_ESP32_USABLE_PERCENT
+#define FILESTORE_ESP32_USABLE_PERCENT 75u
+#endif
+
 #ifndef FILESTORE_ESP32_FILES_MAX
 #define FILESTORE_ESP32_FILES_MAX 4 /* VFS descriptors: a writer, a reader, and room to spare */
 #endif
@@ -344,7 +370,10 @@ static inline uint32_t _filestore_esp32_space(void *const ctx) {
     size_t total = 0u, used = 0u;
     if (esp_spiffs_info(FILESTORE_ESP32_LABEL, &total, &used) != ESP_OK || used > total)
         return 0u;
-    return (uint32_t)(total - used);
+    /* THE BUDGET, NOT THE DIFFERENCE. total - used is what SPIFFS says is free and not what it will
+       let us write; see FILESTORE_ESP32_USABLE_PERCENT for the measurement. */
+    const uint64_t usable = (uint64_t)total * (uint64_t)FILESTORE_ESP32_USABLE_PERCENT / 100u;
+    return ((uint64_t)used >= usable) ? 0u : (uint32_t)(usable - (uint64_t)used);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -410,7 +439,9 @@ static inline const d_filestore_t *filestore_esp32_mount(filestore_esp32_t *cons
     };
     size_t total = 0u, used = 0u;
     (void)esp_spiffs_info(FILESTORE_ESP32_LABEL, &total, &used);
-    ESP_LOGI(__tag_device_filestore, "mount: %s on '%s', %u of %u bytes used", FILESTORE_ESP32_BASE, FILESTORE_ESP32_LABEL, (unsigned)used, (unsigned)total);
+    /* the budget and not `total`, so the number here and the number `content` prints agree */
+    ESP_LOGI(__tag_device_filestore, "mount: %s on '%s', %u of %u bytes used (%u%% of %u is reachable)", FILESTORE_ESP32_BASE, FILESTORE_ESP32_LABEL, (unsigned)used,
+             (unsigned)((uint64_t)total * (uint64_t)FILESTORE_ESP32_USABLE_PERCENT / 100u), (unsigned)FILESTORE_ESP32_USABLE_PERCENT, (unsigned)total);
     return &fs->backend;
 }
 

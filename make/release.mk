@@ -30,6 +30,8 @@
 #     make ota-target  RELEASE=<name> [OTA_FORM=delta OTA_BASE=0.9.8 OTA_CODEC=deflate OTA_FLAGS=downgrade-okay]
 #     make ota-targets RELEASE=<name> [OTA_BASE=0.9.8]   the whole matrix
 #     make clean                     remove pkg/ and ota/
+#     make tools                     what this pipeline needs, and what is missing
+#     make tools-install             build and install the ones we can
 #
 # OTA BLOBS ARE A DIFFERENT THING FROM THE BUNDLES ABOVE. A bundle is every partition, compressed for
 # a cable flash at the far end. A blob is the app alone, with a kvr header asserting what it needs --
@@ -43,7 +45,8 @@
 # size while making the output depend on the packaging box's core count, which would cost the
 # byte-identical property above for nothing. gzip and zip are already at their own maximum.
 XZ      := xz -9
-GZIP    := gzip -n9
+# GZIP    := gzip -n9
+GZIP    := zopfli -i5000
 ZIP     := zip -qrX9
 
 PLATFORM := $(notdir $(CURDIR))
@@ -71,7 +74,7 @@ OTA_BASE  ?=
 _OTA_ARGS  = -d . -r $(RELEASE) $(if $(OTA_FLAGS),--flags $(OTA_FLAGS))
 _OTA_BASE  = $(if $(OTA_BASE),--base $(OTA_BASE))
 
-.PHONY: help list package txz tgz zip tree clean ota-target ota-targets _check _report
+.PHONY: help list package txz tgz zip tree clean ota-target ota-targets tools tools-install _check _tools_quiet _report
 
 help:
 	@# the leading comment block, however long it grows -- not a line range that drifts from it
@@ -83,6 +86,54 @@ list:
 	  python3 -c "import json,sys;m=json.load(open(sys.argv[1]))['iotdata'];\
 print('  %-28s %-10s %9d B  %s' % (m['name']+'-'+m['version'], m.get('platform') or m.get('chip','?'), m['ota']['size'] if m.get('ota') else 0, m['staged_utc']))" $$m; \
 	done
+
+# ---- the tools this pipeline needs ---------------------------------------
+#
+# WHY THIS IS HERE AND NOT IN A README. Packaging a release and bundling an OTA blob reach for six
+# different programs, and until one is missing nobody thinks about them. The failure modes are not
+# equal either: a missing `zopfli` costs a few bytes on one of three archive formats, while a missing
+# `hdiffi` means every delta bundle fails -- and `ota-bundle` can only report that at the moment
+# somebody wanted the blob. Asked up front, it is a list; discovered later, it is a hunt.
+#
+# hdiffi IS THE ODD ONE OUT. The rest come from a distro; it is built from source, because it is the
+# generator for the patch format iotdata_node_content_ota.h's DELTA form is defined in and the device
+# side of it is vendored at a known commit in iotdata-depend/hpatchlite. `tools-install` builds the
+# matching generator so the two ends cannot drift -- see that directory's README.
+HPATCH_REPO ?= https://github.com/sisong/HPatchLite
+HPATCH_WORK ?= /tmp/hpatchlite-build
+BINDIR      ?= /usr/local/bin
+
+tools:
+	@echo "release pipeline tools:"
+	@if command -v python3 >/dev/null 2>&1; then echo "  ok      python3   $$(python3 --version 2>&1 | cut -d' ' -f2)"; \
+	  else echo "  MISSING python3   everything: the manifest is read with it"; fi
+	@if command -v node >/dev/null 2>&1; then echo "  ok      node      $$(node --version)"; \
+	  else echo "  MISSING node      ota-target, ota-targets: ota-bundle is node"; fi
+	@if command -v hdiffi >/dev/null 2>&1; then echo "  ok      hdiffi    $$(hdiffi 2>&1 | head -1 | awk '{print $$NF}')"; \
+	  else echo "  MISSING hdiffi    DELTA bundles only  --  make tools-install"; fi
+	@for t in tar xz zip; do \
+	  if command -v $$t >/dev/null 2>&1; then echo "  ok      $$t"; else echo "  MISSING $$t       package, $$t archives"; fi; \
+	done
+	@if command -v zopfli >/dev/null 2>&1; then echo "  ok      zopfli"; \
+	  else echo "  MISSING zopfli    tgz is smaller with it; gzip -n9 is the fallback"; fi
+
+# Only hdiffi: the rest are a distro's business and guessing a package manager here would be worse
+# than saying what is missing. Needs a C++ toolchain, cmake-free -- its own Makefile does the work.
+tools-install:
+	@command -v git >/dev/null 2>&1 || { echo "tools-install: needs git" >&2; exit 1; }
+	@echo "tools-install: hdiffi + hpatchi from $(HPATCH_REPO)"
+	@rm -rf "$(HPATCH_WORK)"
+	@git clone --depth 1 --recursive -q "$(HPATCH_REPO)" "$(HPATCH_WORK)"
+	@$(MAKE) -s -C "$(HPATCH_WORK)" -j4 >/dev/null
+	@install -m 0755 "$(HPATCH_WORK)/hdiffi" "$(HPATCH_WORK)/hpatchi" "$(BINDIR)/"
+	@rm -rf "$(HPATCH_WORK)"
+	@echo "  installed $(BINDIR)/hdiffi $(BINDIR)/hpatchi  ($$(hdiffi 2>&1 | head -1))"
+	@echo "  the vendored applier it must match: iotdata-depend/hpatchlite/README.md"
+
+# A DELTA CANNOT BE CUT WITHOUT IT, so the one target that needs hdiffi says so itself rather than
+# letting ota-bundle fail three steps later with a shell error.
+_tools_quiet:
+	@command -v hdiffi >/dev/null 2>&1 || { echo "ota: a delta needs hdiffi, which is not on PATH -- 'make tools' explains, 'make tools-install' fixes it" >&2; exit 1; }
 
 _check:
 	@test -n "$(RELEASE)" || { echo "package: set RELEASE=<name-version>, e.g. make package RELEASE=relay-0.9.8   ('make list' shows what is staged)" >&2; exit 1; }
@@ -132,12 +183,19 @@ package: txz tgz zip
 	 fi
 
 ## ---- ota: one blob, or the matrix ----------------------------------------
-ota-target: _check
+ota-target: _check $(if $(filter delta,$(OTA_FORM)),_tools_quiet)
 	@$(OTA) $(_OTA_ARGS) --form $(OTA_FORM) --codec $(OTA_CODEC) $(if $(filter delta,$(OTA_FORM)),$(_OTA_BASE))
 
 ## full with and without compression always; the delta pair only when a base is named, because a
 ## delta against nothing is not a thing and a silent skip would hide the omission.
-ota-targets: _check
+##
+## delta+none IS EXPECTED TO BE USELESS, and is cut anyway. hdiffi emits a byte-level difference
+## stream that is about the size of the image -- measured at 389300 bytes against 389266 for the
+## whole uncompressed image, so the "delta" is LARGER than the thing it is a delta of. That is not a
+## fault: FORM and CODEC are independent by design, the patch is the difference and the codec is what
+## squeezes it, and the same pair with deflate is 639 bytes. It stays in the matrix because seeing
+## both is what makes that split obvious; it is not a thing to deploy.
+ota-targets: _check $(if $(OTA_BASE),_tools_quiet)
 	@$(OTA) $(_OTA_ARGS) --form full --codec none
 	@$(OTA) $(_OTA_ARGS) --form full --codec deflate
 	@if [ -n "$(OTA_BASE)" ]; then \

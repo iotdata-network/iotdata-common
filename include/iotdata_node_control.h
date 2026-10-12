@@ -116,6 +116,7 @@ static const iotdata_node_control_command_t iotdata_node_control_commands[] = {
 
     /* --- node control ------------------------------------------------------------------------ */
     { "boot", _CMD(IOTDATA_NODE_SUBJECT_NODE, IOTDATA_NODE_ACTION_NODE_REBOOT), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+
     /* --- diag -------------------------------------------------------------------------------- */
     { "diag-bbox-enable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_ENABLE), IOTDATA_NODE_CONTROL_ARG_FIXED, 1 },
     { "diag-bbox-disable", _CMD(IOTDATA_NODE_TLV_DIAGNOSTICS, IOTDATA_NODE_ACTION_DIAG_BBOX_ENABLE), IOTDATA_NODE_CONTROL_ARG_FIXED, 0 },
@@ -128,6 +129,11 @@ static const iotdata_node_control_command_t iotdata_node_control_commands[] = {
     { "node-filters-update", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_UPDATE), IOTDATA_NODE_CONTROL_ARG_STATION_ACTION, 0 },
     { "node-filters-clear", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_CLEAR), IOTDATA_NODE_CONTROL_ARG_SCOPE_FILTER, IOTDATA_NODE_CONTROL_SCOPE_FROM_REQUEST },
     { "node-filters-dump", _CMD(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_NODE_FILTERS_DUMP), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+    /* node-ROLLBACK and not a bare `rollback`, for the reason the console table states: one verb per
+       prefix, and a bare name needs a console verb of its own to be typeable at all. `boot` gets
+       away with it only because a console BUILTIN shadows it. This way `node rollback` works, the
+       `node` usage lists it, and the wire name matches its subject. */
+    { "node-rollback", _CMD(IOTDATA_NODE_SUBJECT_NODE, IOTDATA_NODE_ACTION_NODE_ROLLBACK), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
     /* --- content -----------------------------------------------------------------------------
        The store's words that have a wire equivalent. `insert` and `download` are NOT here and
        never will be in this shape: both are a byte stream, and the wire's answer to that is the
@@ -136,6 +142,8 @@ static const iotdata_node_control_command_t iotdata_node_control_commands[] = {
     { "content-delete", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE), IOTDATA_NODE_CONTROL_ARG_CONTENT, 0 },
     { "content-inspect", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT), IOTDATA_NODE_CONTROL_ARG_CONTENT, 0 },
     { "content-validate", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_VALIDATE), IOTDATA_NODE_CONTROL_ARG_CONTENT, 0 },
+    { "content-ota", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_OTA_STATUS), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },
+    { "content-ota-apply", _CMD(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_OTA_APPLY), IOTDATA_NODE_CONTROL_ARG_CONTENT, 0 },
     /* --- mesh management --------------------------------------------------------------------- */
     { "mesh-peers-update", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_UPDATE), IOTDATA_NODE_CONTROL_ARG_STATION_ACTION, 0 },
     { "mesh-peers-clear", _CMD(IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR), IOTDATA_NODE_CONTROL_ARG_NONE, 0 },

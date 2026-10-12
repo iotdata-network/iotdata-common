@@ -625,6 +625,23 @@ static inline void iotdata_node_process_control(iotdata_node_t *const n, const u
                 n->stat_commands++;
                 if (reboot_out != NULL)
                     *reboot_out = true;
+                /* ROLLBACK: BACK TO THE OTHER SLOT, AND REBOOT INTO IT. Not merged with REBOOT, because
+               the two differ in exactly the way that matters -- one comes back as what it is, the
+               other comes back as something else. Asked before acted on, so a node with nothing
+               valid to go back to is left exactly as it was.
+             *
+             * WHAT THIS DOES NOT DO is tell an OTA consumer that the attempt was abandoned on
+               purpose -- which matters, because otherwise the consumer reads the rollback as a
+               failed attempt and re-applies the image just rejected. That step needs the consumer,
+               and the consumer belongs to the application: dragging iotdata_node_content_ota.h in
+               here would put the whole content stack, its checksum and a platform header behind
+               every use of the node runtime, for one verb. An application that applies updates
+               handles this subject itself and calls iotdata_node_content_ota_apply_abandon() first;
+               see relay_node.h. One that does not has no attempt record to condemn. */
+            } else if (subject == IOTDATA_NODE_SUBJECT_NODE && action == IOTDATA_NODE_ACTION_NODE_ROLLBACK) {
+                if (iotdata_node_firmware_rollback_possible())
+                    (void)iotdata_node_firmware_rollback(); /* does not return when it works */
+                n->stat_unknown++;                          /* so reaching here means it did not */
             } else {
                 /* not ours: offer it to the app before giving up. A mesh command reaching a node with
                 no mesh lands here and is correctly counted unknown. */

@@ -35,6 +35,7 @@
 #include "device/d_module_datastore_linux.h"
 #include "iotdata_node_state.h"
 #include "iotdata_node_settings.h"
+#include "iotdata_node_firmware.h" /* runtime.h resolves NODE_ROLLBACK through it */
 #include "iotdata_node_runtime.h"
 
 /* --- stubs standing in for an application ------------------------------------------------- */

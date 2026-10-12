@@ -604,6 +604,23 @@ static inline iotdata_node_content_event_t _iotdata_node_content_tick_insert(iot
     return IOTDATA_NODE_CONTENT_EVENT_ARRIVED;
 }
 
+/* ASK THE OWNER AGAIN AT THE NEXT TICK, rather than at the next cadence. The re-offer runs every
+   IOTDATA_NODE_CONTENT_REOFFER_S because an owner that said "keep it" is usually waiting on nothing
+   in particular -- but when something has changed that the owner asked for, a minute of nothing is
+   indistinguishable from the command having been ignored. An operator who arms a firmware bundle by
+   hand should see it taken, not wonder. Returns false if the id is not owned, which is the honest
+   answer rather than a silent no-op. */
+static inline bool iotdata_node_content_reoffer(iotdata_node_content_t *const c, const uint32_t id) {
+    if (c == NULL)
+        return false;
+    for (uint8_t i = 0; i < c->owns; i++)
+        if (c->owned[i].id == id && !c->owned[i].working) {
+            c->owned[i].asked_ms -= (uint32_t)IOTDATA_NODE_CONTENT_REOFFER_S * 1000u;
+            return true;
+        }
+    return false;
+}
+
 static inline iotdata_node_content_event_t iotdata_node_content_tick(iotdata_node_content_t *const c, const uint32_t now_ms) {
     if (c == NULL || c->backend == NULL || !c->begun)
         return IOTDATA_NODE_CONTENT_EVENT_NONE;

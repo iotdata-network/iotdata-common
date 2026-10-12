@@ -511,10 +511,19 @@ static inline iotdata_node_ota_status_t iotdata_node_ota_payload_hash_check(cons
    millisecond or two, and ~200 passes for a 200 KB image, which on a loop that runs constantly is
    a fraction of a second of wall clock and never more than a blink of it at a time.
  *
- * AND THE BUFFER IS STATIC, NOT A LOCAL, which is what the size is really constrained by. A node
-   task here has a 1 KB stack-usage ceiling in the build (-Wstack-usage), so a kilobyte of locals in
-   one function is already over it -- and a consumer is a singleton anyway, so one buffer for the
-   module costs the same RAM as one for the call and cannot be a surprise. */
+ * AND THE BUFFERS LIVE IN THE CONSUMER, NOT IN THE FUNCTIONS, which is what the size is really
+   constrained by. A node task here has a 1 KB stack-usage ceiling in the build (-Wstack-usage), so a
+   kilobyte of locals in one function is already over it -- the bytes have to persist somewhere else.
+ *
+ * THAT SOMEWHERE IS iotdata_node_ota_apply_t AND NOT A FUNCTION STATIC. They were function statics,
+   which cost the same RAM and read as though they cost nothing: a `static uint8_t buf[1024]` three
+   call levels down is invisible in the struct that is supposed to describe what a consumer owns, and
+   it quietly makes the consumer a singleton -- two of them would scribble over each other with no
+   warning at all. In the struct, the ownership is written down, the size shows up where somebody is
+   counting RAM, and a second consumer is merely a second allocation.
+ *
+ * TWO OF THEM AND NOT THREE: `wire` holds what came off the store, `plain` what the codec made of
+   it. A delta needs only `wire`, because its output goes to the patcher's own buffer. */
 #ifndef IOTDATA_NODE_OTA_APPLY_CHUNK
 #define IOTDATA_NODE_OTA_APPLY_CHUNK 1024u
 #endif
@@ -549,6 +558,8 @@ typedef struct {
     const iotdata_node_ota_device_t *device;
     const ota_slot_t *slot;
     const ota_hash_t *hash;
+    const ota_codec_t *codec; /* NULL = this build can only take CODEC_NONE */
+    const ota_patch_t *patch; /* NULL = this build can only take FORM_FULL   */
     iotdata_node_content_t *store;
     const ota_record_t *record;
 
@@ -558,12 +569,18 @@ typedef struct {
 
     iotdata_node_ota_apply_phase_t phase;
     uint32_t id;      /* the bundle being written */
-    uint32_t off;     /* payload bytes moved so far */
+    uint32_t off;     /* payload bytes CONSUMED so far -- of the wire payload, compressed or not */
+    uint32_t out;     /* and image bytes produced from them, which differ once a codec is in the way */
     uint32_t refused; /* a bundle this boot will not touch again; 0 = none */
     iotdata_node_ota_header_t head;
     iotdata_node_ota_status_t why; /* the last verdict, for describe() */
 
     uint32_t stat_claimed, stat_written, stat_applied, stat_rejected;
+
+    /* see AND THE BUFFERS LIVE IN THE CONSUMER: payload bytes as they arrive, and what the codec
+       turned them into. Last in the struct because they dwarf everything above them. */
+    uint8_t wire[IOTDATA_NODE_OTA_APPLY_CHUNK];
+    uint8_t plain[IOTDATA_NODE_OTA_APPLY_CHUNK];
 } iotdata_node_ota_apply_t;
 
 static iotdata_node_ota_apply_t *_iotdata_node_ota_apply = NULL;
@@ -620,8 +637,29 @@ static inline iotdata_node_content_result_t _iotdata_node_ota_apply_claim(void *
        would be fatal here -- without a patcher this consumer would stream the PATCH into the slot
        as though it were an image, and a slot full of patch is an image that may well still boot.
        So the form is refused explicitly, by the half that knows what it can actually do. */
-    if (h.form != IOTDATA_NODE_OTA_FORM_FULL) {
+    if (h.form != IOTDATA_NODE_OTA_FORM_FULL && (h.form != IOTDATA_NODE_OTA_FORM_DELTA || a->patch == NULL)) {
         a->why = IOTDATA_NODE_OTA_ERR_FORM;
+        return IOTDATA_NODE_CONTENT_R_MINE;
+    }
+    /* A DELTA ALSO NEEDS SOMETHING TO PATCH, and the slot is the only thing that can hand us the
+       image we are running. A build with a patcher and no way to read its own base would stream a
+       difference against nothing. */
+    if (h.form == IOTDATA_NODE_OTA_FORM_DELTA && (a->slot->read_base == NULL)) {
+        a->why = IOTDATA_NODE_OTA_ERR_FORM;
+        return IOTDATA_NODE_CONTENT_R_MINE;
+    }
+    /* AND ONLY A CODEC WE WERE ACTUALLY GIVEN A DECODER FOR, which iotdata_node_ota_check also does
+       not decide for us: it asks the DEVICE what codecs it can decode and believes the answer. That
+       is right of it -- the capability is the application's to declare -- but declaring a capability
+       is not the same as handing this consumer something to decode with. Those are two different
+       facts, and only one of them is visible from here: the codec seam, or NULL.
+     *
+     * Getting this wrong was worse than the delta case. A patch at least has to be asked for, while
+       deflate is what ota-bundle emits BY DEFAULT -- so the ordinary command produced the one bundle
+       that could not be applied safely, and a build advertising codec_deflate wrote its COMPRESSED
+       payload into the other partition as though it were an image. */
+    if (h.codec != IOTDATA_NODE_OTA_CODEC_NONE && a->codec == NULL) {
+        a->why = IOTDATA_NODE_OTA_ERR_CODEC;
         return IOTDATA_NODE_CONTENT_R_MINE;
     }
     /* Ours, and takeable -- but not this boot if we have already been told not to. */
@@ -645,12 +683,95 @@ static inline iotdata_node_content_result_t _iotdata_node_ota_apply_claim(void *
 static inline void _iotdata_node_ota_apply_give_up(iotdata_node_ota_apply_t *const a, const iotdata_node_ota_status_t why) {
     if (a->phase == IOTDATA_NODE_OTA_APPLY_WRITING && a->slot != NULL && a->slot->abort != NULL)
         a->slot->abort(a->slot->ctx);
+    /* and the decompressor, which on a device is holding a 32KB window plus its tables */
+    if (a->phase == IOTDATA_NODE_OTA_APPLY_WRITING && a->head.codec != IOTDATA_NODE_OTA_CODEC_NONE && a->codec != NULL && a->codec->abort != NULL)
+        a->codec->abort(a->codec->ctx);
     a->phase = IOTDATA_NODE_OTA_APPLY_FAILED;
     a->refused = a->id;
     a->why = why;
     a->off = 0u;
     a->stat_rejected++;
 }
+
+/* ------------------------------------------------------------------------------------------------
+   THE DELTA'S THREE CALLBACKS. The patcher drives, so these are what it pulls through -- see the
+   seam's own note on why it cannot be stepped like the codec.
+   ---------------------------------------------------------------------------------------------- */
+
+/* THE PATCH, WHICH IS THE PAYLOAD, AND MUST BE HANDED OVER IN FULL. A short read tells the engine
+   the patch has ended, so this loops until the buffer is full or the wire payload is genuinely
+   exhausted -- the codec may hand back less than was asked on any one step, and stopping there
+   would report the end of a patch that had barely started. That mistake, made once in a test
+   harness, produced an apply that wrote nothing and blamed the patch.
+ *
+ * The hash sees the WIRE bytes, compressed as they arrived, exactly once each -- the same rule the
+ * full path follows, and the reason `used` and not `want` is what advances a->off. */
+static inline bool _iotdata_node_ota_read_patch(ota_patch_io_t *const io, void *const out, size_t *const len) {
+    iotdata_node_ota_apply_t *const a = (iotdata_node_ota_apply_t *)io->ctx;
+    uint8_t *const dst = (uint8_t *)out;
+    size_t done = 0u;
+    /* NOT `while (... && a->off < payload_size)`, WHICH CONFLATES TWO DIFFERENT ENDINGS. Running out
+       of PAYLOAD is not running out of PATCH: a codec may be holding a great deal of output that no
+       more input is needed to produce. Stopping at the last wire byte returns a short read, a short
+       read means end-of-stream to the patcher, and the apply fails having written most of an image.
+     *
+     * THE TWO CODECS DIFFER INSIDE THEIR CONTRACT, which is what made this invisible on a host. zlib
+       consumes lazily -- never more input than the output it was asked for -- so `a->off` crawls and
+       the loop keeps going by accident. The C3's ROM tinfl consumes EAGERLY and buffers into its
+       32KB window, so 529 bytes of payload were swallowed whole with 388KB still inside the codec.
+       Both are correct; only one of them forgave the bug. Measured on a relay: the delta failed with
+       `unsupported form` after writing nothing, and the same bundle applied perfectly on a host.
+     *
+     * So the loop ends when the CODEC says it has nothing left -- no output and no input taken --
+       and the drain below asks it with an empty input to find out. */
+    while (done < *len) {
+        const uint32_t remain = (a->head.payload_size > a->off) ? (a->head.payload_size - a->off) : 0u;
+        const uint32_t want = (remain < (uint32_t)sizeof(a->wire)) ? remain : (uint32_t)sizeof(a->wire);
+        if (want > 0u && iotdata_node_content_read(a->store, a->id, (uint32_t)a->head.payload_offset + a->off, a->wire, want) != (int)want)
+            return false;
+        size_t used = 0u, made = 0u;
+        if (a->head.codec == IOTDATA_NODE_OTA_CODEC_NONE) {
+            if (want == 0u)
+                break; /* uncompressed: no payload left IS no patch left, there is nothing to drain */
+            const size_t room = *len - done;
+            made = used = (want < room) ? (size_t)want : room;
+            memcpy(&dst[done], a->wire, made);
+        } else {
+            /* want may be 0 here, and that is the DRAIN: an empty input asks the codec whether it
+               still has output buffered. 0 produced and 0 taken is the only honest end. */
+            const int got = a->codec->step(a->codec->ctx, a->wire, (size_t)want, &used, &dst[done], *len - done);
+            if (got < 0 || used > (size_t)want)
+                return false;
+            if (got == 0 && used == 0u)
+                break; /* nothing left to give: the patch ends here, and *len says so below */
+            made = (size_t)got;
+        }
+        if (a->hash != NULL && used > 0u)
+            a->hash->update(a->hash->ctx, a->wire, used);
+        a->off += (uint32_t)used;
+        a->stat_written += (uint32_t)used;
+        done += made;
+    }
+    *len = done; /* short ONLY because the payload ran out, which IS the end of the patch */
+    return true;
+}
+
+/* THE BASE, WHICH IS THE IMAGE WE ARE RUNNING, at whatever offset the patch asks for. */
+static inline bool _iotdata_node_ota_read_base(ota_patch_io_t *const io, const uint32_t at, void *const out, const size_t len) {
+    iotdata_node_ota_apply_t *const a = (iotdata_node_ota_apply_t *)io->ctx;
+    return a->slot->read_base != NULL && a->slot->read_base(a->slot->ctx, at, out, len);
+}
+
+/* AND THE OUTPUT, STRAIGHT INTO THE SLOT, counted so the finish can check it against OUTPUT_SIZE. */
+static inline bool _iotdata_node_ota_write_new(ota_patch_io_t *const io, const void *const buf, const size_t len) {
+    iotdata_node_ota_apply_t *const a = (iotdata_node_ota_apply_t *)io->ctx;
+    if (a->slot->write(a->slot->ctx, buf, len) != (int)len)
+        return false;
+    a->out += (uint32_t)len;
+    return true;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* TICKED WHILE THERE IS WRITING TO DO, one bounded chunk per call. The loop this runs in has a
    radio to service, so the shape of this function is "move CHUNK bytes and return" and the only
@@ -670,31 +791,113 @@ static inline iotdata_node_content_result_t _iotdata_node_ota_apply_work(void *c
         }
         if (a->hash != NULL)
             a->hash->begin(a->hash->ctx);
+        if (a->head.codec != IOTDATA_NODE_OTA_CODEC_NONE && (a->codec == NULL || a->codec->begin == NULL || !a->codec->begin(a->codec->ctx))) {
+            _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_CODEC);
+            return IOTDATA_NODE_CONTENT_R_MINE;
+        }
         a->phase = IOTDATA_NODE_OTA_APPLY_WRITING;
-        a->off = 0u;
+        a->off = a->out = 0u;
     }
 
-    const uint32_t remain = (a->head.payload_size > a->off) ? (a->head.payload_size - a->off) : 0u;
+    /* THE DELTA TICK IS A LONG ONE, and that is a real cost rather than an oversight.
+     *
+     * Everything else in this function moves one bounded chunk and returns, so the pass gets back to
+     * the radio. A patcher cannot be driven that way -- it is a program of copies and inserts, it
+     * drives, and its read contract has no way to say "nothing yet" (see ota_patch_t). So this one
+     * call writes the whole image before it returns: a few seconds, during which the node relays
+     * nothing. It is spending them on something it is about to reboot out of anyway, and the
+     * alternative -- a second task, a queue and the patcher blocking on it -- buys a few seconds of
+     * mesh traffic for a lot of machinery that can go wrong at exactly the wrong moment.
+     *
+     * WHAT IT MUST NOT DO is let the task watchdog fire, so the slot's write is where a device
+     * implementation feeds it; writing 384KB through esp_ota_write is well inside a 10s timeout, but
+     * the margin belongs to whoever knows the flash, not to this header. */
+    if (a->head.form == IOTDATA_NODE_OTA_FORM_DELTA) {
+        ota_patch_io_t io = {
+            .ctx = a,
+            .read_patch = _iotdata_node_ota_read_patch,
+            .read_base = _iotdata_node_ota_read_base,
+            .write_new = _iotdata_node_ota_write_new,
+        };
+        if (a->patch == NULL || a->patch->apply == NULL || !a->patch->apply(a->patch->ctx, &io, a->head.output_size)) {
+            /* The patch did not fit the base, or stopped early, or asked for more than the header
+               promised. None of those get better by trying again with the same two files. */
+            _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_FORM);
+            return IOTDATA_NODE_CONTENT_R_MINE | IOTDATA_NODE_CONTENT_R_DELETE;
+        }
+        /* and fall through to the finish, which checks the hashes and the length as it always does */
+    }
+
+    const uint32_t remain = (a->head.form == IOTDATA_NODE_OTA_FORM_DELTA) ? 0u : ((a->head.payload_size > a->off) ? (a->head.payload_size - a->off) : 0u);
     if (remain > 0u) {
-        static uint8_t buf[IOTDATA_NODE_OTA_APPLY_CHUNK]; /* see AND THE BUFFER IS STATIC */
-        const uint32_t want = (remain < (uint32_t)sizeof(buf)) ? remain : (uint32_t)sizeof(buf);
-        if (iotdata_node_content_read(a->store, id, (uint32_t)a->head.payload_offset + a->off, buf, want) != (int)want) {
+        const uint32_t want = (remain < (uint32_t)sizeof(a->wire)) ? remain : (uint32_t)sizeof(a->wire);
+        if (iotdata_node_content_read(a->store, id, (uint32_t)a->head.payload_offset + a->off, a->wire, want) != (int)want) {
             _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_TRUNCATED);
             return IOTDATA_NODE_CONTENT_R_MINE;
         }
-        if (a->slot->write(a->slot->ctx, buf, (size_t)want) != (int)want) {
-            _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_SIZE);
-            return IOTDATA_NODE_CONTENT_R_MINE;
+        uint32_t took = want;
+        if (a->head.codec == IOTDATA_NODE_OTA_CODEC_NONE) {
+            if (a->slot->write(a->slot->ctx, a->wire, (size_t)want) != (int)want) {
+                _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_SIZE);
+                return IOTDATA_NODE_CONTENT_R_MINE;
+            }
+            a->out += want;
+        } else {
+            /* ONE STEP, NOT A LOOP, which is the whole reason the seam reports what it consumed. An
+               inflater's output is unbounded in terms of its input -- a kilobyte of compressed zeros
+               is a megabyte of image -- so a loop here would hold the pass for as long as the
+               bundle felt like, starve the radio and eventually trip the task watchdog. Instead the
+               output buffer bounds the tick, step() takes only as much input as its output will fit,
+               and the remainder is re-read from the store next time round. */
+            size_t used = 0u;
+            const int made = a->codec->step(a->codec->ctx, a->wire, (size_t)want, &used, a->plain, sizeof(a->plain));
+            if (made < 0 || used > (size_t)want || (made == 0 && used == 0u)) {
+                /* no progress is a corrupt stream, not something to come back to */
+                _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_CODEC);
+                return IOTDATA_NODE_CONTENT_R_MINE | IOTDATA_NODE_CONTENT_R_DELETE;
+            }
+            if (made > 0 && a->slot->write(a->slot->ctx, a->plain, (size_t)made) != made) {
+                _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_SIZE);
+                return IOTDATA_NODE_CONTENT_R_MINE;
+            }
+            /* AND NOT MORE THAN THE HEADER PROMISED. output_size is what the slot was opened for,
+               so a stream that keeps producing past it is one the slot would refuse anyway -- but it
+               is caught here, by name, rather than as a write failure that reads like a bad flash. */
+            a->out += (uint32_t)made;
+            if (a->out > a->head.output_size) {
+                _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_SIZE);
+                return IOTDATA_NODE_CONTENT_R_MINE | IOTDATA_NODE_CONTENT_R_DELETE;
+            }
+            took = (uint32_t)used;
         }
-        if (a->hash != NULL)
-            a->hash->update(a->hash->ctx, buf, (size_t)want);
-        a->off += want;
-        a->stat_written += want;
+        /* THE HASH COVERS THE WIRE PAYLOAD, compressed as it arrived -- that is what the bundler
+           hashed -- so it sees exactly the bytes step() consumed, once each, and never the ones it
+           has yet to look at. */
+        if (a->hash != NULL && took > 0u)
+            a->hash->update(a->hash->ctx, a->wire, (size_t)took);
+        a->off += took;
+        a->stat_written += took;
         return IOTDATA_NODE_CONTENT_R_MINE | IOTDATA_NODE_CONTENT_R_WORK; /* come back for the next one */
     }
 
     /* THE PAYLOAD IS ALL THERE. Everything from here to the reboot happens in one pass, because
        there is nothing left that can be usefully interrupted and every step is cheap. */
+
+    /* THE STREAM ENDED WHERE IT SHOULD HAVE, which the byte count alone does not say: a truncated
+       deflate stream can consume every payload byte and still be waiting for more, and an inflater
+       is the only thing that knows. Asked before the hashes, because "the compressed data stops
+       mid-symbol" is a more useful answer than "the digest did not match". */
+    if (a->head.codec != IOTDATA_NODE_OTA_CODEC_NONE && a->codec != NULL && a->codec->end != NULL && !a->codec->end(a->codec->ctx)) {
+        _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_CODEC);
+        return IOTDATA_NODE_CONTENT_R_MINE | IOTDATA_NODE_CONTENT_R_DELETE;
+    }
+    /* AND PRODUCED EXACTLY THE IMAGE THE HEADER DESCRIBED. For CODEC_NONE this restates what
+       iotdata_node_ota_check already compared; for a codec it is the first time anyone can know. */
+    if (a->out != a->head.output_size) {
+        _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_SIZE);
+        return IOTDATA_NODE_CONTENT_R_MINE | IOTDATA_NODE_CONTENT_R_DELETE;
+    }
+
     if (a->hash != NULL) {
         uint8_t digest[IOTDATA_NODE_OTA_HASH_LEN];
         a->hash->final(a->hash->ctx, digest, sizeof(digest));
@@ -730,8 +933,13 @@ static inline iotdata_node_content_result_t _iotdata_node_ota_apply_work(void *c
        nobody recorded is an attempt nobody can count, and the loop this counter exists to stop
        would be back. Refusing to apply is the safe side of that -- the node carries on running
        what it is running. */
+    /* PER BUNDLE, which means comparing the id BEFORE overwriting it. The count answers "how many
+       times have we tried THIS image", and carrying it across a different bundle made the next one
+       inherit the last one's failures: a node that had burnt three attempts on a bad image reported
+       the one that replaced it as "attempt 4 -- giving up", on the boot where it had just run. A new
+       id starts at one. */
+    a->persist.attempts = (a->persist.id == a->id && a->persist.attempts < 0xFFu) ? (uint8_t)(a->persist.attempts + 1u) : ((a->persist.id == a->id) ? 0xFFu : 1u);
     a->persist.id = a->id;
-    a->persist.attempts = (a->persist.attempts < 0xFFu) ? (uint8_t)(a->persist.attempts + 1u) : 0xFFu;
     (void)snprintf(a->persist.stamp, sizeof(a->persist.stamp), "%s", a->head.stamp);
     if (a->record != NULL && a->record->save != NULL && !a->record->save(a->record->ctx)) {
         _iotdata_node_ota_apply_give_up(a, IOTDATA_NODE_OTA_ERR_TRUNCATED);
@@ -803,7 +1011,7 @@ static inline int _iotdata_node_ota_apply_describe(void *const ctx, const uint32
  * the bundle once the limit is reached. It must outlive the consumer, which a literal from the
  * build system does. */
 static inline bool iotdata_node_content_ota_apply_begin(iotdata_node_ota_apply_t *const a, iotdata_node_content_t *const store, const ota_record_t *const record, const iotdata_node_ota_device_t *const device, const ota_slot_t *const slot,
-                                                        const ota_hash_t *const hash, const char *const my_stamp, const bool enabled) {
+                                                        const ota_hash_t *const hash, const ota_codec_t *const codec, const ota_patch_t *const patch, const char *const my_stamp, const bool enabled) {
     if (a == NULL || store == NULL || slot == NULL)
         return false;
     const iotdata_node_ota_apply_state_t persist = a->persist; /* the device's, not this boot's -- see above */
@@ -814,6 +1022,8 @@ static inline bool iotdata_node_content_ota_apply_begin(iotdata_node_ota_apply_t
     a->device = device;
     a->slot = slot;
     a->hash = hash;
+    a->codec = codec; /* NULL is a legitimate answer: a build that only ever takes CODEC_NONE */
+    a->patch = patch; /* and so is this: a node that takes whole images and no deltas */
     a->enabled = enabled;
     a->stamp = my_stamp;
     a->phase = IOTDATA_NODE_OTA_APPLY_IDLE;
@@ -847,6 +1057,96 @@ static inline bool iotdata_node_content_ota_apply_pending(const iotdata_node_ota
     return true;
 }
 
+/* WHERE THE CONSUMER HAS GOT TO, in lines an operator can read. Everything here was previously
+   visible only in the boot log: the attempt record was reported once, at startup, and the phase not
+   at all -- so watching an update meant watching a console at the right moment, and asking a node
+   that had been up for a week was impossible. One line of state, plus the record's own verdict when
+   there is one.
+ *
+ * THE ANSWER IS A LINE AT A TIME, through the same emit the rest of the store uses, so `content-ota`
+ * typed at a console answers the person who typed it while the identical command off the air goes to
+ * the log. See WHERE ITS WORDS GO in iotdata_node_content.h. */
+static inline void iotdata_node_content_ota_apply_report(const iotdata_node_ota_apply_t *const a, char *const buf, const size_t size, void (*const say)(const char *line)) {
+    if (a == NULL || buf == NULL || size == 0u || say == NULL)
+        return;
+    const char *phase = "idle";
+    if (a->phase == IOTDATA_NODE_OTA_APPLY_WRITING)
+        phase = "writing";
+    else if (a->phase == IOTDATA_NODE_OTA_APPLY_FAILED)
+        phase = "failed";
+
+    if (a->phase == IOTDATA_NODE_OTA_APPLY_WRITING)
+        (void)snprintf(buf, size, "firmware: %s, updates %s -- %06" PRIx32 " %s %" PRIu32 " of %" PRIu32 " payload, %" PRIu32 " of %" PRIu32 " image", phase, a->enabled ? "on" : "OFF", a->id, iotdata_node_ota_codec_name(a->head.codec),
+                       a->off, a->head.payload_size, a->out, a->head.output_size);
+    else
+        (void)snprintf(buf, size, "firmware: %s, updates %s -- %s", phase, a->enabled ? "on" : "OFF", (a->why == IOTDATA_NODE_OTA_OK) ? "nothing to say" : iotdata_node_ota_status_name(a->why));
+    say(buf);
+
+    if (a->refused != 0u) {
+        (void)snprintf(buf, size, "firmware: %06" PRIx32 " will not be tried again before a restart", a->refused);
+        say(buf);
+    }
+    if (iotdata_node_content_ota_apply_pending(a, buf, size))
+        say(buf);
+    (void)snprintf(buf, size, "firmware: claimed=%" PRIu32 " written=%" PRIu32 " applied=%" PRIu32 " rejected=%" PRIu32, a->stat_claimed, a->stat_written, a->stat_applied, a->stat_rejected);
+    say(buf);
+}
+
+/* THE IMAGE IN FLIGHT HAS BEEN ABANDONED ON PURPOSE -- call this immediately before a deliberate
+   rollback, and nowhere else.
+ *
+ * WHY IT HAS TO EXIST. The attempt counter learns what happened by comparing the stamp it recorded
+   against the one that came back, and a rollback is indistinguishable from a crash by that test:
+   both end with the old image running and the new one not. So a node rolled back by hand reported
+   "attempt 1 did NOT run -- will try again", and then did -- re-applying, on the spot, the very
+   image the operator had just rejected. Observed on a relay: rollback, boot, re-apply, within two
+   seconds. The node and the person fought, and the node had the stamina.
+ *
+ * So the operator's decision is written into the record as a verdict rather than left to be
+   inferred: the attempt is marked spent, and the bundle is refused from then on exactly as one that
+   had used up its three goes. It stays in the store, `content-ota` says why, and
+   iotdata_node_content_ota_apply_retry() is how somebody who changes their mind arms it again. */
+static inline void iotdata_node_content_ota_apply_abandon(iotdata_node_ota_apply_t *const a) {
+    if (a == NULL || a->persist.id == 0u)
+        return; /* nothing was ever applied here: there is no bundle to hold responsible */
+    a->persist.attempts = (uint8_t)IOTDATA_NODE_OTA_APPLY_ATTEMPTS_MAX;
+    a->refused = a->persist.id;
+    if (a->record != NULL && a->record->save != NULL)
+        (void)a->record->save(a->record->ctx); /* synchronously: the caller is about to reboot */
+}
+
+/* TRY THIS ONE NOW, because an operator has decided to. Two things stand between a held bundle and
+   an attempt, and this clears exactly those two: the THIS-BOOT refusal, and the attempt limit for
+   that id. Both exist to stop a node looping unattended, and neither is an argument against a person
+   who has looked at the node and chosen to retry.
+ *
+ * WHAT IT DOES NOT CLEAR IS THE ENABLE. That row is a fleet decision -- the brake you reach for when
+   a bad bundle is already on a hundred nodes -- and a verb that quietly overrode it would leave the
+   brake meaning nothing. A node with updates switched off says so and stays put.
+ *
+ * It does not apply anything itself either. It makes the bundle takeable again and lets the ordinary
+   re-offer do the work, so there is still exactly one path into the slot. */
+static inline bool iotdata_node_content_ota_apply_retry(iotdata_node_ota_apply_t *const a, const uint32_t id) {
+    if (a == NULL || !a->enabled)
+        return false;
+    if (a->phase == IOTDATA_NODE_OTA_APPLY_WRITING)
+        return false; /* one at a time, and one is already going */
+    if (a->refused == id)
+        a->refused = 0u;
+    if (a->persist.id == id) {
+        a->persist = (iotdata_node_ota_apply_state_t){ 0 };
+        if (a->record != NULL && a->record->save != NULL)
+            (void)a->record->save(a->record->ctx);
+    }
+    if (a->phase == IOTDATA_NODE_OTA_APPLY_FAILED)
+        a->phase = IOTDATA_NODE_OTA_APPLY_IDLE;
+    a->why = IOTDATA_NODE_OTA_OK;
+    /* and asked for again at the next tick, not at the next cadence: a minute of nothing after an
+       operator types this is indistinguishable from the command having been dropped. */
+    (void)iotdata_node_content_reoffer(a->store, id);
+    return true;
+}
+
 /* The bootloader's probation has been confirmed -- call this on FIRMWARE_EVENT_CONFIRMED, and only
    there. THIS is where an attempt stops being in flight, because this is the first moment the new
    image cannot be taken away again. */
@@ -855,7 +1155,13 @@ static inline void iotdata_node_content_ota_apply_confirmed(iotdata_node_ota_app
         return;
     if (a->stamp == NULL || strcmp(a->persist.stamp, a->stamp) != 0)
         return; /* confirmed, but not the image that was attempted -- a cable flash, say. Leave it. */
-    a->persist = (iotdata_node_ota_apply_state_t){ 0 };
+    /* THE COUNT GOES, THE IDENTITY STAYS. Zeroing the whole record was tidier and lost the one fact
+       a later rollback needs: WHICH bundle produced the image now running. Without it a node rolled
+       back after a successful confirmation had nothing to condemn, so the consumer saw a held bundle
+       newer than what was running, applied it again, and undid the rollback -- observed on a relay,
+       twice in a row. attempts == 0 is what "nothing in flight" means, and is still what silences
+       the boot report; the id and stamp are a memory, not a claim. */
+    a->persist.attempts = 0u;
     if (a->record != NULL && a->record->save != NULL)
         (void)a->record->save(a->record->ctx);
 }

@@ -72,7 +72,7 @@
    trailing comma is what lets two of these sit next to each other in one initialiser. */
 #define IOTDATA_NODE_CONTENT_CONTROL_ACTION_PAIRS \
     IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_LIST, IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE, IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, IOTDATA_NODE_TLV_CONTENT, \
-        IOTDATA_NODE_ACTION_CONTENT_VALIDATE,
+        IOTDATA_NODE_ACTION_CONTENT_VALIDATE, IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_OTA_STATUS, IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_OTA_APPLY,
 
 static const uint8_t iotdata_node_content_control_actions[] = { IOTDATA_NODE_CONTENT_CONTROL_ACTION_PAIRS };
 #define IOTDATA_NODE_CONTENT_CONTROL_ACTIONS_COUNT ((uint8_t)(sizeof(iotdata_node_content_control_actions) / (2 * sizeof(iotdata_node_content_control_actions[0]))))
@@ -95,8 +95,7 @@ static inline void iotdata_node_content_control_init(iotdata_node_content_t *con
 
 #define _IOTDATA_NODE_CONTENT_CONTROL_SAY(...) \
     do { \
-        (void)snprintf(_iotdata_node_content_control_line, sizeof(_iotdata_node_content_control_line), __VA_ARGS__); \
-        _iotdata_node_content_say(_iotdata_node_content_control_line); \
+        _iotdata_node_content_say(snprintf_inline(_iotdata_node_content_control_line, sizeof(_iotdata_node_content_control_line), __VA_ARGS__)); \
     } while (0)
 
 /* A u24 id, big-endian, exactly as iotdata_node_control_build writes it. Three bytes and not four
@@ -226,6 +225,26 @@ static inline bool iotdata_node_content_control(const uint8_t subject, const uin
             _iotdata_node_content_control_validate(c, id);
         else
             _IOTDATA_NODE_CONTENT_CONTROL_SAY("content: no id given");
+        return true;
+    /* THE CONSUMER IS REACHED THROUGH ITS OWN MODULE POINTER, which its begin() sets, rather than
+       being registered here a second time. A build with no firmware consumer answers honestly and
+       the words still resolve -- which is better than a verb that exists on some nodes and is
+       "unknown command" on others. */
+    case IOTDATA_NODE_ACTION_CONTENT_OTA_STATUS:
+        if (_iotdata_node_ota_apply == NULL)
+            _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: no consumer -- this build does not apply updates");
+        else
+            iotdata_node_content_ota_apply_report(_iotdata_node_ota_apply, _iotdata_node_content_control_line, sizeof(_iotdata_node_content_control_line), _iotdata_node_content_say);
+        return true;
+    case IOTDATA_NODE_ACTION_CONTENT_OTA_APPLY:
+        if (_iotdata_node_ota_apply == NULL)
+            _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: no consumer -- this build does not apply updates");
+        else if (!_iotdata_node_content_control_id(args, arglen, &id))
+            _IOTDATA_NODE_CONTENT_CONTROL_SAY("content: no id given");
+        else if (!iotdata_node_content_ota_apply_retry(_iotdata_node_ota_apply, id))
+            _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: %06" PRIx32 " not armed -- %s", id, iotdata_node_content_ota_apply_busy(_iotdata_node_ota_apply) ? "an update is already running" : "updates are switched off");
+        else
+            _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: %06" PRIx32 " armed -- it will be taken on the next offer", id);
         return true;
     default:
         break;

@@ -11,6 +11,7 @@ IOTDATA_SRC_LIBRARY  = $(IOTDATA_SRC)/iotdata-library
 IOTDATA_SRC_COMMON   = $(IOTDATA_SRC)/iotdata-common
 IOTDATA_SRC_EXAMPLE  = $(IOTDATA_SRC)/iotdata-example
 IOTDATA_SRC_BLACKBOX = $(IOTDATA_SRC)/iotdata-depend/blackbox/include
+IOTDATA_SRC_HPATCH   = $(IOTDATA_SRC)/iotdata-depend/hpatchlite
 
 ## a variant has to be named: the library includes no default by design
 IOTDATA_VARIANT ?= $(abspath $(IOTDATA_SRC_COMMON)/include/iotdata_variant_weather_station.h)
@@ -65,7 +66,9 @@ test:
 	@$(TEST_DIR)/test_node_filestore_linux
 # the OTA CONSUMER, with a scripted slot and a scripted digest -- which is why claim decisions, the
 # write failures and the attempt counter across a reboot are all reachable without a cable
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_content_ota_apply.c -o $(TEST_DIR)/test_node_content_ota_apply -lm
+# -lz: the suite inflates a REAL raw-deflate stream through d_module_inflate_linux.h, rather than
+# standing in for one -- see the note in that header
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device -I$(IOTDATA_SRC_HPATCH) test_node_content_ota_apply.c $(IOTDATA_SRC_HPATCH)/hpatch_lite.c -o $(TEST_DIR)/test_node_content_ota_apply -lm -lz
 	@$(TEST_DIR)/test_node_content_ota_apply
 # the console and CONTROL words over that same backend. The one suite here that catches stdout,
 # because for a download the reply IS the protocol that esp32-tool parses.

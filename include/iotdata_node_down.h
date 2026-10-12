@@ -194,7 +194,7 @@ static inline uint32_t iotdata_node_down_hash(const uint8_t *const buf, const si
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_node_down_init(iotdata_node_down_t *const ds, buffer_pool_t *const pool) {
-    memset(ds, 0, sizeof(*ds));
+    *ds = (iotdata_node_down_t){ 0 };
     ds->pool = pool;
     ds->ttl_ms = IOTDATA_NODE_DOWN_TTL_MS_DEFAULT;
     ds->ttl_bcast_ms = IOTDATA_NODE_DOWN_TTL_BCAST_MS_DEFAULT;

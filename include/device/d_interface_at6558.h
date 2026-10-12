@@ -221,7 +221,7 @@ esp_err_t _pcas_send(const char *const body) {
 
 esp_err_t _gnss_read_product(void) {
 
-    memset(&_gnss_rtc.product, 0, sizeof(_gnss_rtc.product));
+    _gnss_rtc.product = (nmea_txt_product_t){ 0 };
 
     const int txt_fields = 5;
 
@@ -474,7 +474,7 @@ esp_err_t gnss_read(gnss_reading_t *const out, const gnss_read_flags_t flags, co
 
     const gnss_strategy_t *st = strategy ? strategy : &_GNSS_CONFIG(strategy);
 
-    memset(out, 0, sizeof(*out));
+    *out = (gnss_reading_t){ 0 };
 
 #ifdef GNSS_WAIT_FOR_PPS
     ESP_RETURN_ON_ERROR(_gnss_wait_pps(st->fix_timeout_ms), __tag_device_at6558, "read: PPS");

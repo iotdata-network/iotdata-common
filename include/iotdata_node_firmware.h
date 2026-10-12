@@ -154,6 +154,15 @@ static inline iotdata_node_firmware_event_t iotdata_node_firmware_tick(const uin
 /* Give up on the running image and return to the previous one, now. Refuses on its own when there is
    nothing valid to go back to -- which is the case on a board that has only ever been cable-flashed
    -- so it cannot be used to reboot into a hole. Does not return when it succeeds. */
+/* IS THERE ANYWHERE TO GO, asked separately so a caller can do its own tidying up BEFORE the point
+   of no return. esp_ota_mark_app_invalid_rollback_and_reboot() does not return when it works, so
+   anything that must be written down first has to be written down before it is called -- and
+   writing it down before knowing the rollback is even possible would leave a refused command with
+   side effects. */
+static inline bool iotdata_node_firmware_rollback_possible(void) {
+    return esp_ota_check_rollback_is_possible();
+}
+
 static inline bool iotdata_node_firmware_rollback(void) {
     return esp_ota_mark_app_invalid_rollback_and_reboot() == ESP_OK;
 }
@@ -211,6 +220,9 @@ static inline void iotdata_node_firmware_begin(__attribute__((unused)) const uin
 }
 static inline iotdata_node_firmware_event_t iotdata_node_firmware_tick(__attribute__((unused)) const uint32_t now_ms) {
     return IOTDATA_NODE_FIRMWARE_EVENT_NONE;
+}
+static inline bool iotdata_node_firmware_rollback_possible(void) {
+    return false;
 }
 static inline bool iotdata_node_firmware_rollback(void) {
     return false;
