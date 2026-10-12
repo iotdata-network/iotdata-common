@@ -4,6 +4,7 @@
 #   TARGET          output binary                                   [required]
 #   MAIN            the single translation unit to compile          [required]
 #   SOURCES         prerequisites (rebuild on change)               [required]
+#   SOURCES_EXTRA   vendored .c files to compile and link in        [default: empty]
 #   CFLAGS LDFLAGS LIBS   the compile + link flags                  [required]
 #   CC              compiler                                        [default: gcc]
 #   FORMAT          clang-format binary                   [default: clang-format-19, from config.mk]
@@ -51,7 +52,8 @@ BOOTLOADER_MIN ?= 1
 TEST_TARGET    ?= $(TARGET)_test
 TEST_LIBS      ?= $(LIBS)
 SOURCES_ALL    ?= $(MAIN) $(if $(TEST_MAIN),$(TEST_MAIN)) $(SOURCES_TARGET)
-TARGETS_ALL    ?= $(TARGET) $(TARGET).buildinfo $(if $(TEST_MAIN),$(TEST_TARGET)) $(TARGET).d $(if $(TEST_MAIN),$(TEST_TARGET).d)
+TARGETS_ALL    ?= $(TARGET) $(TARGET).buildinfo $(if $(TEST_MAIN),$(TEST_TARGET)) $(TARGET).d $(if $(TEST_MAIN),$(TEST_TARGET).d) \
+                  $(SOURCES_EXTRA_OBJS) $(SOURCES_EXTRA_OBJS:.o=.d)
 
 # WHAT WAS ACTUALLY INCLUDED, asked of the compiler rather than listed by hand.
 #
@@ -66,6 +68,39 @@ TARGETS_ALL    ?= $(TARGET) $(TARGET).buildinfo $(if $(TEST_MAIN),$(TEST_TARGET)
 CFLAGS_DEPEND  ?= -MMD -MP
 -include $(TARGET).d
 $(if $(TEST_MAIN),$(eval -include $(TEST_TARGET).d))
+
+# --- SOURCES_EXTRA: vendored C that has to be COMPILED, not just included -----------------------
+#
+# Some seams are a header over a real library: d_module_hpatch.h is HPatchLite's two entry points,
+# and those live in iotdata-depend/hpatchlite/hpatch_lite.c. A project naming that file here gets
+# it built and linked. The esp32 side says the same thing in its own dialect -- the CMakeLists
+# carry it in idf_component_register's SRCS -- so both platforms declare the dependency rather
+# than one of them getting it by luck.
+#
+# AN OBJECT EACH, AND NOT TWO .c FILES ON THE LINK LINE, WHICH IS THE WHOLE POINT OF THIS BLOCK.
+# `gcc -MMD -MF one.d -o bin main.c vendor.c` writes the dependencies of the LAST source only:
+# the .d collapses to `bin: vendor.c` and every header the project actually includes vanishes out
+# of it. That is precisely the drift the note above describes, re-introduced by the mechanism meant
+# to be convenient -- `make test` would go green against stale headers again. Compiling each extra
+# source to its own object with its own .d keeps $(MAIN) the only .c on its command line, so its
+# depfile stays complete.
+#
+# THEY ARE BUILT WITH THE PROJECT'S FLAGS, deliberately: hpatch_lite.c passes the full -Werror
+# -Wconversion -Wpedantic set unchanged, which is worth knowing about a vendored dependency. A
+# future one that cannot take them needs its own rule and a note saying which flag it failed --
+# not a blanket relaxation here that would quietly cover this file too.
+#
+# NOT in SOURCES_ALL, so `format` never rewrites them: they are somebody else's code, carried at a
+# recorded upstream commit, and reformatting would make the next vendor bump a conflict.
+SOURCES_EXTRA  ?=
+SOURCES_EXTRA_OBJS = $(foreach _s,$(SOURCES_EXTRA),$(notdir $(basename $(_s))).o)
+
+define _TARGET_LINUX_EXTRA_RULE
+$(notdir $(basename $(1))).o: $(1) $$(MAKEFILE_LIST)
+	$$(CC) $$(CFLAGS) $$(CFLAGS_DEPEND) -MF $(notdir $(basename $(1))).d -c $(1) -o $$@
+-include $(notdir $(basename $(1))).d
+endef
+$(foreach _s,$(SOURCES_EXTRA),$(eval $(call _TARGET_LINUX_EXTRA_RULE,$(_s))))
 
 .DEFAULT_GOAL := all
 .PHONY: all clean format stage
@@ -84,8 +119,8 @@ stage: $(TARGET)
 # the rest -- and make has no other way to notice that one of them changed. Without it, bumping
 # VERSION at a release point would leave the binary reporting the old one, which is exactly the
 # kind of quiet lie the version report exists to prevent.
-$(TARGET): $(MAIN) $(SOURCES) $(MAKEFILE_LIST)
-	$(CC) $(CFLAGS) $(CFLAGS_DEPEND) -MF $(TARGET).d -o $(TARGET) $(MAIN) $(LDFLAGS) $(LIBS)
+$(TARGET): $(MAIN) $(SOURCES) $(SOURCES_EXTRA_OBJS) $(MAKEFILE_LIST)
+	$(CC) $(CFLAGS) $(CFLAGS_DEPEND) -MF $(TARGET).d -o $(TARGET) $(MAIN) $(SOURCES_EXTRA_OBJS) $(LDFLAGS) $(LIBS)
 	@# THE STAMP MUST SURVIVE THE BUILD. VERSION_STAMP is a fresh `date -u` every invocation, so by
 	@# the time anything stages this binary the value compiled into it is unrecoverable -- unless the
 	@# build writes it down here. esp32 gets this free from CMakeCache.txt; linux has to say it.
@@ -99,8 +134,8 @@ format:
 # --- optional unit test -------------------------------------------------------------------------
 ifdef TEST_MAIN
 .PHONY: test
-$(TEST_TARGET): $(TEST_MAIN) $(SOURCES) $(MAKEFILE_LIST)
-	$(CC) $(CFLAGS) $(CFLAGS_DEPEND) -MF $(TEST_TARGET).d -o $(TEST_TARGET) $(TEST_MAIN) $(LDFLAGS) $(TEST_LIBS)
+$(TEST_TARGET): $(TEST_MAIN) $(SOURCES) $(SOURCES_EXTRA_OBJS) $(MAKEFILE_LIST)
+	$(CC) $(CFLAGS) $(CFLAGS_DEPEND) -MF $(TEST_TARGET).d -o $(TEST_TARGET) $(TEST_MAIN) $(SOURCES_EXTRA_OBJS) $(LDFLAGS) $(TEST_LIBS)
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 endif

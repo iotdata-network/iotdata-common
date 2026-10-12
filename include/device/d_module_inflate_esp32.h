@@ -92,10 +92,6 @@ static inline bool _inflate_esp32_begin(void *const ctx) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* ONE STEP. Hand back whatever is already sitting in the window first, then ask tinfl for more --
-   which keeps the contract simple: the caller never has to know that the window and its buffer are
-   different sizes, and a call that produces output without consuming input is ordinary rather than
-   a sign of trouble. */
 static inline int _inflate_esp32_step(void *const ctx, const void *const in, const size_t inlen, size_t *const consumed, void *const out, const size_t outlen) {
     inflate_esp32_t *const s = (inflate_esp32_t *)ctx;
     if (consumed != NULL)
@@ -184,8 +180,10 @@ static inline const ota_codec_t *inflate_esp32_init(inflate_esp32_t *const s) {
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* the neutral name; see the note in d_module_otaslot_esp32.h */
 typedef inflate_esp32_t ota_codec_impl_t;
 #define ota_codec_impl_init inflate_esp32_init
+
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
 #endif /* D_MODULE_INFLATE_ESP32_H */

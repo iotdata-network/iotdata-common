@@ -3,21 +3,6 @@
 
 // ------------------------------------------------------------------------------------------------------------------------
 // d_module_otaslot_linux.h - the slot and hash seams on linux: declared, and not yet implemented.
-//
-// WHY A HEADER THAT DOES NOTHING IS WORTH HAVING. Supporting an update is part of the contract of
-// using this framework, and iotdata_node_otaupdate.h is included by iotdata_node_platform.h -- which
-// the linux gateway includes too. So the neutral names have to EXIST on linux or the framework
-// header does not compile there, and the gateway would be carrying a contract it cannot name.
-//
-// WHAT IT DOES INSTEAD OF PRETENDING. ota_slot_impl_init() returns NULL, which
-// iotdata_node_content_ota_apply_begin() reads as "no slot" and refuses -- so a gateway reports
-// honestly that it cannot apply an update, rather than registering a consumer that would claim a
-// firmware bundle and then fail to write it. A stub that lied would be worse than no stub.
-//
-// A real one needs: a slot (two executables and a selector, or the A/B disk-metadata failover that
-// machine-setup.js already builds for the ROCK images), a digest (openssl or mbedtls), and a
-// definition of "the running image" to patch deltas against. The seams are unchanged -- that is the
-// point of them -- so this file is where that work lands, and nothing above it needs to move.
 // ------------------------------------------------------------------------------------------------------------------------
 
 #include <stdbool.h>
@@ -28,7 +13,6 @@
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* Nothing to keep yet. Not an empty struct: C forbids those, and a byte costs nothing. */
 typedef struct {
     uint8_t _unused;
 } ota_slot_impl_t;

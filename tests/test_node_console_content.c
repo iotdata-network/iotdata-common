@@ -609,7 +609,7 @@ static void test_control_words(void) {
     CHECK(filestore_ram_plant(&fs, 0x0537f2u, b, sizeof(b)), "planted");
 
     said_reset();
-    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_LIST, NULL, 0u), "list is ours");
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_LIST, NULL, 0u, NULL), "list is ours");
     CHECK(said_has("0537f1"), "and lists the first");
     CHECK(said_has("0537f2"), "and the second");
     CHECK(said_has("2 files"), "and counts them last");
@@ -618,30 +618,36 @@ static void test_control_words(void) {
        only check that the two layers agree about the width of a content id. */
     said_reset();
     const uint8_t id_f1[3] = { 0x05u, 0x37u, 0xf1u };
-    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_VALIDATE, id_f1, 3u), "validate is ours");
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_VALIDATE, id_f1, 3u, NULL), "validate is ours");
     char want[80];
     snprintf(want, sizeof(want), "crc64=0x%016llX", (unsigned long long)_iotdata_crc64(a, sizeof(a), _IOTDATA_CRC64_INIT));
     CHECK(said_has(want), "and reports the store's own sum");
     CHECK(!said_has("INCOMPLETE"), "over a whole file");
 
     said_reset();
-    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE, id_f1, 3u), "delete is ours");
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE, id_f1, 3u, NULL), "delete is ours");
     CHECK(said_has("deleted"), "and says so");
     uint32_t total = 0u, held = 0u;
     CHECK(!iotdata_node_content_stat(&store, 0x0537f1u, &total, &held), "and it is gone");
 
     said_reset();
-    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE, id_f1, 3u), "a second delete is still ours");
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE, id_f1, 3u, NULL), "a second delete is still ours");
     CHECK(!said_has("deleted"), "but deletes nothing");
     /* And says WHY in the words an operator needs: a well-formed id with nothing under it is not
        the same complaint as an id that could never name anything. */
     CHECK(said_has("no such content id"), "and distinguishes absent from malformed");
 
     said_reset();
-    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE, NULL, 0u), "an id-less command is OURS and refused");
+    /* OURS AND REFUSED -- and the answer now says which, instead of leaving a caller to read
+       "claimed" and assume it ran. The reason comes back with it, because the operator who typed
+       the command is the only one who can act on it. */
+    const char *why = NULL;
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_DELETE, NULL, 0u, &why) == IOTDATA_NODE_CONTROL_RESULT_REFUSED, "an id-less command is OURS and refused");
     CHECK(said_has("no id"), "and says which");
-    CHECK(!iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, 0x7Fu, NULL, 0u), "an action we do not have is not ours");
-    CHECK(!iotdata_node_content_control(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_CONTENT_LIST, NULL, 0u), "nor another subject's");
+    CHECK(why != NULL && strcmp(why, "no id given") == 0, "to the seam as well as to the console");
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_LIST, NULL, 0u, NULL) == IOTDATA_NODE_CONTROL_RESULT_DONE, "a command that ran is DONE, not merely claimed");
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, 0x7Fu, NULL, 0u, NULL) == IOTDATA_NODE_CONTROL_RESULT_UNKNOWN, "an action we do not have is not ours");
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_STATUS, IOTDATA_NODE_ACTION_CONTENT_LIST, NULL, 0u, NULL) == IOTDATA_NODE_CONTROL_RESULT_UNKNOWN, "nor another subject's");
 }
 
 /* ------------------------------------------------------------------------------------------- */
@@ -693,7 +699,7 @@ static void test_inspect_ota(void) {
     const uint32_t head = faux(0x053801u, "relay", 0x40000u, 64u, 64u);
     CHECK(head > 0u, "a bundle this build could take");
     said_reset();
-    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_ok, 3u), "inspect is ours");
+    CHECK(iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_ok, 3u, NULL), "inspect is ours");
     CHECK(said_has("app=relay semver=1.2.3 stamp=202610111200"), "the identity");
     CHECK(said_has("form=full codec=none"), "the shape");
     CHECK(said_has("payload=64"), "and what the payload should weigh");
@@ -702,7 +708,7 @@ static void test_inspect_ota(void) {
 
     (void)faux(0x053802u, "gateway", 0x40000u, 64u, 64u);
     said_reset();
-    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_app, 3u);
+    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_app, 3u, NULL);
     CHECK(said_has("app=gateway"), "a bundle for something else parses");
     CHECK(said_has("ota check: different application"), "and is refused for the right reason");
 
@@ -710,7 +716,7 @@ static void test_inspect_ota(void) {
        Nothing in the header is wrong -- it is the FILE that is short, and only the store knows. */
     (void)faux(0x053803u, "relay", 0x40000u, 64u, 32u);
     said_reset();
-    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_short, 3u);
+    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_short, 3u, NULL);
     CHECK(said_has("ota check: not equal to the header length"), "a short file is caught here, not at the far end of a decode");
 
     /* Most content is not firmware, and inspect says nothing about OTA for it rather than
@@ -719,7 +725,7 @@ static void test_inspect_ota(void) {
     fill(plain, sizeof(plain), 61u);
     CHECK(filestore_ram_plant(&fs, 0x053804u, plain, sizeof(plain)), "an ordinary file");
     said_reset();
-    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_plain, 3u);
+    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_plain, 3u, NULL);
     CHECK(said_has("053804 200 of 200 bytes"), "is described");
     CHECK(!said_has("ota"), "and is not accused of being a bundle");
 
@@ -727,7 +733,7 @@ static void test_inspect_ota(void) {
        the useful answer. */
     CHECK(filestore_ram_plant(&fs, 0x053805u, IOTDATA_NODE_OTA_MAGIC, (uint32_t)IOTDATA_NODE_OTA_MAGIC_LEN), "a bundle that is only its magic");
     said_reset();
-    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_trunc, 3u);
+    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_trunc, 3u, NULL);
     CHECK(said_has("ota header:"), "says the header is the problem");
     CHECK(!said_has("ota check:"), "and does not go on to judge what it could not read");
 
@@ -735,7 +741,7 @@ static void test_inspect_ota(void) {
        judging against zeroes and calling a good bundle unacceptable. */
     iotdata_node_content_control_init(&store, NULL);
     said_reset();
-    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_ok, 3u);
+    (void)iotdata_node_content_control(IOTDATA_NODE_TLV_CONTENT, IOTDATA_NODE_ACTION_CONTENT_INSPECT, id_ok, 3u, NULL);
     CHECK(said_has("app=relay"), "still parses");
     CHECK(said_has("not judged"), "and says why it will not say");
 }

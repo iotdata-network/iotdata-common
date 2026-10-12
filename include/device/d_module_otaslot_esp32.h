@@ -74,8 +74,6 @@ static inline bool _ota_slot_esp32_begin(void *const ctx, const uint32_t size) {
         ESP_LOGE(__tag_device_otaslot, "begin: %" PRIu32 " bytes will not fit %s (%" PRIu32 ")", size, s->part->label, (uint32_t)s->part->size);
         return false;
     }
-    /* The SIZE and not OTA_SIZE_UNKNOWN, which lets the driver erase exactly what is needed rather
-       than the whole partition -- a second or two of flash erase this node does not have to spend. */
     const esp_err_t err = esp_ota_begin(s->part, (size_t)size, &s->handle);
     if (err != ESP_OK) {
         ESP_LOGE(__tag_device_otaslot, "begin: %s on %s: %s", "esp_ota_begin", s->part->label, esp_err_to_name(err));
@@ -103,8 +101,7 @@ static inline int _ota_slot_esp32_write(void *const ctx, const void *const buf, 
 // ------------------------------------------------------------------------------------------------------------------------
 
 /* Finalises and VERIFIES, and boots nothing. A failure here is the image being malformed -- the
-   wrong magic, a bad appended hash -- which is the one refusal that says the bundle is wrong rather
-   than the flash being unlucky. */
+   wrong magic, a bad appended hash */
 static inline bool _ota_slot_esp32_end(void *const ctx) {
     ota_slot_esp32_t *const s = (ota_slot_esp32_t *)ctx;
     if (s == NULL || !s->open)
@@ -120,9 +117,8 @@ static inline bool _ota_slot_esp32_end(void *const ctx) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* THE IRREVERSIBLE ONE. After this the next reset runs the new image, and the only things standing
-   between a bad image and a dead node are the bootloader's rollback and the consumer's attempt
-   counter -- both of which are in place before this is called. */
+/* THE IRREVERSIBLE ONE. The next reset runs the new image, and the only things standing between a
+   bad image and a dead node are the bootloader's rollback and the consumer's attempt counter */
 static inline bool _ota_slot_esp32_activate(void *const ctx) {
     ota_slot_esp32_t *const s = (ota_slot_esp32_t *)ctx;
     if (s == NULL || s->part == NULL)
@@ -156,6 +152,7 @@ static inline bool _ota_slot_esp32_activate(void *const ctx) {
  * sha256: the partition holds the file verbatim, and hdiffi computed the patch against that same
  * file. Trimming the tail here would shift every offset past the end of the image and the patch
  * would reconstruct garbage from the first copy instruction that reached it. */
+
 static inline bool _ota_slot_esp32_read_base(__attribute__((unused)) void *const ctx, const uint32_t at, void *const buf, const size_t len) {
     const esp_partition_t *const running = esp_ota_get_running_partition();
     if (running == NULL || buf == NULL)
@@ -213,12 +210,6 @@ static inline const ota_slot_t *ota_slot_esp32_init(ota_slot_esp32_t *const s) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* What an update would land in, for the device descriptor's slot_size -- 0 when there is no second
-   slot at all, which ota_check reads as "I cannot say" and so does not refuse on size. */
-/* THE BOOTLOADER'S VERSION, which a bundle may demand a floor of. Read from the bootloader's own
-   description block rather than remembered anywhere: it is whatever is actually in flash, which is
-   the only thing a BOOTLOADER_MIN check is about. 0 is "I cannot say", and the check treats that as
-   satisfying nothing rather than everything. */
 static inline uint32_t ota_slot_esp32_bootloader(void) {
     esp_bootloader_desc_t bl;
     return (esp_ota_get_bootloader_description(NULL, &bl) == ESP_OK) ? bl.version : 0u;
@@ -231,10 +222,6 @@ static inline uint32_t ota_slot_esp32_size(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* WHAT WE ARE RUNNING, by the same definition a bundle's TARGET_HASH uses -- so a delta's BASE_HASH
-   can be compared against it. Fills the device descriptor's base_hash, and returns false when the
-   running image cannot be digested, which leaves that field NULL and means "I cannot say" rather
-   than "no". A wrong answer here would accept a patch against the wrong image. */
 static inline bool ota_slot_esp32_running_digest(uint8_t *const out, const size_t outlen) {
     const esp_partition_t *const running = esp_ota_get_running_partition();
     if (running == NULL || out == NULL)
@@ -326,9 +313,6 @@ static inline const ota_hash_t *ota_hash_esp32_init(ota_hash_esp32_t *const h) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
-// ------------------------------------------------------------------------------------------------------------------------
-
-// ------------------------------------------------------------------------------------------------------------------------
 // THE NEUTRAL NAMES, which are how iotdata_node_otaupdate.h reaches this implementation without
 // knowing which platform it is. Every backend of these seams declares the same three spellings --
 // an instance type and an init -- and the application decides which backend by which d_ module it
@@ -344,5 +328,8 @@ typedef ota_hash_esp32_t ota_hash_impl_t;
 #define ota_slot_impl_bootloader     ota_slot_esp32_bootloader
 #define ota_slot_impl_running_digest ota_slot_esp32_running_digest
 #define OTA_SLOT_IMPL_PRESENT        1
+
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
 #endif /* D_MODULE_OTASLOT_ESP32_H */

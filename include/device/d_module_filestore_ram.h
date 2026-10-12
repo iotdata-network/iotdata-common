@@ -31,6 +31,8 @@
 
 #include "d_module_filestore.h"
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 #ifndef FILESTORE_RAM_SLOTS
 #define FILESTORE_RAM_SLOTS 8
 #endif
@@ -68,6 +70,8 @@ static inline filestore_ram_slot_t *_filestore_ram_find(filestore_ram_t *const f
     return NULL;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline uint32_t _filestore_ram_held(const filestore_ram_slot_t *const s) {
     uint32_t n = 0u;
     for (uint32_t i = 0; i < s->total && i < FILESTORE_RAM_BYTES; i++)
@@ -103,6 +107,8 @@ static inline bool _filestore_ram_create(void *const ctx, const uint32_t id, con
     return true;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline int _filestore_ram_write(void *const ctx, const uint32_t id, const uint32_t off, const void *const buf, const size_t len) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
     fs->stat_write++;
@@ -121,6 +127,8 @@ static inline int _filestore_ram_write(void *const ctx, const uint32_t id, const
     return (int)len;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline int _filestore_ram_read(void *const ctx, const uint32_t id, const uint32_t off, void *const buf, const size_t len) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
     fs->stat_read++;
@@ -136,6 +144,8 @@ static inline int _filestore_ram_read(void *const ctx, const uint32_t id, const 
     return (int)len;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline void _filestore_ram_destroy(void *const ctx, const uint32_t id) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
     fs->stat_destroy++;
@@ -143,6 +153,8 @@ static inline void _filestore_ram_destroy(void *const ctx, const uint32_t id) {
     if (s != NULL)
         *s = (filestore_ram_slot_t){ 0 };
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 static inline bool _filestore_ram_rename(void *const ctx, const uint32_t from, const uint32_t to) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
@@ -161,6 +173,8 @@ static inline bool _filestore_ram_rename(void *const ctx, const uint32_t from, c
     return true;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline bool _filestore_ram_iterate(void *const ctx, uint32_t *const cursor, uint32_t *const id) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
     for (uint32_t i = *cursor; i < (uint32_t)(sizeof(fs->slot) / sizeof(fs->slot[0])); i++)
@@ -172,6 +186,8 @@ static inline bool _filestore_ram_iterate(void *const ctx, uint32_t *const curso
     *cursor = (uint32_t)(sizeof(fs->slot) / sizeof(fs->slot[0]));
     return false;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 static inline bool _filestore_ram_stat(void *const ctx, const uint32_t id, uint32_t *const total, uint32_t *const held) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
@@ -185,6 +201,8 @@ static inline bool _filestore_ram_stat(void *const ctx, const uint32_t id, uint3
     return true;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline uint32_t _filestore_ram_space(void *const ctx) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
     if (fs->capacity != 0u)
@@ -194,6 +212,8 @@ static inline uint32_t _filestore_ram_space(void *const ctx) {
             return FILESTORE_RAM_BYTES;
     return 0u;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 static inline bool _filestore_ram_have(void *const ctx, const uint32_t id, const uint16_t chunk) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
@@ -211,6 +231,8 @@ static inline bool _filestore_ram_have(void *const ctx, const uint32_t id, const
             return false;
     return true;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 static inline bool _filestore_ram_complete(void *const ctx, const uint32_t id) {
     filestore_ram_t *const fs = (filestore_ram_t *)ctx;
@@ -240,6 +262,8 @@ static inline const d_filestore_t *filestore_ram_init(filestore_ram_t *const fs)
     };
     return &fs->backend;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 /* Put a file there directly, as a factory image would -- no insert, no transfer. This is the shape
    the baked-in calibration blob case takes, and a test needs it to reach cold-boot discovery. */

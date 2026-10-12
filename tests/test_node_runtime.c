@@ -57,15 +57,24 @@ static void both_cb(uint16_t s, iotdata_node_status_t *o) {
     o->mesh.cost = 3;
 }
 static uint8_t seen_key = 0;
-static bool ctl_cb(uint16_t s, uint8_t subject, uint8_t action, const uint8_t *v, uint8_t n) {
+static iotdata_node_control_result_t ctl_cb(uint16_t s, uint8_t subject, uint8_t action, const uint8_t *v, uint8_t n, const char **reason) {
     (void)s;
     (void)v;
     (void)n;
-    if (subject == IOTDATA_NODE_SUBJECT_MESH && action == IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR) {
+    if (subject != IOTDATA_NODE_SUBJECT_MESH)
+        return IOTDATA_NODE_CONTROL_RESULT_UNKNOWN;
+    if (action == IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR) {
         seen_key = action;
-        return true;
+        return IOTDATA_NODE_CONTROL_RESULT_DONE;
     }
-    return false;
+    /* A VERB THIS APP HAS AND WILL NOT DO, which is the third answer the seam exists for: it is
+       neither serviced nor unheard-of, and before the enum both of those were the only things it
+       could say. */
+    if (action == IOTDATA_NODE_ACTION_MESH_PEERS_DUMP) {
+        *reason = "the mesh is not up yet";
+        return IOTDATA_NODE_CONTROL_RESULT_REFUSED;
+    }
+    return IOTDATA_NODE_CONTROL_RESULT_UNKNOWN;
 }
 /* (subject, action) pairs, which is the shape the inventory and the wire both use */
 static const uint8_t keys[] = { IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR };
@@ -302,7 +311,33 @@ int main(void) {
     iotdata_node_process_control(&n, kv, b.len, &reboot);
     CHECK(seen_key == IOTDATA_NODE_ACTION_MESH_PEERS_CLEAR, "the hook got the action it claims");
     CHECK(n.stat_commands == 1, "a claimed action is a command");
-    CHECK(n.stat_unknown == 1, "a refused action is unknown");
+    CHECK(n.stat_unknown == 1, "an UNCLAIMED action is unknown");
+
+    /* THE THIRD ANSWER, COUNTED APART FROM BOTH. The hook has this verb and declines it, and the
+       counters have to be able to say so: as a bool it came back false, was added to stat_unknown,
+       and the console then told the operator the node had been built without the feature. */
+    iotdata_kvr_t b2;
+    uint8_t kv2[64];
+    iotdata_kvr_init(&b2, kv2, sizeof(kv2));
+    const uint8_t declined[2] = { IOTDATA_NODE_SUBJECT_MESH, IOTDATA_NODE_ACTION_MESH_PEERS_DUMP };
+    iotdata_kvr_add(&b2, IOTDATA_NODE_CONTROL_CONTROL, declined, (uint8_t)sizeof(declined));
+    iotdata_node_process_control(&n, kv2, b2.len, &reboot);
+    CHECK(n.stat_refused == 1, "a claimed-and-declined action is refused");
+    CHECK(n.stat_commands == 1, "and is NOT counted as serviced");
+    CHECK(n.stat_unknown == 1, "nor as unknown -- that was the misreport");
+    CHECK(n.refusal != NULL && strcmp(n.refusal, "the mesh is not up yet") == 0, "and it carries the condition that caused it");
+    CHECK(strcmp(iotdata_node_control_result_name(IOTDATA_NODE_CONTROL_RESULT_REFUSED), "refused") == 0, "which an operator reads as refused, not failed");
+
+    /* A ROLLBACK WITH NOWHERE TO GO IS A REFUSAL TOO. No host build has a fallback slot, so
+       firmware_rollback_possible() is false here -- and this used to land in stat_unknown, which is
+       how `node rollback` came to read as a firmware built without the verb. */
+    const uint32_t was_refused = n.stat_refused, was_unknown = n.stat_unknown;
+    iotdata_kvr_init(&b2, kv2, sizeof(kv2));
+    const uint8_t roll[2] = { IOTDATA_NODE_SUBJECT_NODE, IOTDATA_NODE_ACTION_NODE_ROLLBACK };
+    iotdata_kvr_add(&b2, IOTDATA_NODE_CONTROL_CONTROL, roll, (uint8_t)sizeof(roll));
+    iotdata_node_process_control(&n, kv2, b2.len, &reboot);
+    CHECK(n.stat_refused == was_refused + 1, "rollback with no fallback slot is refused");
+    CHECK(n.stat_unknown == was_unknown, "and not called unimplemented");
 
     /* always listening: nothing is ever scheduled or advertised (a DOWN frame is transmitted
        before it is held, so such a node hears the immediate copy), yet the receiver counts as

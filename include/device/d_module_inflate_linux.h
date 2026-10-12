@@ -56,8 +56,6 @@ static inline bool _inflate_linux_begin(void *const ctx) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* Bytes produced, with *consumed set to the input used. 0/0 means no progress, which the caller
-   reads as a corrupt stream; see the seam's own comment. */
 static inline int _inflate_linux_step(void *const ctx, const void *const in, const size_t inlen, size_t *const consumed, void *const out, const size_t outlen) {
     inflate_linux_t *const s = (inflate_linux_t *)ctx;
     if (consumed != NULL)
@@ -132,8 +130,10 @@ static inline const ota_codec_t *inflate_linux_init(inflate_linux_t *const s) {
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-/* the neutral name; see the note in d_module_otaslot_esp32.h */
 typedef inflate_linux_t ota_codec_impl_t;
 #define ota_codec_impl_init inflate_linux_init
+
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
 #endif /* D_MODULE_INFLATE_LINUX_H */

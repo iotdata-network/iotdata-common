@@ -69,12 +69,13 @@
 typedef void (*iotdata_node_status_fn)(uint16_t station, iotdata_node_status_t *out);
 typedef bool (*iotdata_node_tx_fn)(const uint8_t *packet, size_t len);
 
-/* A CONTROL key this layer does not know, offered to the application. Returns whether it was
-   the app's; false means "not implemented", counted as unknown and skipped rather than failing
-   the frame. */
-/* An app command, already split into its subject and action by the dispatcher: the app never sees
-   the CONTROL key or has to re-parse the prefix. Returns true if it took it. */
-typedef bool (*iotdata_node_control_fn)(uint16_t station, uint8_t subject, uint8_t action, const uint8_t *args, uint8_t arglen);
+/* A CONTROL key this layer does not know, offered to the application: already split into its
+   subject and action, so the app never sees the CONTROL key or re-parses the prefix.
+   Answers with one of the three in iotdata_node_control.h -- UNKNOWN (not mine, counted unknown
+   and skipped rather than failing the frame), DONE, or REFUSED with an optional `*reason` for the
+   console and the log. See WHAT HAPPENED TO IT there for why a bool was not enough. `reason` is
+   never NULL; leaving it alone is fine. */
+typedef iotdata_node_control_result_t (*iotdata_node_control_fn)(uint16_t station, uint8_t subject, uint8_t action, const uint8_t *args, uint8_t arglen, const char **reason);
 
 /* One diagnostic record per call, from `cursor` (start it at 0), returning its length and 0 when
    there are no more -- the same shape the relay's node layer uses, so a device that gains a
@@ -151,6 +152,11 @@ typedef struct {
     bool window_open;
     bool window_pending; /* due, and to be advertised in the next frame we send */
     uint32_t stat_rx, stat_requests, stat_reports, stat_commands, stat_unknown, stat_windows;
+    /* Commands this node owns and declined on a nameable condition -- apart from both of the
+       above, for the reason iotdata_node_control.h gives. `refusal` is the last one's words, for
+       a console standing right here; it points at a literal and is never freed. */
+    uint32_t stat_refused;
+    const char *refusal;
     /* The config this node runs against, so that every iotdata_node_* call takes the NODE and nothing else.
        NOT persistent state, even though it lives in a struct that is: it points at function
        pointers and at the running state, so iotdata_node_attach() re-sets it on every boot and it is
@@ -641,14 +647,28 @@ static inline void iotdata_node_process_control(iotdata_node_t *const n, const u
             } else if (subject == IOTDATA_NODE_SUBJECT_NODE && action == IOTDATA_NODE_ACTION_NODE_ROLLBACK) {
                 if (iotdata_node_firmware_rollback_possible())
                     (void)iotdata_node_firmware_rollback(); /* does not return when it works */
-                n->stat_unknown++;                          /* so reaching here means it did not */
+                /* REACHING HERE MEANS IT DID NOT, AND THAT IS A REFUSAL RATHER THAN AN UNKNOWN.
+                   Every node built on this runtime services the verb; what is missing is a slot to
+                   go back to, and saying "not implemented here" about a node that implements it
+                   perfectly well sends an operator to look for a build flag. */
+                n->stat_refused++;
+                n->refusal = "no fallback image to roll back to";
             } else {
                 /* not ours: offer it to the app before giving up. A mesh command reaching a node with
                 no mesh lands here and is correctly counted unknown. */
-                if (cfg->control != NULL && cfg->control(n->station, subject, action, args, arglen))
+                const char *reason = NULL;
+                switch ((cfg->control != NULL) ? cfg->control(n->station, subject, action, args, arglen, &reason) : IOTDATA_NODE_CONTROL_RESULT_UNKNOWN) {
+                case IOTDATA_NODE_CONTROL_RESULT_DONE:
                     n->stat_commands++;
-                else
+                    break;
+                case IOTDATA_NODE_CONTROL_RESULT_REFUSED:
+                    n->stat_refused++;
+                    n->refusal = (reason != NULL) ? reason : "refused, without saying why";
+                    break;
+                default:
                     n->stat_unknown++; /* skipped, not fatal: an older node meeting a newer manager */
+                    break;
+                }
             }
         } else
             n->stat_unknown++; /* a proprietary key, or one from a newer manager: skipped, not fatal */

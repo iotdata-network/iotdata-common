@@ -199,61 +199,85 @@ static inline void _iotdata_node_content_control_inspect(iotdata_node_content_t 
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline bool iotdata_node_content_control(const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
+/* THE SAY AND THE RESULT ARE TWO AUDIENCES. The SAY lines are for whoever is at the console or on
+   the gateway's MQTT channel: they can be long and can name an id. The result is for the counters
+   and the one-line verdict -- and that is why the refusals below are REFUSED and not DONE. With a
+   bool, "updates are switched off" counted as a serviced command, so the console printed the real
+   reason and then "ok" underneath it. Both lines now agree. */
+static inline iotdata_node_control_result_t iotdata_node_content_control(const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen, const char **const reason) {
     iotdata_node_content_t *const c = _iotdata_node_content_control_store;
     if (c == NULL || subject != IOTDATA_NODE_TLV_CONTENT)
-        return false;
+        return IOTDATA_NODE_CONTROL_RESULT_UNKNOWN;
+#define _REFUSE(why) \
+    do { \
+        if (reason != NULL) \
+            *reason = (why); \
+        return IOTDATA_NODE_CONTROL_RESULT_REFUSED; \
+    } while (0)
     uint32_t id = 0u;
     switch (action) {
     case IOTDATA_NODE_ACTION_CONTENT_LIST:
         _iotdata_node_content_control_list(c);
-        return true;
+        return IOTDATA_NODE_CONTROL_RESULT_DONE;
     case IOTDATA_NODE_ACTION_CONTENT_DELETE:
-        if (_iotdata_node_content_control_id(args, arglen, &id))
-            _iotdata_node_content_control_delete(c, id);
-        else
+        if (!_iotdata_node_content_control_id(args, arglen, &id)) {
             _IOTDATA_NODE_CONTENT_CONTROL_SAY("content: no id given");
-        return true;
+            _REFUSE("no id given");
+        }
+        _iotdata_node_content_control_delete(c, id);
+        return IOTDATA_NODE_CONTROL_RESULT_DONE;
     case IOTDATA_NODE_ACTION_CONTENT_INSPECT:
-        if (_iotdata_node_content_control_id(args, arglen, &id))
-            _iotdata_node_content_control_inspect(c, id);
-        else
+        if (!_iotdata_node_content_control_id(args, arglen, &id)) {
             _IOTDATA_NODE_CONTENT_CONTROL_SAY("content: no id given");
-        return true;
+            _REFUSE("no id given");
+        }
+        _iotdata_node_content_control_inspect(c, id);
+        return IOTDATA_NODE_CONTROL_RESULT_DONE;
     case IOTDATA_NODE_ACTION_CONTENT_VALIDATE:
-        if (_iotdata_node_content_control_id(args, arglen, &id))
-            _iotdata_node_content_control_validate(c, id);
-        else
+        if (!_iotdata_node_content_control_id(args, arglen, &id)) {
             _IOTDATA_NODE_CONTENT_CONTROL_SAY("content: no id given");
-        return true;
+            _REFUSE("no id given");
+        }
+        _iotdata_node_content_control_validate(c, id);
+        return IOTDATA_NODE_CONTROL_RESULT_DONE;
     /* THE CONSUMER IS REACHED THROUGH ITS OWN MODULE POINTER, which its begin() sets, rather than
        being registered here a second time. A build with no firmware consumer answers honestly and
        the words still resolve -- which is better than a verb that exists on some nodes and is
-       "unknown command" on others. */
+       "unknown command" on others. REFUSED is how that honesty reaches the wire: the verb IS
+       implemented here, there is simply nothing behind it on this build. */
     case IOTDATA_NODE_ACTION_CONTENT_OTA_STATUS:
-        if (_iotdata_node_ota_apply == NULL)
+        if (_iotdata_node_ota_apply == NULL) {
             _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: no consumer -- this build does not apply updates");
-        else
-            iotdata_node_content_ota_apply_report(_iotdata_node_ota_apply, _iotdata_node_content_control_line, sizeof(_iotdata_node_content_control_line), _iotdata_node_content_say);
-        return true;
+            _REFUSE("this build does not apply updates");
+        }
+        iotdata_node_content_ota_apply_report(_iotdata_node_ota_apply, _iotdata_node_content_control_line, sizeof(_iotdata_node_content_control_line), _iotdata_node_content_say);
+        return IOTDATA_NODE_CONTROL_RESULT_DONE;
     case IOTDATA_NODE_ACTION_CONTENT_OTA_APPLY:
-        if (_iotdata_node_ota_apply == NULL)
+        if (_iotdata_node_ota_apply == NULL) {
             _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: no consumer -- this build does not apply updates");
-        else if (!_iotdata_node_content_control_id(args, arglen, &id))
+            _REFUSE("this build does not apply updates");
+        }
+        if (!_iotdata_node_content_control_id(args, arglen, &id)) {
             _IOTDATA_NODE_CONTENT_CONTROL_SAY("content: no id given");
-        else if (!iotdata_node_content_ota_apply_retry(_iotdata_node_ota_apply, id))
-            _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: %06" PRIx32 " not armed -- %s", id, iotdata_node_content_ota_apply_busy(_iotdata_node_ota_apply) ? "an update is already running" : "updates are switched off");
-        else
-            _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: %06" PRIx32 " armed -- it will be taken on the next offer", id);
-        return true;
+            _REFUSE("no id given");
+        }
+        if (!iotdata_node_content_ota_apply_retry(_iotdata_node_ota_apply, id)) {
+            const bool busy = iotdata_node_content_ota_apply_busy(_iotdata_node_ota_apply);
+            _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: %06" PRIx32 " not armed -- %s", id, busy ? "an update is already running" : "updates are switched off");
+            _REFUSE(busy ? "an update is already running" : "updates are switched off");
+        }
+        _IOTDATA_NODE_CONTENT_CONTROL_SAY("firmware: %06" PRIx32 " armed -- it will be taken on the next offer", id);
+        return IOTDATA_NODE_CONTROL_RESULT_DONE;
     default:
         break;
     }
-    return false;
+#undef _REFUSE
+    return IOTDATA_NODE_CONTROL_RESULT_UNKNOWN;
 }
 
-static inline bool iotdata_node_content_node_control(__attribute__((unused)) const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
-    return iotdata_node_content_control(subject, action, args, arglen);
+static inline iotdata_node_control_result_t iotdata_node_content_node_control(__attribute__((unused)) const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen,
+                                                                              const char **const reason) {
+    return iotdata_node_content_control(subject, action, args, arglen, reason);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

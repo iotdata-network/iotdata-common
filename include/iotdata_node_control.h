@@ -92,6 +92,64 @@ typedef struct {
 } iotdata_node_control_args_t;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+// WHAT HAPPENED TO IT
+//
+// THREE ANSWERS, NOT TWO. An app's control handler used to return a bool, and a bool cannot tell
+// "I have never heard of this" apart from "I know exactly what you mean and I am not doing it".
+// Both came back false, were counted unknown, and the console said "not implemented here" -- so a
+// `node rollback` on a node with no fallback image read as though the firmware had been built
+// without the feature, which is the one reading that sends an operator off to check build flags.
+//
+// The other direction was worse, because it was silent. A handler that wanted the refusal to count
+// as SERVICED returned true instead -- the relay's cart command does, with CART_ENABLE off -- and
+// then the console said "ok" for a command that did nothing at all. Two outcomes, three meanings,
+// and every site picking which lie it preferred.
+//
+// REFUSED IS A SUCCESSFUL DELIVERY. It says the node has the verb, understood the request, and
+// declined on a condition it can name: there is no fallback slot, the feature is configured off,
+// the store is not mounted. That is an answer to the operator and not a fault, so it is counted
+// apart from both -- a run of refusals is a node that needs its configuration looked at, a run of
+// unknowns is a manager talking to the wrong kind of node, and the two want different fixing.
+//
+// THE REASON IS LOCAL, AND SO, FOR NOW, IS THE WHOLE ANSWER. A handler may set `*reason` to a
+// short literal; it reaches the console in front of the node and the log line, and nothing else.
+// A command arriving over the air is NOT acknowledged at all -- there is no reply TLV for one, and
+// these counters are read by the console and by nothing that leaves the node. So a manager that
+// pushes a command to a remote node still cannot tell serviced from refused from unknown, and this
+// change does not pretend to fix that: it makes the three distinguishable AT the node, and leaves
+// the counters true for whoever surfaces them. See the control-acknowledgement item in
+// iotdata-specs/NOTES_ISSUES.md, which is a protocol decision and not a patch.
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+typedef enum {
+    /* 0, so a zeroed result and an older handler's `false` both still mean unknown */
+    IOTDATA_NODE_CONTROL_RESULT_UNKNOWN = 0,
+    IOTDATA_NODE_CONTROL_RESULT_DONE = 1,    /* 1, so an older handler's `true` still means done */
+    IOTDATA_NODE_CONTROL_RESULT_REFUSED = 2, /* mine, understood, and deliberately not done */
+} iotdata_node_control_result_t;
+
+/* For a module whose own API still answers the narrower question "was it mine?" with a bool -- the
+   recorder's does, and has no refusal to express, because a build with no recorder registers no
+   handler at all and is honestly unknown. Spelled out rather than left to an implicit conversion,
+   which -Wconversion is right to be suspicious of. */
+static inline iotdata_node_control_result_t iotdata_node_control_result_of(const bool claimed) {
+    return claimed ? IOTDATA_NODE_CONTROL_RESULT_DONE : IOTDATA_NODE_CONTROL_RESULT_UNKNOWN;
+}
+
+/* For a console, a log line, or an MQTT answer: the outcome in the words an operator wants, which
+   is why "refused" is not spelled "failed". Nothing failed. */
+static inline const char *iotdata_node_control_result_name(const iotdata_node_control_result_t r) {
+    switch (r) {
+    case IOTDATA_NODE_CONTROL_RESULT_DONE:
+        return "ok";
+    case IOTDATA_NODE_CONTROL_RESULT_REFUSED:
+        return "refused";
+    default:
+        return "not implemented here";
+    }
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // THE VOCABULARY
 // -----------------------------------------------------------------------------------------------------------------------------------------
 

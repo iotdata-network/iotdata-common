@@ -674,8 +674,12 @@ static inline bool iotdata_node_diagnostics_control(const uint8_t subject, const
     return false;
 }
 
-static inline bool iotdata_node_diagnostics_node_control(__attribute__((unused)) const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen) {
-    return iotdata_node_diagnostics_control(subject, action, args, arglen);
+/* THE RECORDER HAS NO REFUSALS, so this adapter only widens a bool. A build with the recorder
+   compiled out registers no handler at all and advertises no keys, which makes "unknown" the
+   truthful answer there rather than a shrug -- see WHAT HAPPENED TO IT in iotdata_node_control.h. */
+static inline iotdata_node_control_result_t iotdata_node_diagnostics_node_control(__attribute__((unused)) const uint16_t station, const uint8_t subject, const uint8_t action, const uint8_t *const args, const uint8_t arglen,
+                                                                                  __attribute__((unused)) const char **const reason) {
+    return iotdata_node_control_result_of(iotdata_node_diagnostics_control(subject, action, args, arglen));
 }
 
 #else /* !IOTDATA_NODE_DIAGNOSTICS -- compiled out, but every call site still type-checks */
@@ -750,9 +754,9 @@ static inline bool iotdata_node_diagnostics_control(__attribute__((unused)) cons
                                                     __attribute__((unused)) const uint8_t arglen) {
     return false;
 }
-static inline bool iotdata_node_diagnostics_node_control(__attribute__((unused)) const uint16_t station, __attribute__((unused)) const uint8_t subject, __attribute__((unused)) const uint8_t action,
-                                                         __attribute__((unused)) const uint8_t *const args, __attribute__((unused)) const uint8_t arglen) {
-    return false;
+static inline iotdata_node_control_result_t iotdata_node_diagnostics_node_control(__attribute__((unused)) const uint16_t station, __attribute__((unused)) const uint8_t subject, __attribute__((unused)) const uint8_t action,
+                                                                                  __attribute__((unused)) const uint8_t *const args, __attribute__((unused)) const uint8_t arglen, __attribute__((unused)) const char **const reason) {
+    return IOTDATA_NODE_CONTROL_RESULT_UNKNOWN;
 }
 
 #endif /* IOTDATA_NODE_DIAGNOSTICS */
