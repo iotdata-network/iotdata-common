@@ -63,36 +63,6 @@
 // Converting silently at any of those seams would be one more place to be wrong.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_MESH_ENABLE                    0x040
-#define IOTDATA_NODE_CFGID_MESH_DEBUG                     0x041
-#define IOTDATA_NODE_CFGID_MESH_PEER_TTL_ROUNDS           0x042
-#define IOTDATA_NODE_CFGID_MESH_TTL_INIT                  0x043
-#define IOTDATA_NODE_CFGID_MESH_PARENT_MISS_ROUNDS        0x050
-#define IOTDATA_NODE_CFGID_MESH_HYSTERESIS_DB             0x051
-#define IOTDATA_NODE_CFGID_MESH_REBROADCAST_JITTER_MIN_MS 0x052
-#define IOTDATA_NODE_CFGID_MESH_REBROADCAST_JITTER_MAX_MS 0x053
-#define IOTDATA_NODE_CFGID_MESH_BEACON_EXPIRY_MS          0x054
-#define IOTDATA_NODE_CFGID_MESH_RERR_EXPIRY_MS            0x055
-#define IOTDATA_NODE_CFGID_MESH_FORWARD_SEEN_TTL_MS       0x056
-#define IOTDATA_NODE_CFGID_MESH_FORWARD_SUPPRESS          0x057
-#define IOTDATA_NODE_CFGID_MESH_FORWARD_BACKOFF_MIN_MS    0x058
-#define IOTDATA_NODE_CFGID_MESH_FORWARD_BACKOFF_MAX_MS    0x059
-#define IOTDATA_NODE_CFGID_MESH_FORWARD_EXPIRY_MS         0x05A
-#define IOTDATA_NODE_CFGID_MESH_REPORT_PEERS_MS           0x05B
-#define IOTDATA_NODE_CFGID_MESH_BEACON_INTERVAL_S         0x060
-
-#define IOTDATA_NODE_CFGID_MESH_ACK_MAX_RETRIES           0x070
-#define IOTDATA_NODE_CFGID_MESH_ACK_TIMEOUT_MS            0x071
-#define IOTDATA_NODE_CFGID_MESH_ACK_EVICT                 0x072
-#define IOTDATA_NODE_CFGID_MESH_ACK_STATION_MAX           0x073
-#define IOTDATA_NODE_CFGID_MESH_ACK_BACKOFF               0x074
-#define IOTDATA_NODE_CFGID_MESH_ACK_BACKOFF_FACTOR_PCT    0x075
-#define IOTDATA_NODE_CFGID_MESH_ACK_BACKOFF_MAX_MS        0x076
-#define IOTDATA_NODE_CFGID_MESH_ACK_REQUEUE_MS            0x077
-#define IOTDATA_NODE_CFGID_MESH_ACK_PARK_MS               0x078
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_NODE_CONFIG_MESH_ENABLE
 #define IOTDATA_NODE_CONFIG_MESH_ENABLE 1
 #endif
@@ -196,6 +166,34 @@ static inline bool iotdata_node_config_mesh_changed(__attribute__((unused)) cons
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+#define IOTDATA_NODE_CFGID_MESH_ENABLE                    0x040
+#define IOTDATA_NODE_CFGID_MESH_DEBUG                     0x041
+#define IOTDATA_NODE_CFGID_MESH_PEER_TTL_ROUNDS           0x042
+#define IOTDATA_NODE_CFGID_MESH_TTL_INIT                  0x043
+#define IOTDATA_NODE_CFGID_MESH_PARENT_MISS_ROUNDS        0x050
+#define IOTDATA_NODE_CFGID_MESH_HYSTERESIS_DB             0x051
+#define IOTDATA_NODE_CFGID_MESH_REBROADCAST_JITTER_MIN_MS 0x052
+#define IOTDATA_NODE_CFGID_MESH_REBROADCAST_JITTER_MAX_MS 0x053
+#define IOTDATA_NODE_CFGID_MESH_BEACON_EXPIRY_MS          0x054
+#define IOTDATA_NODE_CFGID_MESH_RERR_EXPIRY_MS            0x055
+#define IOTDATA_NODE_CFGID_MESH_FORWARD_SEEN_TTL_MS       0x056
+#define IOTDATA_NODE_CFGID_MESH_FORWARD_SUPPRESS          0x057
+#define IOTDATA_NODE_CFGID_MESH_FORWARD_BACKOFF_MIN_MS    0x058
+#define IOTDATA_NODE_CFGID_MESH_FORWARD_BACKOFF_MAX_MS    0x059
+#define IOTDATA_NODE_CFGID_MESH_FORWARD_EXPIRY_MS         0x05A
+#define IOTDATA_NODE_CFGID_MESH_REPORT_PEERS_MS           0x05B
+#define IOTDATA_NODE_CFGID_MESH_BEACON_INTERVAL_S         0x060
+
+#define IOTDATA_NODE_CFGID_MESH_ACK_MAX_RETRIES           0x070
+#define IOTDATA_NODE_CFGID_MESH_ACK_TIMEOUT_MS            0x071
+#define IOTDATA_NODE_CFGID_MESH_ACK_EVICT                 0x072
+#define IOTDATA_NODE_CFGID_MESH_ACK_STATION_MAX           0x073
+#define IOTDATA_NODE_CFGID_MESH_ACK_BACKOFF               0x074
+#define IOTDATA_NODE_CFGID_MESH_ACK_BACKOFF_FACTOR_PCT    0x075
+#define IOTDATA_NODE_CFGID_MESH_ACK_BACKOFF_MAX_MS        0x076
+#define IOTDATA_NODE_CFGID_MESH_ACK_REQUEUE_MS            0x077
+#define IOTDATA_NODE_CFGID_MESH_ACK_PARK_MS               0x078
+
 /* 0x040-0x04F -- any mesh participant */
 #define IOTDATA_NODE_CONFIG_ENTRIES_MESH(X) \
     X(MESH_ENABLE, IOTDATA_NODE_CFGID_MESH_ENABLE, BOOL, 0, 1, IOTDATA_NODE_CONFIG_MESH_ENABLE, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_MESH_NOTIFY, "take part in the mesh at all") \
@@ -285,7 +283,6 @@ static bool iotdata_node_config_mesh_ack_backoff_max_ok(__attribute__((unused)) 
     iotdata_node_config_value_t base;
     return iotdata_node_config_update_peek(u, IOTDATA_NODE_CFGID_MESH_ACK_TIMEOUT_MS, &base) && v->u >= base.u;
 }
-
 static bool iotdata_node_config_mesh_jitter_min_ok(__attribute__((unused)) const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v, const struct iotdata_node_config_update *const u) {
     iotdata_node_config_value_t mx;
     return iotdata_node_config_update_peek(u, IOTDATA_NODE_CFGID_MESH_REBROADCAST_JITTER_MAX_MS, &mx) && v->u <= mx.u;

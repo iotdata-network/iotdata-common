@@ -40,16 +40,6 @@
 // with a disk, and it needs to be expressible without a second flag beside each number.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_BLACKBOX_ENABLED          0x0A0
-#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_RECORDS      0x0A1
-#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_SECONDS      0x0A2
-#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_BYTES        0x0A3
-
-#define IOTDATA_NODE_CFGID_BLACKBOX_FILE_DIRECTORY   0x0B0
-#define IOTDATA_NODE_CFGID_BLACKBOX_FILE_GENERATIONS 0x0B1
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_NODE_CONFIG_BBOX_ENABLED
 #define IOTDATA_NODE_CONFIG_BBOX_ENABLED false
 #endif
@@ -84,6 +74,13 @@ static inline bool iotdata_node_config_bbox_changed(__attribute__((unused)) cons
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define IOTDATA_NODE_CFGID_BLACKBOX_ENABLED          0x0A0
+#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_RECORDS      0x0A1
+#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_SECONDS      0x0A2
+#define IOTDATA_NODE_CFGID_BLACKBOX_MAX_BYTES        0x0A3
+#define IOTDATA_NODE_CFGID_BLACKBOX_FILE_DIRECTORY   0x0B0
+#define IOTDATA_NODE_CFGID_BLACKBOX_FILE_GENERATIONS 0x0B1
 
 /* 0x0A0-0x0AF -- every recorder, whatever backend it writes to */
 #define IOTDATA_NODE_CONFIG_ENTRIES_BBOX(X) \

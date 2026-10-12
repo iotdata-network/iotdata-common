@@ -146,8 +146,8 @@ typedef struct {
           dropout and the sag under a 22dBm transmit arrive long before that. 0% should mean "about
           to go quiet", which is what a gauge is for.
      KNEE and MID are the curve's shape and are chemistry, not installation. */
-#ifndef BATTERY_LIION_MV_MIN
-#define BATTERY_LIION_MV_MIN 3000
+#ifndef BATTERY_LIION_CHARGE_MV_MIN
+#define BATTERY_LIION_CHARGE_MV_MIN 3000
 #endif
 #ifndef BATTERY_LIION_MV_KNEE
 #define BATTERY_LIION_MV_KNEE 3500
@@ -155,36 +155,36 @@ typedef struct {
 #ifndef BATTERY_LIION_MV_MID
 #define BATTERY_LIION_MV_MID 3700
 #endif
-#ifndef BATTERY_LIION_MV_MAX
-#define BATTERY_LIION_MV_MAX 4200
+#ifndef BATTERY_LIION_CHARGE_MV_MAX
+#define BATTERY_LIION_CHARGE_MV_MAX 4200
 #endif
-#ifndef BATTERY_LIFEPO4_MV_MIN
-#define BATTERY_LIFEPO4_MV_MIN 2500
+#ifndef BATTERY_LIFEPO4_CHARGE_MV_MIN
+#define BATTERY_LIFEPO4_CHARGE_MV_MIN 2500
 #endif
-#ifndef BATTERY_LIFEPO4_MV_MAX
-#define BATTERY_LIFEPO4_MV_MAX 3650
+#ifndef BATTERY_LIFEPO4_CHARGE_MV_MAX
+#define BATTERY_LIFEPO4_CHARGE_MV_MAX 3650
 #endif
 
 /* Adverse temperature widens the window rather than reporting a fault: a cold cell sags under load
    and a hot one can sit above its nominal ceiling, and neither is the pack being out of spec. */
-#define BATTERY_COLD_MIN_DROP_MV   300
-#define BATTERY_HOT_MAX_RISE_MV    150
+#define BATTERY_COLD_MIN_DROP_MV      300
+#define BATTERY_HOT_MAX_RISE_MV       150
 
-#define BATTERY_PCT_CRITICAL       10
-#define BATTERY_PCT_LOW            20 /* at or below this the gateway should hear about it */
-#define BATTERY_PCT_WARNING        35
-#define BATTERY_PCT_GOOD           80
+#define BATTERY_PCT_CRITICAL          10
+#define BATTERY_PCT_LOW               20 /* at or below this the gateway should hear about it */
+#define BATTERY_PCT_WARNING           35
+#define BATTERY_PCT_GOOD              80
 
 /* Self-test limits, at the PIN (the seam hands back millivolts, not counts). Off should be within a
    few mV of ground after 7 tau; on is half a plausible pack, so 1500-2100mV. */
-#define BATTERY_PROBE_OFF_MAX_MV   150
-#define BATTERY_PROBE_DELTA_MIN_MV 300
-#define BATTERY_PROBE_OFF_DIFF_MV  100  /* the two off readings disagreeing means an unstable ADC */
-#define BATTERY_PROBE_MV_MIN       2000 /* at the PACK: below this there is no usable cell */
-#define BATTERY_PROBE_MV_MAX       4500
+#define BATTERY_PROBE_OFF_MAX_MV      150
+#define BATTERY_PROBE_DELTA_MIN_MV    300
+#define BATTERY_PROBE_OFF_DIFF_MV     100  /* the two off readings disagreeing means an unstable ADC */
+#define BATTERY_PROBE_CHARGE_MV_MIN   2000 /* at the PACK: below this there is no usable cell */
+#define BATTERY_PROBE_CHARGE_MV_MAX   4500
 
-#define BATTERY_TEST_JITTER_MAX_MV 200
-#define BATTERY_TEST_CYCLE_MS      1000
+#define BATTERY_TEST_JITTER_MAX_MV    200
+#define BATTERY_TEST_CYCLE_MS         1000
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 //
@@ -207,22 +207,22 @@ typedef struct {
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define BATTERY_DEFAULT_MV_MIN     ((BATTERY_TYPE) == BATTERY_TYPE_LIFEPO4 ? BATTERY_LIFEPO4_MV_MIN : BATTERY_LIION_MV_MIN)
-#define BATTERY_DEFAULT_MV_MAX     ((BATTERY_TYPE) == BATTERY_TYPE_LIFEPO4 ? BATTERY_LIFEPO4_MV_MAX : BATTERY_LIION_MV_MAX)
+#define BATTERY_DEFAULT_CHARGE_MV_MIN ((BATTERY_TYPE) == BATTERY_TYPE_LIFEPO4 ? BATTERY_LIFEPO4_CHARGE_MV_MIN : BATTERY_LIION_CHARGE_MV_MIN)
+#define BATTERY_DEFAULT_CHARGE_MV_MAX ((BATTERY_TYPE) == BATTERY_TYPE_LIFEPO4 ? BATTERY_LIFEPO4_CHARGE_MV_MAX : BATTERY_LIION_CHARGE_MV_MAX)
 
 typedef struct {
     battery_type_t type;
     uint16_t capacity_mah; /* the PACK's; 0 = not stated. Inventory only -- never feeds the gauge. */
-    int16_t mv_min;        /* where THIS node stops being useful, not the cell's datasheet cutoff */
-    int16_t mv_max;        /* what THIS charger leaves a full cell RESTING at, not its cutoff */
+    int16_t charge_mv_min; /* where THIS node stops being useful, not the cell's datasheet cutoff */
+    int16_t charge_mv_max; /* what THIS charger leaves a full cell RESTING at, not its cutoff */
     int16_t offset_mv;     /* calibration trim against a meter */
 } battery_profile_t;
 
 static battery_profile_t _battery_profile = {
     .type = BATTERY_TYPE,
     .capacity_mah = BATTERY_CAPACITY_MAH,
-    .mv_min = BATTERY_DEFAULT_MV_MIN,
-    .mv_max = BATTERY_DEFAULT_MV_MAX,
+    .charge_mv_min = BATTERY_DEFAULT_CHARGE_MV_MIN,
+    .charge_mv_max = BATTERY_DEFAULT_CHARGE_MV_MAX,
     .offset_mv = BATTERY_OFFSET_MV,
 };
 
@@ -231,7 +231,7 @@ static inline const battery_profile_t *battery_profile(void) {
 }
 
 static inline bool battery_profile_set(const battery_profile_t *const p) {
-    if (p == NULL || p->mv_min >= p->mv_max)
+    if (p == NULL || p->charge_mv_min >= p->charge_mv_max)
         return false;
     _battery_profile = *p;
     return true;
@@ -294,8 +294,8 @@ static inline const char *battery_status_str(const battery_status_t status) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void battery_range_mv(const battery_profile_t *const p, const bool cold, const bool hot, int *const min_mv, int *const max_mv) {
-    *min_mv = p->mv_min;
-    *max_mv = p->mv_max;
+    *min_mv = p->charge_mv_min;
+    *max_mv = p->charge_mv_max;
     if (cold)
         *min_mv -= BATTERY_COLD_MIN_DROP_MV;
     if (hot)
@@ -474,7 +474,7 @@ static inline battery_status_t battery_status(int *const out_pack_mv) {
             return BATTERY_STATUS_ADC_FAULT; /* wandering AND not following: nothing drives it */
         /* It ignores the enable. A stuck-ON switch would at least leave it at half a plausible
            pack; resting anywhere else means the pin is not looking at the divider at all. */
-        if (off_hi > (BATTERY_PROBE_MV_MIN / 2) && off_hi < (BATTERY_PROBE_MV_MAX / 2))
+        if (off_hi > (BATTERY_PROBE_CHARGE_MV_MIN / 2) && off_hi < (BATTERY_PROBE_CHARGE_MV_MAX / 2))
             return BATTERY_STATUS_SWITCH_STUCK;
         return BATTERY_STATUS_NO_DIVIDER;
     }
@@ -482,9 +482,9 @@ static inline battery_status_t battery_status(int *const out_pack_mv) {
         return BATTERY_STATUS_ADC_FAULT;
     if (off_hi > BATTERY_PROBE_OFF_MAX_MV)
         return BATTERY_STATUS_SWITCH_STUCK; /* it moves, but it never comes back to ground */
-    if (pack_mv < BATTERY_PROBE_MV_MIN)
+    if (pack_mv < BATTERY_PROBE_CHARGE_MV_MIN)
         return BATTERY_STATUS_NO_BATTERY;
-    if (pack_mv > BATTERY_PROBE_MV_MAX)
+    if (pack_mv > BATTERY_PROBE_CHARGE_MV_MAX)
         return BATTERY_STATUS_DIVIDER_FAULT;
 
     return BATTERY_STATUS_OK;
@@ -631,7 +631,7 @@ static inline bool battery_test(const uint32_t duration_ms) {
         unsigned n = 0, errors = 0;
         while ((hw_time_ms() - started_ms) < duration_ms) {
             battery_reading_t reading = { 0 };
-            if (!battery_read(&reading, &previous_mv) || reading.voltage_mv < BATTERY_PROBE_MV_MIN || reading.voltage_mv > BATTERY_PROBE_MV_MAX)
+            if (!battery_read(&reading, &previous_mv) || reading.voltage_mv < BATTERY_PROBE_CHARGE_MV_MIN || reading.voltage_mv > BATTERY_PROBE_CHARGE_MV_MAX)
                 errors++;
             n++;
             hw_delay_ms_yieldable(BATTERY_TEST_CYCLE_MS);

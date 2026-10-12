@@ -25,20 +25,6 @@
 // Requires d_interface_e22900t22.h, for lora_config_t and the defaults below.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_LORA_ADDRESS     0x030
-#define IOTDATA_NODE_CFGID_LORA_NETWORK     0x031
-#define IOTDATA_NODE_CFGID_LORA_CHANNEL     0x032
-#define IOTDATA_NODE_CFGID_LORA_TX_POWER    0x033
-#define IOTDATA_NODE_CFGID_LORA_AIR_RATE    0x034
-#define IOTDATA_NODE_CFGID_LORA_PACKET_SIZE 0x035
-#define IOTDATA_NODE_CFGID_LORA_LBT         0x036
-#define IOTDATA_NODE_CFGID_LORA_CRYPT       0x037
-#define IOTDATA_NODE_CFGID_LORA_DEBUG       0x038
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-// XXX FIX ME
-
 #ifndef IOTDATA_NODE_CONFIG_LORA_MODULE
 #define IOTDATA_NODE_CONFIG_LORA_MODULE LORA_MODULE_DIP
 #endif
@@ -51,11 +37,11 @@
 #ifndef IOTDATA_NODE_CONFIG_LORA_CHANNEL
 #define IOTDATA_NODE_CONFIG_LORA_CHANNEL LORA_CHANNEL_DEFAULT
 #endif
-#ifndef IOTDATA_NODE_CONFIG_LORA_TX_POWER
-#define IOTDATA_NODE_CONFIG_LORA_TX_POWER LORA_TRANSMIT_POWER_DEFAULT
+#ifndef IOTDATA_NODE_CONFIG_LORA_TRANSMIT_POWER
+#define IOTDATA_NODE_CONFIG_LORA_TRANSMIT_POWER LORA_TRANSMIT_POWER_DEFAULT
 #endif
-#ifndef IOTDATA_NODE_CONFIG_LORA_AIR_RATE
-#define IOTDATA_NODE_CONFIG_LORA_AIR_RATE LORA_AIR_DATA_RATE_DEFAULT
+#ifndef IOTDATA_NODE_CONFIG_LORA_PACKET_RATE
+#define IOTDATA_NODE_CONFIG_LORA_PACKET_RATE LORA_PACKET_RATE_DEFAULT
 #endif
 #ifndef IOTDATA_NODE_CONFIG_LORA_PACKET_SIZE
 #define IOTDATA_NODE_CONFIG_LORA_PACKET_SIZE LORA_PACKET_SIZE_DEFAULT
@@ -77,8 +63,8 @@ static inline bool iotdata_node_config_lora_rate_known(const uint64_t bps) {
     return bps == 300u || bps == 1200u || bps == 2400u || bps == 4800u || bps == 9600u || bps == 19200u || bps == 38400u || bps == 62500u;
 }
 
-static inline bool iotdata_node_config_lora_air_rate_ok(__attribute__((unused)) const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v,
-                                                        __attribute__((unused)) const struct iotdata_node_config_update *const u) {
+static inline bool iotdata_node_config_lora_packet_rate_ok(__attribute__((unused)) const iotdata_node_config_row_t *const row, const iotdata_node_config_value_t *const v,
+                                                           __attribute__((unused)) const struct iotdata_node_config_update *const u) {
     return iotdata_node_config_lora_rate_known(v->u);
 }
 
@@ -105,12 +91,23 @@ static inline bool iotdata_node_config_lora_changed(__attribute__((unused)) cons
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+#define IOTDATA_NODE_CFGID_LORA_ADDRESS        0x030
+#define IOTDATA_NODE_CFGID_LORA_NETWORK        0x031
+#define IOTDATA_NODE_CFGID_LORA_CHANNEL        0x032
+#define IOTDATA_NODE_CFGID_LORA_TRANSMIT_POWER 0x033
+#define IOTDATA_NODE_CFGID_LORA_PACKET_RATE    0x034
+#define IOTDATA_NODE_CFGID_LORA_PACKET_SIZE    0x035
+#define IOTDATA_NODE_CFGID_LORA_LBT            0x036
+#define IOTDATA_NODE_CFGID_LORA_CRYPT          0x037
+#define IOTDATA_NODE_CFGID_LORA_DEBUG          0x038
+
 #define IOTDATA_NODE_CONFIG_ENTRIES_LORA(X) \
     X(LORA_ADDRESS, IOTDATA_NODE_CFGID_LORA_ADDRESS, U16, 0, 0xFFFF, IOTDATA_NODE_CONFIG_LORA_ADDRESS, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_LORA_NOTIFY, "E22 address") \
     X(LORA_NETWORK, IOTDATA_NODE_CFGID_LORA_NETWORK, U8, 0, 0xFF, IOTDATA_NODE_CONFIG_LORA_NETWORK, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_LORA_NOTIFY, "E22 network, to separate co-located networks") \
     X(LORA_CHANNEL, IOTDATA_NODE_CFGID_LORA_CHANNEL, U8, 0, 83, IOTDATA_NODE_CONFIG_LORA_CHANNEL, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_LORA_NOTIFY, "lora radio channel") \
-    X(LORA_TX_POWER, IOTDATA_NODE_CFGID_LORA_TX_POWER, U8, 10, 22, IOTDATA_NODE_CONFIG_LORA_TX_POWER, IOTDATA_NODE_CONFIG_FLAG_REBOOT, iotdata_node_config_lora_tx_power_ok, IOTDATA_NODE_CONFIG_LORA_NOTIFY, "transmit power in dBm") \
-    X(LORA_AIR_RATE, IOTDATA_NODE_CFGID_LORA_AIR_RATE, U16, 300, 62500, IOTDATA_NODE_CONFIG_LORA_AIR_RATE, IOTDATA_NODE_CONFIG_FLAG_REBOOT, iotdata_node_config_lora_air_rate_ok, IOTDATA_NODE_CONFIG_LORA_NOTIFY, \
+    X(LORA_TRANSMIT_POWER, IOTDATA_NODE_CFGID_LORA_TRANSMIT_POWER, U8, 10, 22, IOTDATA_NODE_CONFIG_LORA_TRANSMIT_POWER, IOTDATA_NODE_CONFIG_FLAG_REBOOT, iotdata_node_config_lora_tx_power_ok, IOTDATA_NODE_CONFIG_LORA_NOTIFY, \
+      "transmit power in dBm") \
+    X(LORA_PACKET_RATE, IOTDATA_NODE_CFGID_LORA_PACKET_RATE, U16, 300, 62500, IOTDATA_NODE_CONFIG_LORA_PACKET_RATE, IOTDATA_NODE_CONFIG_FLAG_REBOOT, iotdata_node_config_lora_packet_rate_ok, IOTDATA_NODE_CONFIG_LORA_NOTIFY, \
       "on-air bit rate, lower reaches further and takes longer") \
     X(LORA_PACKET_SIZE, IOTDATA_NODE_CFGID_LORA_PACKET_SIZE, U8, 32, 240, IOTDATA_NODE_CONFIG_LORA_PACKET_SIZE, IOTDATA_NODE_CONFIG_FLAG_REBOOT, iotdata_node_config_lora_packet_size_ok, IOTDATA_NODE_CONFIG_LORA_NOTIFY, \
       "sub-packet size in bytes") \
@@ -132,10 +129,6 @@ static inline bool iotdata_node_config_lora_changed(__attribute__((unused)) cons
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* APPLY NEEDS THE DRIVER, the validators do not. Separating them lets a host compose this block --
-   id and bounds checks, which is what iotdata-common/tests/test_node_config_blocks.c does -- without
-   dragging in an ESP-IDF header that cannot compile there. Define IOTDATA_NODE_CONFIG_NO_APPLY to take the
-   rows and leave the hardware. */
 #ifndef IOTDATA_NODE_CONFIG_NO_APPLY
 
 static inline void iotdata_node_config_lora_apply(lora_config_t *const c) {
@@ -147,16 +140,17 @@ static inline void iotdata_node_config_lora_apply(lora_config_t *const c) {
     c->e22_address = iotdata_node_config_u16(LORA_ADDRESS);
     c->e22_network = iotdata_node_config_u8(LORA_NETWORK);
     c->channel = iotdata_node_config_u8(LORA_CHANNEL);
-    c->transmit_power = iotdata_node_config_u8(LORA_TX_POWER);
-    c->air_data_rate = iotdata_node_config_u16(LORA_AIR_RATE);
+    c->transmit_power = iotdata_node_config_u8(LORA_TRANSMIT_POWER);
+    c->air_data_rate = iotdata_node_config_u16(LORA_PACKET_RATE);
     c->packet_size = iotdata_node_config_u8(LORA_PACKET_SIZE);
     c->listen_before_transmit = iotdata_node_config_bool(LORA_LBT);
     c->crypt = iotdata_node_config_u16(LORA_CRYPT);
     c->debug = iotdata_node_config_bool(LORA_DEBUG);
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 #endif /* !IOTDATA_NODE_CONFIG_NO_APPLY */
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_DEVICE_E22900T22_APPLIED */

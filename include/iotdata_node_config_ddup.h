@@ -36,16 +36,6 @@
 // not a longer string.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_DDUP_ENABLE                  0x090
-#define IOTDATA_NODE_CFGID_DDUP_PORT                    0x091
-#define IOTDATA_NODE_CFGID_DDUP_PEERS                   0x092
-#define IOTDATA_NODE_CFGID_DDUP_DELAY_MS                0x093
-#define IOTDATA_NODE_CFGID_DDUP_HOLD_MS                 0x094
-#define IOTDATA_NODE_CFGID_DDUP_DEBUG                   0x095
-#define IOTDATA_NODE_CFGID_DDUP_DEBUG_INJECT_LATENCY_MS 0x096
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_NODE_CONFIG_DDUP_ENABLE
 #define IOTDATA_NODE_CONFIG_DDUP_ENABLE false
 #endif
@@ -85,6 +75,14 @@ static inline bool iotdata_node_config_ddup_changed(__attribute__((unused)) cons
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define IOTDATA_NODE_CFGID_DDUP_ENABLE                  0x090
+#define IOTDATA_NODE_CFGID_DDUP_PORT                    0x091
+#define IOTDATA_NODE_CFGID_DDUP_PEERS                   0x092
+#define IOTDATA_NODE_CFGID_DDUP_DELAY_MS                0x093
+#define IOTDATA_NODE_CFGID_DDUP_HOLD_MS                 0x094
+#define IOTDATA_NODE_CFGID_DDUP_DEBUG                   0x095
+#define IOTDATA_NODE_CFGID_DDUP_DEBUG_INJECT_LATENCY_MS 0x096
 
 #define IOTDATA_NODE_CONFIG_ENTRIES_DDUP(X) \
     X(DDUP_ENABLE, IOTDATA_NODE_CFGID_DDUP_ENABLE, BOOL, 0, 1, IOTDATA_NODE_CONFIG_DDUP_ENABLE, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_DDUP_NOTIFY, "enabled") \

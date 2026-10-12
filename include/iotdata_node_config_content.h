@@ -50,14 +50,6 @@
 // stops is the next insert.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_CONTENT_ENABLED        0x0F0
-#define IOTDATA_NODE_CFGID_CONTENT_OTA_ENABLED    0x0F1
-
-#define IOTDATA_NODE_CFGID_CONTENT_FILE_DIRECTORY 0x110
-#define IOTDATA_NODE_CFGID_CONTENT_FILE_MAX_BYTES 0x111
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_NODE_CONFIG_CONTENT_ENABLED
 #define IOTDATA_NODE_CONFIG_CONTENT_ENABLED true /* a node built with a store is a node meant to use it */
 #endif
@@ -88,6 +80,11 @@ static inline bool iotdata_node_config_content_changed(__attribute__((unused)) c
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define IOTDATA_NODE_CFGID_CONTENT_ENABLED        0x0F0
+#define IOTDATA_NODE_CFGID_CONTENT_OTA_ENABLED    0x0F1
+#define IOTDATA_NODE_CFGID_CONTENT_FILE_DIRECTORY 0x110
+#define IOTDATA_NODE_CFGID_CONTENT_FILE_MAX_BYTES 0x111
 
 /* 0x0F0-0x0FF -- every content store, whatever backend it writes to */
 #define IOTDATA_NODE_CONFIG_ENTRIES_CONTENT(X) \

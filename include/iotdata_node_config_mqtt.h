@@ -36,16 +36,6 @@
 // may legitimately want to slow a node that is hammering a broker.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_MQTT_CLIENT                0x080
-#define IOTDATA_NODE_CFGID_MQTT_SERVER                0x081
-#define IOTDATA_NODE_CFGID_MQTT_TLS_INSECURE          0x082
-#define IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S     0x083
-#define IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S_MAX 0x084
-#define IOTDATA_NODE_CFGID_MQTT_TOPIC_PREFIX          0x085
-#define IOTDATA_NODE_CFGID_MQTT_DEBUG                 0x086
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_NODE_CONFIG_MQTT_CLIENT
 #define IOTDATA_NODE_CONFIG_MQTT_CLIENT "iotdata"
 #endif
@@ -89,6 +79,14 @@ static inline bool iotdata_node_config_mqtt_changed(__attribute__((unused)) cons
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+#define IOTDATA_NODE_CFGID_MQTT_CLIENT                0x080
+#define IOTDATA_NODE_CFGID_MQTT_SERVER                0x081
+#define IOTDATA_NODE_CFGID_MQTT_TLS_INSECURE          0x082
+#define IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S     0x083
+#define IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S_MAX 0x084
+#define IOTDATA_NODE_CFGID_MQTT_TOPIC_PREFIX          0x085
+#define IOTDATA_NODE_CFGID_MQTT_DEBUG                 0x086
+
 #define IOTDATA_NODE_CONFIG_ENTRIES_MQTT(X) \
     X(MQTT_CLIENT, IOTDATA_NODE_CFGID_MQTT_CLIENT, STRING, 1, 63, IOTDATA_NODE_CONFIG_MQTT_CLIENT, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_MQTT_NOTIFY, "client id to use with the broker") \
     X(MQTT_SERVER, IOTDATA_NODE_CFGID_MQTT_SERVER, STRING, 1, IOTDATA_NODE_CONFIG_MQTT_SERVER_MAX, IOTDATA_NODE_CONFIG_MQTT_SERVER, IOTDATA_NODE_CONFIG_FLAG_REBOOT, NULL, IOTDATA_NODE_CONFIG_MQTT_NOTIFY, "broker URL") \
@@ -124,7 +122,7 @@ static bool iotdata_node_config_mqtt_reconnect_delay_max_ok(__attribute__((unuse
     return iotdata_node_config_update_peek(u, IOTDATA_NODE_CFGID_MQTT_RECONNECT_DELAY_S, &mn) && v->u >= mn.u;
 }
 
-#endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_MQTT_APPLIED */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
+#endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_MQTT_APPLIED */

@@ -27,14 +27,6 @@
 // Requires iotdata_node_down.h, for iotdata_node_down_t and the defaults below.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_DOWN_TTL_MIN       0x020
-#define IOTDATA_NODE_CFGID_DOWN_TTL_BCAST_MIN 0x021
-#define IOTDATA_NODE_CFGID_DOWN_REPEAT_MIN    0x022
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-// XXX FIX ME
-
 #ifndef IOTDATA_NODE_CONFIG_DOWN_MIN_MAX
 #define IOTDATA_NODE_CONFIG_DOWN_MIN_MAX (IOTDATA_NODE_DOWN_TTL_MS_MAX / 60000UL)
 #endif
@@ -59,6 +51,10 @@ static inline bool iotdata_node_config_down_changed(__attribute__((unused)) cons
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define IOTDATA_NODE_CFGID_DOWN_TTL_MIN       0x020
+#define IOTDATA_NODE_CFGID_DOWN_TTL_BCAST_MIN 0x021
+#define IOTDATA_NODE_CFGID_DOWN_REPEAT_MIN    0x022
 
 /* 0 is a real value and means "never expire", which the store already understands -- so the floor is
    0 and not 1, and an operator who wants a command to wait indefinitely can say so. */

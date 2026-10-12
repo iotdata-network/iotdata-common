@@ -40,14 +40,6 @@
 // it today.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_STAT_DISPLAY_INTERVAL_S        0x0C0
-#define IOTDATA_NODE_CFGID_STAT_PUBLISH_INTERVAL_S        0x0C1
-#define IOTDATA_NODE_CFGID_STAT_PUBLISH_MQTT_TOPIC_PREFIX 0x0C2
-#define IOTDATA_NODE_CFGID_STAT_DISPLAY_NETW_INTERVAL_S   0x0C3
-#define IOTDATA_NODE_CFGID_STAT_PUBLISH_NETW_INTERVAL_S   0x0C4
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_NODE_CONFIG_STAT_INTERVAL
 #define IOTDATA_NODE_CONFIG_STAT_INTERVAL 300u
 #endif
@@ -87,6 +79,12 @@ static inline bool iotdata_node_config_stat_changed(__attribute__((unused)) cons
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define IOTDATA_NODE_CFGID_STAT_DISPLAY_INTERVAL_S        0x0C0
+#define IOTDATA_NODE_CFGID_STAT_PUBLISH_INTERVAL_S        0x0C1
+#define IOTDATA_NODE_CFGID_STAT_PUBLISH_MQTT_TOPIC_PREFIX 0x0C2
+#define IOTDATA_NODE_CFGID_STAT_DISPLAY_NETW_INTERVAL_S   0x0C3
+#define IOTDATA_NODE_CFGID_STAT_PUBLISH_NETW_INTERVAL_S   0x0C4
 
 /* Anything with somewhere to write a line. */
 #define IOTDATA_NODE_CONFIG_ENTRIES_STAT_DISPLAY(X) \

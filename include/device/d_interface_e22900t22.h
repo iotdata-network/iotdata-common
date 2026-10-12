@@ -24,18 +24,19 @@ typedef enum {
     LORA_MODE_DEEP_SLEEP
 } lora_mode_t;
 
-#define LORA_E22_ADDRESS_MONITOR            0xFFFF
 #define LORA_E22_ADDRESS_DEFAULT            0x0008
 #define LORA_E22_NETWORK_DEFAULT            0x00
 #define LORA_CHANNEL_DEFAULT                0x0F
 #define LORA_TRANSMIT_POWER_DEFAULT         22
-#define LORA_AIR_DATA_RATE_DEFAULT          2400
+#define LORA_PACKET_RATE_DEFAULT            2400
 #define LORA_PACKET_SIZE_DEFAULT            240
 #define LORA_LISTEN_BEFORE_TRANSMIT_DEFAULT true
 #define LORA_CRYPT_DEFAULT                  0x0000
 #define LORA_RSSI_PACKET_DEFAULT            true
 #define LORA_RSSI_CHANNEL_DEFAULT           false
 #define LORA_DEBUG_DEFAULT                  false
+
+#define LORA_E22_ADDRESS_MONITOR            0xFFFF
 
 typedef struct {
     lora_module_t module;
@@ -58,7 +59,7 @@ const lora_config_t lora_config_default = {
     .e22_network = LORA_E22_NETWORK_DEFAULT,
     .channel = LORA_CHANNEL_DEFAULT,
     .transmit_power = LORA_TRANSMIT_POWER_DEFAULT,
-    .air_data_rate = LORA_AIR_DATA_RATE_DEFAULT,
+    .air_data_rate = LORA_PACKET_RATE_DEFAULT,
     .packet_size = LORA_PACKET_SIZE_DEFAULT,
     .listen_before_transmit = LORA_LISTEN_BEFORE_TRANSMIT_DEFAULT,
     .crypt = LORA_CRYPT_DEFAULT,

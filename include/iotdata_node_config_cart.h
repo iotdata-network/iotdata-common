@@ -39,17 +39,6 @@
 // more place to be wrong.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_CFGID_CART_ENABLE       0x0D0
-#define IOTDATA_NODE_CFGID_CART_INTERVAL_MIN 0x0D1
-#define IOTDATA_NODE_CFGID_CART_BOOT_S       0x0D2
-#define IOTDATA_NODE_CFGID_CART_SILENT_S     0x0D3
-#define IOTDATA_NODE_CFGID_CART_SETTLE_S     0x0D4
-#define IOTDATA_NODE_CFGID_CART_LIMIT_MIN    0x0D5
-#define IOTDATA_NODE_CFGID_CART_RETRY_MIN    0x0D6
-#define IOTDATA_NODE_CFGID_CART_RETRY_MAX    0x0D7
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #ifndef IOTDATA_NODE_CONFIG_CART_ENABLE
 #define IOTDATA_NODE_CONFIG_CART_ENABLE false
 #endif
@@ -90,6 +79,17 @@ static inline bool iotdata_node_config_cart_changed(__attribute__((unused)) cons
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+#define IOTDATA_NODE_CFGID_CART_ENABLE       0x0D0
+#define IOTDATA_NODE_CFGID_CART_INTERVAL_MIN 0x0D1
+#define IOTDATA_NODE_CFGID_CART_BOOT_S       0x0D2
+#define IOTDATA_NODE_CFGID_CART_SILENT_S     0x0D3
+#define IOTDATA_NODE_CFGID_CART_SETTLE_S     0x0D4
+#define IOTDATA_NODE_CFGID_CART_LIMIT_MIN    0x0D5
+#define IOTDATA_NODE_CFGID_CART_RETRY_MIN    0x0D6
+#define IOTDATA_NODE_CFGID_CART_RETRY_MAX    0x0D7
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #define IOTDATA_NODE_CONFIG_ENTRIES_CART(X) \
     X(CART_ENABLE, IOTDATA_NODE_CFGID_CART_ENABLE, BOOL, 0, 1, IOTDATA_NODE_CONFIG_CART_ENABLE, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CART_NOTIFY, "enabled") \
     X(CART_INTERVAL_MIN, IOTDATA_NODE_CFGID_CART_INTERVAL_MIN, U16, 0, 10080, IOTDATA_NODE_CONFIG_CART_INTERVAL_MIN, IOTDATA_NODE_CONFIG_FLAG_NONE, NULL, IOTDATA_NODE_CONFIG_CART_NOTIFY, \
@@ -126,10 +126,9 @@ static bool iotdata_node_config_cart_limit_ok(__attribute__((unused)) const iotd
     return iotdata_node_config_update_peek(u, IOTDATA_NODE_CFGID_CART_BOOT_S, &boot) && v->u * 60u > boot.u;
 }
 
-/* APPLY NEEDS THE DRIVER, the validators do not. Separating them lets a host compose this block --
-   id and bounds checks, which is what iotdata-common/tests/test_node_config_blocks.c does -- without
-   dragging in an ESP-IDF header that cannot compile there. Define IOTDATA_NODE_CONFIG_NO_APPLY to take the
-   rows and leave the hardware. */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 #ifndef IOTDATA_NODE_CONFIG_NO_APPLY
 
 static inline void iotdata_node_config_cart_apply(cart_config_t *const c, const gpio_num_t pin_power, const gpio_num_t pin_live) {
@@ -146,8 +145,9 @@ static inline void iotdata_node_config_cart_apply(cart_config_t *const c, const 
     c->retry_max = iotdata_node_config_u8(CART_RETRY_MAX);
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 #endif /* !IOTDATA_NODE_CONFIG_NO_APPLY */
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_CONFIG_EXPANDED && !IOTDATA_NODE_CONFIG_CART_APPLIED */
