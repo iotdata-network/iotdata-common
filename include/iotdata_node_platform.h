@@ -86,7 +86,7 @@ static inline bool iotdata_node_platform_init (const char* const tag, const iotd
         if (conf->caps_fn) conf->caps_fn (&s_node_platform_state.caps);
     }
     char vbuf[IOTDATA_NODE_VERSION_STR_MAX + 1];
-    ESP_LOGI(tag, "version: %s", iotdata_node_version_str(vbuf, sizeof(vbuf), &s_node_platform_state.caps));
+    ESP_LOGI(tag, "version: %s", iotdata_node_version_str(vbuf, sizeof(vbuf), &(const iotdata_node_version_t){ .caps = &s_node_platform_state.caps }));
     if (!iotdata_node_version_stamp_is_real())
         ESP_LOGW(tag, "version: build stamp is unset -- this binary cannot say when it was built");
     char ibuf[IOTDATA_NODE_FIRMWARE_STR_MAX + 1];

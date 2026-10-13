@@ -149,6 +149,26 @@ static void test_presence(void) {
     iotdata_kvr_init(&kv, buf, sizeof(buf));
     (void)iotdata_node_status_pack(&kv, &s, 0);
     CHECK(has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_SUPPLY), "a declared zero IS reported");
+
+    /* THE IMAGE: slot 0x0 is a real slot and state 0x0 is "unknown", so 0x00 is a perfectly
+       sayable value -- which is exactly why presence is carried by the flag and not by the byte.
+       A host reports nothing here (no slots), so the key is fed by hand as a device would. */
+    a_sensor(&s);
+    iotdata_kvr_init(&kv, buf, sizeof(buf));
+    (void)iotdata_node_status_pack(&kv, &s, 0);
+    CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_IMAGE), "no slots, no image key");
+    s.image = IOTDATA_NODE_STATUS_IMAGE_PACK(1, IOTDATA_NODE_STATUS_IMAGE_STATE_PENDING);
+    s.has_image = true;
+    iotdata_kvr_init(&kv, buf, sizeof(buf));
+    (void)iotdata_node_status_pack(&kv, &s, 0);
+    CHECK(has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_IMAGE), "and it is reported when there are");
+    CHECK(s.image == 0x12, "one byte, slot in the high nibble: 0x12 reads as slot 1, pending");
+    CHECK(IOTDATA_NODE_STATUS_IMAGE_SLOT_OF(s.image) == 1 && IOTDATA_NODE_STATUS_IMAGE_STATE_OF(s.image) == IOTDATA_NODE_STATUS_IMAGE_STATE_PENDING, "and comes apart again");
+    CHECK(strcmp(iotdata_node_tlv_status_image_state_str(IOTDATA_NODE_STATUS_IMAGE_STATE_PENDING), "pending") == 0, "the state has a name");
+    CHECK(strcmp(iotdata_node_tlv_status_image_state_str(0xE) /* unassigned */, "unknown") == 0, "and an unassigned one does not pretend to");
+    /* a value that cannot be said is still a value: the factory slot has no OTA state at all */
+    CHECK(IOTDATA_NODE_STATUS_IMAGE_SLOT_OF(IOTDATA_NODE_STATUS_IMAGE_PACK(IOTDATA_NODE_STATUS_IMAGE_SLOT_FACTORY, IOTDATA_NODE_STATUS_IMAGE_STATE_UNKNOWN)) == IOTDATA_NODE_STATUS_IMAGE_SLOT_FACTORY,
+          "a factory image says so in the slot nibble");
 }
 
 static void test_scope(void) {
@@ -221,6 +241,7 @@ static void test_render(void) {
     (void)iotdata_node_status_str(&s, line, sizeof(line));
     printf("    sensor:  %s\n", line);
     CHECK(strstr(line, "supply=3742mV") != NULL && strstr(line, "restarts=991") != NULL, "what it did report");
+    CHECK(strstr(line, "img=") == NULL, "and nothing about a slot it never claimed to have");
     CHECK(strstr(line, "mesh=") == NULL, "no mesh, nothing said about one");
 
     a_gateway(&s);
@@ -251,6 +272,7 @@ static void test_json(void) {
     printf("JSON: the keys that mean something other than their value\n");
     cJSON *const o = cJSON_CreateObject();
     const uint8_t reason = IOTDATA_NODE_REASON_BROWNOUT, state = IOTDATA_NODE_STATUS_MESH_STATE_ORPHANED, yes = 1, uptime[4] = { 0, 0, 0, 9 };
+    const uint8_t image = IOTDATA_NODE_STATUS_IMAGE_PACK(1, IOTDATA_NODE_STATUS_IMAGE_STATE_PENDING), factory = IOTDATA_NODE_STATUS_IMAGE_PACK(IOTDATA_NODE_STATUS_IMAGE_SLOT_FACTORY, IOTDATA_NODE_STATUS_IMAGE_STATE_UNKNOWN);
 
     CHECK(iotdata_node_status_json_key(o, "reason", IOTDATA_NODE_STATUS_REASON, &reason, 1), "reason is ours");
     CHECK(iotdata_node_status_json_key(o, "mesh-state", IOTDATA_NODE_STATUS_MESH_STATE, &state, 1), "mesh state is ours");
@@ -259,12 +281,17 @@ static void test_json(void) {
     CHECK(!iotdata_node_status_json_key(o, "uptime", IOTDATA_NODE_STATUS_UPTIME, uptime, 4), "a counter is not ours");
     /* malformed: the wrong width is handed back rather than guessed at */
     CHECK(!iotdata_node_status_json_key(o, "reason", IOTDATA_NODE_STATUS_REASON, uptime, 4), "a mis-sized enum is not ours either");
+    /* two nibbles a reader should not have to know about: rendered as an object, not as 0x12 */
+    CHECK(iotdata_node_status_json_key(o, "image", IOTDATA_NODE_STATUS_IMAGE, &image, 1), "the image is ours");
+    CHECK(iotdata_node_status_json_key(o, "image-factory", IOTDATA_NODE_STATUS_IMAGE, &factory, 1), "and so is a factory one");
 
     char *const out = cJSON_PrintUnformatted(o);
     printf("    %s\n", out);
     CHECK(strstr(out, "\"reason\":\"brownout\"") != NULL, "the reason reads as a word");
     CHECK(strstr(out, "\"mesh-state\":\"orphaned\"") != NULL, "so does the state");
     CHECK(strstr(out, "\"accepting\":true") != NULL, "and a flag as a bool");
+    CHECK(strstr(out, "\"image\":{\"slot\":1,\"state\":\"pending\"}") != NULL, "the image comes apart into the slot and the verdict");
+    CHECK(strstr(out, "\"image-factory\":{\"slot\":\"factory\"") != NULL, "and a factory image is named, not numbered");
     free(out);
     cJSON_Delete(o);
 }

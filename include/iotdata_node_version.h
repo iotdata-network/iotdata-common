@@ -17,6 +17,7 @@
 //   software      app/semver/stamp      declared: IOTDATA_NODE_VERSION_APP / _SEMVER / _STAMP
 //   serial        hex                   detected: eFuse MAC, cpu serial, machine-id
 //   capabilities  16-bit entries        declared by the app, seeded from build flags
+//   image         hex                   detected: the hash of the bytes that are actually running
 //
 // Every function here fills a buffer the caller owns and hands it back; where it goes is the
 // application's business.
@@ -25,6 +26,11 @@
 // not set it reports IOTDATA_NODE_VERSION_STAMP_NONE so the omission is visible rather than
 // silently inherited from whenever the tree was last touched. A stamp that lies is worse than
 // no stamp: it is how an hour goes into debugging a binary that is not the one running.
+//
+// WHICH IS WHY THERE IS ALSO AN IMAGE HASH. The stamp is the best DECLARED answer and it is still
+// only a declaration; the hash is taken from the bytes in flash, so it cannot be forgotten, reused
+// or hand-set. Everything else in here describes what a node was built to be -- `image` is what it
+// IS. A platform that cannot hash its own image omits the field rather than offering a substitute.
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -61,7 +67,8 @@
 #define IOTDATA_NODE_VERSION_SOFTWARE_MAX        48
 #define IOTDATA_NODE_VERSION_SERIAL_MAX          32 /* a machine-id is 32 hex, and an identity must never be truncated */
 #define IOTDATA_NODE_VERSION_CAPS_STR_MAX        96
-#define IOTDATA_NODE_VERSION_STR_MAX             256
+#define IOTDATA_NODE_VERSION_IMAGE_MAX           (2 * IOTDATA_NODE_VERSION_IMAGE_BYTES) /* the HEX rendering; the wire carries the bytes */
+#define IOTDATA_NODE_VERSION_STR_MAX             288
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // CAPABILITIES
@@ -343,6 +350,8 @@ static inline void _iotdata_node_version_sep(char *const dst, const size_t size,
  *   esp_hw_support          esp_chip_info.h, esp_mac.h  -> hardware, serial
  *   esp_app_format          esp_app_desc.h              -> firmware (the IDF version)
  *   esp_bootloader_format   esp_bootloader_desc.h       -> firmware's "+bl" half
+ *   app_update              esp_ota_ops.h               -> image (which partition is running)
+ *   esp_partition           esp_partition.h             -> image (the digest of it)
  *
  * The bootloader one is the quiet case: it is probed with __has_include, so a project that omits
  * the component still compiles and simply reports no bootloader version. That is how `idf/6.1`
@@ -352,6 +361,8 @@ static inline void _iotdata_node_version_sep(char *const dst, const size_t size,
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
 #include "esp_mac.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "esp_system.h"
 /* The bootloader descriptor is what supplies the [+low] half of `firmware`, and it arrived in a
    later IDF -- so it is probed rather than assumed. Without this include the guard below would be
@@ -435,6 +446,26 @@ static inline const char *iotdata_node_version_serial(char *const buf, const siz
     uint8_t mac[6] = { 0 };
     (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
     return snprintf_inline(buf, size, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline bool iotdata_node_version_image(uint8_t *const out, const size_t size) {
+    static uint8_t hash[IOTDATA_NODE_VERSION_IMAGE_BYTES];
+    static bool done = false, have = false;
+    if (!done) {
+        const esp_partition_t *const running = esp_ota_get_running_partition();
+        uint8_t full[32];
+        if (running != NULL && esp_partition_get_sha256(running, full) == ESP_OK) {
+            memcpy(hash, full, sizeof(hash));
+            have = true;
+        }
+        done = true;
+    }
+    if (out == NULL || size < sizeof(hash) || !have)
+        return false;
+    memcpy(out, hash, sizeof(hash));
+    return true;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -554,6 +585,12 @@ static inline const char *iotdata_node_version_serial(char *const buf, const siz
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline bool iotdata_node_version_image(__attribute__((unused)) uint8_t *const out, __attribute__((unused)) const size_t size) {
+    return false;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #else
@@ -566,6 +603,9 @@ static inline const char *iotdata_node_version_firmware(char *const buf, const s
 }
 static inline const char *iotdata_node_version_serial(char *const buf, const size_t size) {
     return snprintf_inline(buf, size, "unknown");
+}
+static inline bool iotdata_node_version_image(__attribute__((unused)) uint8_t *const out, __attribute__((unused)) const size_t size) {
+    return false;
 }
 
 #endif
@@ -648,13 +688,47 @@ static inline const char *iotdata_node_version_software(char *const buf, const s
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline const char *iotdata_node_version_str(char *const buf, const size_t size, const iotdata_node_version_caps_t *const caps) {
-    char hw[IOTDATA_NODE_VERSION_HARDWARE_MAX + 1], fw[IOTDATA_NODE_VERSION_FIRMWARE_MAX + 1], sw[IOTDATA_NODE_VERSION_SOFTWARE_MAX + 1], sn[IOTDATA_NODE_VERSION_SERIAL_MAX + 1], cp[IOTDATA_NODE_VERSION_CAPS_STR_MAX + 1];
+static inline const char *iotdata_node_version_image_hex(const uint8_t *const hash, const size_t len, char *const buf, const size_t size) {
+    if (buf == NULL || size == 0)
+        return "";
+    buf[0] = '\0';
+    if (hash == NULL || len != IOTDATA_NODE_VERSION_IMAGE_BYTES || size < (2u * len) + 1u)
+        return buf;
+    size_t n = 0;
+    for (size_t i = 0; i < len; i++)
+        n += (size_t)snprintf(buf + n, size - n, "%02x", hash[i]);
+    return buf;
+}
+
+static inline const char *iotdata_node_version_image_str(char *const buf, const size_t size) {
+    uint8_t hash[IOTDATA_NODE_VERSION_IMAGE_BYTES];
+    if (!iotdata_node_version_image(hash, sizeof(hash))) {
+        if (buf != NULL && size > 0)
+            buf[0] = '\0';
+        return buf;
+    }
+    return iotdata_node_version_image_hex(hash, sizeof(hash), buf, size);
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+typedef struct {
+    const iotdata_node_version_caps_t *caps; /* NULL on a node with nothing to declare */
+} iotdata_node_version_t;
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline const char *iotdata_node_version_str(char *const buf, const size_t size, const iotdata_node_version_t *const v) {
+    char hw[IOTDATA_NODE_VERSION_HARDWARE_MAX + 1], fw[IOTDATA_NODE_VERSION_FIRMWARE_MAX + 1], sw[IOTDATA_NODE_VERSION_SOFTWARE_MAX + 1], sn[IOTDATA_NODE_VERSION_SERIAL_MAX + 1], cp[IOTDATA_NODE_VERSION_CAPS_STR_MAX + 1],
+        im[IOTDATA_NODE_VERSION_IMAGE_MAX + 1];
+    const iotdata_node_version_caps_t *const caps = (v != NULL) ? v->caps : NULL;
     cp[0] = '\0';
     if (caps != NULL)
         (void)iotdata_node_version_caps_str(caps, cp, sizeof(cp));
-    return snprintf_inline(buf, size, "%s on %s [%s] sn=%s%s%s", iotdata_node_version_software(sw, sizeof(sw)), iotdata_node_version_hardware(hw, sizeof(hw)), iotdata_node_version_firmware(fw, sizeof(fw)),
-                           iotdata_node_version_serial(sn, sizeof(sn)), cp[0] != '\0' ? " caps=" : "", cp);
+    (void)iotdata_node_version_image_str(im, sizeof(im));
+    return snprintf_inline(buf, size, "%s on %s [%s] sn=%s%s%s%s%s", iotdata_node_version_software(sw, sizeof(sw)), iotdata_node_version_hardware(hw, sizeof(hw)), iotdata_node_version_firmware(fw, sizeof(fw)),
+                           iotdata_node_version_serial(sn, sizeof(sn)), im[0] != '\0' ? " img=" : "", im, cp[0] != '\0' ? " caps=" : "", cp);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -783,6 +857,14 @@ static inline bool iotdata_node_version_caps_from_json(const cJSON *const obj, i
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_node_version_json_key(cJSON *const obj, const char *const name, const uint8_t key, const uint8_t *const val, const uint8_t vlen) {
+    if (key == IOTDATA_NODE_VERSION_IMAGE) {
+        char hex[IOTDATA_NODE_VERSION_IMAGE_MAX + 1];
+        if (vlen != IOTDATA_NODE_VERSION_IMAGE_BYTES)
+            cJSON_AddStringToObject(obj, name, "malformed"); /* the wrong width is not a short hash */
+        else
+            cJSON_AddStringToObject(obj, name, iotdata_node_version_image_hex(val, vlen, hex, sizeof(hex)));
+        return true;
+    }
     if (key != IOTDATA_NODE_VERSION_CAPABILITIES)
         return false;
     iotdata_node_version_caps_t caps;
@@ -797,8 +879,10 @@ static inline bool iotdata_node_version_json_key(cJSON *const obj, const char *c
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline int iotdata_node_version_pack(iotdata_kvr_t *const kv, const iotdata_node_version_caps_t *const caps) {
+static inline int iotdata_node_version_pack(iotdata_kvr_t *const kv, const iotdata_node_version_t *const v) {
     char hw[IOTDATA_NODE_VERSION_HARDWARE_MAX + 1], fw[IOTDATA_NODE_VERSION_FIRMWARE_MAX + 1], sw[IOTDATA_NODE_VERSION_SOFTWARE_MAX + 1], sn[IOTDATA_NODE_VERSION_SERIAL_MAX + 1];
+    uint8_t im[IOTDATA_NODE_VERSION_IMAGE_BYTES];
+    const iotdata_node_version_caps_t *const caps = (v != NULL) ? v->caps : NULL;
     iotdata_kvr_add_str(kv, IOTDATA_NODE_VERSION_HARDWARE, iotdata_node_version_hardware(hw, sizeof(hw)));
     iotdata_kvr_add_str(kv, IOTDATA_NODE_VERSION_FIRMWARE, iotdata_node_version_firmware(fw, sizeof(fw)));
     iotdata_kvr_add_str(kv, IOTDATA_NODE_VERSION_SOFTWARE, iotdata_node_version_software(sw, sizeof(sw)));
@@ -809,6 +893,8 @@ static inline int iotdata_node_version_pack(iotdata_kvr_t *const kv, const iotda
         if (n > 0)
             iotdata_kvr_add(kv, IOTDATA_NODE_VERSION_CAPABILITIES, packed, (uint8_t)n);
     }
+    if (iotdata_node_version_image(im, sizeof(im)))
+        iotdata_kvr_add(kv, IOTDATA_NODE_VERSION_IMAGE, im, (uint8_t)sizeof(im));
     return kv->overflow ? -1 : (int)kv->len;
 }
 

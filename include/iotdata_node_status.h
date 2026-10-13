@@ -78,8 +78,9 @@ typedef struct {
     int8_t temperature;
     uint8_t reason;                     /* IOTDATA_NODE_REASON_* */
     uint8_t stations, filters, content; /* table sizes -- SCALARS, so they survive a lost tail */
+    uint8_t image;                      /* [slot:4][state:4] -- iotdata_node_firmware_image_status() */
     bool has_stations, has_filters, has_content;
-    bool has_lifetime, has_active, has_heap, has_restarts, has_supply, has_temperature;
+    bool has_lifetime, has_active, has_heap, has_restarts, has_supply, has_temperature, has_image;
     iotdata_node_status_mesh_t mesh;
 } iotdata_node_status_t;
 
@@ -187,6 +188,8 @@ static inline void _iotdata_node_status_pack_node(iotdata_kvr_t *const kv, const
         iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_FILTERS_COUNT, s->filters);
     if (s->has_content)
         iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_CONTENT_COUNT, s->content);
+    if (s->has_image)
+        iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_IMAGE, s->image);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -261,6 +264,8 @@ static inline const char *iotdata_node_status_str(const iotdata_node_status_t *c
         _STATUS_APPEND(" temp=%dC", (int)s->temperature);
     if (s->has_heap)
         _STATUS_APPEND(" heap=%u/%u", (unsigned)s->heap_free, (unsigned)s->heap_min);
+    if (s->has_image)
+        _STATUS_APPEND(" image=%u/%s", (unsigned)IOTDATA_NODE_STATUS_IMAGE_SLOT_OF(s->image), iotdata_node_tlv_status_image_state_str(IOTDATA_NODE_STATUS_IMAGE_STATE_OF(s->image)));
     if (s->mesh.present) {
         _STATUS_APPEND(" mesh=%s", iotdata_node_tlv_status_mesh_state_str(s->mesh.state));
         if (s->mesh.state == IOTDATA_NODE_STATUS_MESH_STATE_JOINED)
@@ -294,6 +299,20 @@ static inline bool iotdata_node_status_json_key(cJSON *const obj, const char *co
     case IOTDATA_NODE_STATUS_MESH_ACCEPTING:
         cJSON_AddBoolToObject(obj, name, val[0] != 0);
         return true;
+    case IOTDATA_NODE_STATUS_IMAGE: {
+        cJSON *const o = cJSON_AddObjectToObject(obj, name);
+        if (o != NULL) {
+            const uint8_t slot = IOTDATA_NODE_STATUS_IMAGE_SLOT_OF(val[0]);
+            if (slot == IOTDATA_NODE_STATUS_IMAGE_SLOT_FACTORY)
+                cJSON_AddStringToObject(o, "slot", "factory");
+            else if (slot == IOTDATA_NODE_STATUS_IMAGE_SLOT_UNKNOWN)
+                cJSON_AddStringToObject(o, "slot", "unknown");
+            else
+                cJSON_AddNumberToObject(o, "slot", (double)slot);
+            cJSON_AddStringToObject(o, "state", iotdata_node_tlv_status_image_state_str(IOTDATA_NODE_STATUS_IMAGE_STATE_OF(val[0])));
+        }
+        return true;
+    }
     default:
         return false;
     }

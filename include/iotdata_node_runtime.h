@@ -401,9 +401,7 @@ static inline int iotdata_node_build_version(const iotdata_node_t *const n, uint
     const iotdata_node_params_t *const cfg = n->cfg;
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    /* Every field from iotdata_node_version.h, so a sensor answers this in exactly the form a
-       relay and a gateway do -- one grammar for a reader to parse, whatever it is talking to. */
-    return iotdata_node_version_pack(&kv, cfg->caps);
+    return iotdata_node_version_pack(&kv, &(const iotdata_node_version_t){ .caps = cfg->caps });
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -484,6 +482,7 @@ static inline int iotdata_node_build_status(const iotdata_node_t *const n, uint8
     iotdata_node_status_t s = { 0 };
     if (cfg->status != NULL)
         cfg->status(n->station, &s); /* the app knows its own uptime, battery, heap */
+    s.has_image = iotdata_node_firmware_image_status(&s.image);
     return iotdata_node_status_pack(&kv, &s, scope);
 }
 

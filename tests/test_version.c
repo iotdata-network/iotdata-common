@@ -218,15 +218,16 @@ static void test_pack(void) {
     iotdata_kvr_t kv;
     iotdata_node_version_caps_t c;
     memset(&c, 0, sizeof(c));
+    const iotdata_node_version_t self = { .caps = &c };
 
     iotdata_kvr_init(&kv, buf, sizeof(buf));
     CHECK(iotdata_node_version_pack(&kv, NULL) > 0, "packed without capabilities");
     /* walk the kvr: key, vlen, value... */
     int keys = 0;
-    bool seen[5] = { false, false, false, false, false };
+    bool seen[6] = { false, false, false, false, false, false };
     for (size_t i = 0; i + 1 < kv.len;) {
         const uint8_t key = buf[i], vlen = buf[i + 1];
-        if (key < 5)
+        if (key < 6)
             seen[key] = true;
         keys++;
         i += 2u + vlen;
@@ -234,10 +235,22 @@ static void test_pack(void) {
     CHECK(keys == 4, "four keys");
     CHECK(seen[IOTDATA_NODE_VERSION_HARDWARE] && seen[IOTDATA_NODE_VERSION_FIRMWARE] && seen[IOTDATA_NODE_VERSION_SOFTWARE] && seen[IOTDATA_NODE_VERSION_SERIAL], "hardware, firmware, software, serial");
     CHECK(!seen[IOTDATA_NODE_VERSION_CAPABILITIES], "and no capabilities key when there is nothing to declare");
+    /* A HOST CANNOT HASH ITSELF, and the key is then absent rather than empty -- "I cannot say" and
+       "my identity is the empty string" are different claims. On a device this is 32 hex chars. */
+    CHECK(!seen[IOTDATA_NODE_VERSION_IMAGE], "and no image key on a platform that cannot hash its own image");
+    uint8_t im[IOTDATA_NODE_VERSION_IMAGE_BYTES];
+    char ims[IOTDATA_NODE_VERSION_IMAGE_MAX + 1];
+    CHECK(!iotdata_node_version_image(im, sizeof(im)), "which is what the detector says too");
+    CHECK(iotdata_node_version_image_str(ims, sizeof(ims))[0] == '\0', "and the hex rendering of nothing is nothing");
+    /* the renderer itself, which is also what a DECODER uses on a hash off the wire */
+    static const uint8_t known[IOTDATA_NODE_VERSION_IMAGE_BYTES] = { 0x9f, 0x86, 0xd0, 0x81, 0x88, 0x4c, 0x7d, 0x65, 0x9a, 0x2f, 0xea, 0xa0, 0xc5, 0x5a, 0xd0, 0x15 };
+    CHECK(strcmp(iotdata_node_version_image_hex(known, sizeof(known), ims, sizeof(ims)), "9f86d081884c7d659a2feaa0c55ad015") == 0, "16 bytes render as 32 lower-case hex");
+    CHECK(iotdata_node_version_image_hex(known, 15, ims, sizeof(ims))[0] == '\0', "a wrong length renders as nothing, never as a short hash");
+    CHECK(iotdata_node_version_image_hex(known, sizeof(known), ims, 8)[0] == '\0', "and so does a buffer that cannot hold it");
 
     (void)iotdata_node_version_caps_add(&c, IOTDATA_NODE_VERSION_CAPS_RADIO, IOTDATA_NODE_VERSION_RADIO_E22_DIP);
     iotdata_kvr_init(&kv, buf, sizeof(buf));
-    CHECK(iotdata_node_version_pack(&kv, &c) > 0, "packed with capabilities");
+    CHECK(iotdata_node_version_pack(&kv, &self) > 0, "packed with capabilities");
     bool caps_present = false;
     uint8_t caps_len = 0;
     for (size_t i = 0; i + 1 < kv.len;) {
@@ -254,9 +267,12 @@ static void test_pack(void) {
     memset(&c, 0, sizeof(c));
     for (uint8_t k = 0; k < 6; k++)
         (void)iotdata_node_version_caps_add(&c, k, 0xFFF);
-    (void)iotdata_node_version_pack(&kv, &c);
-    printf("  a full report is %u bytes of kvr\n", (unsigned)kv.len);
-    CHECK(kv.len < 200, "and fits one 240-byte frame with the header and TLV overhead");
+    (void)iotdata_node_version_pack(&kv, &self);
+    /* PLUS THE IMAGE KEY, which this platform omits and a device does not: the budget that matters
+       is the device's, so it is counted here rather than discovered on the node. */
+    const unsigned withimage = (unsigned)kv.len + 2u + IOTDATA_NODE_VERSION_IMAGE_BYTES;
+    printf("  a full report is %u bytes of kvr (%u with an image hash)\n", (unsigned)kv.len, withimage);
+    CHECK(withimage < 200, "and fits one 240-byte frame with the header and TLV overhead");
 
     /* a buffer too small must fail rather than emit a half-built report */
     uint8_t small[8];
@@ -337,15 +353,25 @@ static void test_json(void) {
     CHECK(iotdata_node_version_caps_key("radio") == IOTDATA_NODE_VERSION_CAPS_RADIO, "names map back to keys");
     CHECK(iotdata_node_version_caps_key("nonesuch") == -1, "and an unknown name does not");
 
-    /* the key hook: it claims capabilities and declines everything else */
+    /* the key hook: it claims capabilities and the image, and declines everything else */
     cJSON *const obj = cJSON_CreateObject();
     const uint8_t entry[2] = { 0x00, 0x01 };
     CHECK(iotdata_node_version_json_key(obj, "capabilities", IOTDATA_NODE_VERSION_CAPABILITIES, entry, 2), "claims capabilities");
     CHECK(!iotdata_node_version_json_key(obj, "software", IOTDATA_NODE_VERSION_SOFTWARE, entry, 2), "declines the rest, so a caller keeps its generic path");
+    /* the image is BYTES on the wire and must be hex in JSON every time -- a renderer that
+       sniffed for printable bytes would quote one digest in ten million as ASCII */
+    const uint8_t hash[IOTDATA_NODE_VERSION_IMAGE_BYTES] = { 0x9f, 0x86, 0xd0, 0x81, 0x88, 0x4c, 0x7d, 0x65, 0x9a, 0x2f, 0xea, 0xa0, 0xc5, 0x5a, 0xd0, 0x15 };
+    const uint8_t printable[IOTDATA_NODE_VERSION_IMAGE_BYTES] = { 'd', 'e', 'a', 'd', 'b', 'e', 'e', 'f', 'd', 'e', 'a', 'd', 'b', 'e', 'e', 'f' };
+    CHECK(iotdata_node_version_json_key(obj, "image", IOTDATA_NODE_VERSION_IMAGE, hash, sizeof(hash)), "claims the image");
+    CHECK(iotdata_node_version_json_key(obj, "image_ascii", IOTDATA_NODE_VERSION_IMAGE, printable, sizeof(printable)), "and one that happens to be printable");
+    CHECK(iotdata_node_version_json_key(obj, "image_short", IOTDATA_NODE_VERSION_IMAGE, entry, 2), "and a mis-sized one, to say so");
     const uint8_t odd[3] = { 0, 1, 2 };
     CHECK(iotdata_node_version_json_key(obj, "bad", IOTDATA_NODE_VERSION_CAPABILITIES, odd, 3), "claims a malformed one too");
     char *const out = cJSON_PrintUnformatted(obj);
     CHECK(out != NULL && strstr(out, "\"bad\":\"malformed\"") != NULL, "and says so rather than guessing");
+    CHECK(out != NULL && strstr(out, "\"image\":\"9f86d081884c7d659a2feaa0c55ad015\"") != NULL, "the image reads as hex");
+    CHECK(out != NULL && strstr(out, "\"image_ascii\":\"646561646265656664656164626565666\"") == NULL && strstr(out, "\"image_ascii\":\"64656164626565666465616462656566\"") != NULL, "hex even when the bytes spell something");
+    CHECK(out != NULL && strstr(out, "\"image_short\":\"malformed\"") != NULL, "and the wrong width is malformed, not a short hash");
     free(out);
     cJSON_Delete(obj);
 }

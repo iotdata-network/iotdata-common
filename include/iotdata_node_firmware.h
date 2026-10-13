@@ -123,6 +123,45 @@ static inline bool iotdata_node_firmware_on_probation(void) {
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+static inline bool iotdata_node_firmware_image_status(uint8_t *const out) {
+    const esp_partition_t *const running = esp_ota_get_running_partition();
+    if (out == NULL || running == NULL)
+        return false;
+    uint8_t slot = IOTDATA_NODE_STATUS_IMAGE_SLOT_UNKNOWN;
+    if (running->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY)
+        slot = IOTDATA_NODE_STATUS_IMAGE_SLOT_FACTORY;
+    else if (running->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_0 && (unsigned)(running->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_0) < 14u)
+        slot = (uint8_t)(running->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_0);
+    uint8_t state = IOTDATA_NODE_STATUS_IMAGE_STATE_UNKNOWN;
+    esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
+    if (esp_ota_get_state_partition(running, &st) == ESP_OK)
+        switch (st) {
+        case ESP_OTA_IMG_NEW:
+            state = IOTDATA_NODE_STATUS_IMAGE_STATE_NEW;
+            break;
+        case ESP_OTA_IMG_PENDING_VERIFY:
+            state = IOTDATA_NODE_STATUS_IMAGE_STATE_PENDING;
+            break;
+        case ESP_OTA_IMG_VALID:
+            state = IOTDATA_NODE_STATUS_IMAGE_STATE_VALID;
+            break;
+        case ESP_OTA_IMG_INVALID:
+            state = IOTDATA_NODE_STATUS_IMAGE_STATE_INVALID;
+            break;
+        case ESP_OTA_IMG_ABORTED:
+            state = IOTDATA_NODE_STATUS_IMAGE_STATE_ABORTED;
+            break;
+        case ESP_OTA_IMG_UNDEFINED:
+            break; /* a cable-flashed factory image: no OTA state, which is not a fault */
+        default:
+            break; /* -Wswitch-default: the enum is the bootloader's, not ours */
+        }
+    *out = IOTDATA_NODE_STATUS_IMAGE_PACK(slot, state);
+    return true;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* Call once the application considers itself up -- after the hardware it cannot work without has
    started. Reads the state rather than assuming it: a cable flash has none, an OTA has
    PENDING_VERIFY, and a slot that has already been confirmed has VALID. */
@@ -214,6 +253,9 @@ static inline const char *iotdata_node_firmware_str(char *const buf, const size_
 #endif
 
 static inline bool iotdata_node_firmware_on_probation(void) {
+    return false;
+}
+static inline bool iotdata_node_firmware_image_status(__attribute__((unused)) uint8_t *const out) {
     return false;
 }
 static inline void iotdata_node_firmware_begin(__attribute__((unused)) const uint32_t now_ms) {
