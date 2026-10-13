@@ -1,7 +1,8 @@
 # ---------------------------------------------------------------------------------------------
-# release.mk -- package and bundle a staged release, for one platform subtree of iotdata-release.
+# release.mk -- package and bundle a staged release, for one platform subtree of a release tree
+# (a deployment's iotdata-deploy/<deployment>/release/<platform>).
 #
-# Lives here with the other shared rules rather than in the release repo: that repo holds built
+# Lives here with the other shared rules rather than in the release tree: that tree holds built
 # artifacts, and a Makefile is not one. Each platform subtree includes it from its own directory,
 # which is what makes bin/, pkg/ and ota/ resolve without any of them being named here.
 #
@@ -80,12 +81,16 @@ help:
 	@# the leading comment block, however long it grows -- not a line range that drifts from it
 	@sed -n '1,/^$$/{s/^# \?//; p;}' $(_REL_MK_DIR)/release.mk
 
+# ONE SHELL, deliberately. `exit 0` on a recipe line of its own ends only THAT line's shell -- make
+# runs the next line regardless, and the loop then iterates over the unexpanded glob and dies inside
+# python. An empty bin/ is the normal state of a deployment's release tree on the day it is created,
+# so the nothing-staged case is the one that has to read well.
 list:
-	@ls $(BIN)/*.json >/dev/null 2>&1 || { echo "nothing staged in $(BIN)/"; exit 0; }
-	@for m in $(BIN)/*.json; do \
-	  python3 -c "import json,sys;m=json.load(open(sys.argv[1]))['iotdata'];\
+	@if ! ls $(BIN)/*.json >/dev/null 2>&1; then echo "nothing staged in $(BIN)/"; else \
+	  for m in $(BIN)/*.json; do \
+	    python3 -c "import json,sys;m=json.load(open(sys.argv[1]))['iotdata'];\
 print('  %-28s %-10s %9d B  %s' % (m['name']+'-'+m['version'], m.get('platform') or m.get('chip','?'), m['ota']['size'] if m.get('ota') else 0, m['staged_utc']))" $$m; \
-	done
+	  done; fi
 
 # ---- the tools this pipeline needs ---------------------------------------
 #

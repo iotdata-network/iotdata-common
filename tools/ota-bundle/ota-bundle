@@ -2,8 +2,8 @@
 /*
  * ota-bundle -- build one OTA blob from staged releases.
  *
- *   ota-bundle -d .../iotdata-release/esp32c3 -r relay-0.9.9 --form full  --codec deflate
- *   ota-bundle -d .../iotdata-release/esp32c3 -r relay-0.9.9 --form delta --base relay-0.9.8
+ *   ota-bundle -d .../<deployment>/release/esp32c3 -r relay-0.9.9 --form full  --codec deflate
+ *   ota-bundle -d .../<deployment>/release/esp32c3 -r relay-0.9.9 --form delta --base relay-0.9.8
  *
  * The format is defined by iotdata-common/include/iotdata_node_content_ota.h and that header is the
  * authority -- this is its encoder, and the two are meant to be read side by side. Magic, then kvr

@@ -221,7 +221,7 @@ static inline void buffer_set_len(buffer_pool_t *const p, const buffer_handle_t 
  * cannot carry its header must not go out looking like one that can.
  *
  * The `n > at` guard is load-bearing and must not be "simplified": `at` is unsigned, so without it
- * an over-long prepend wraps to ~65535 and the memcpy lands far outside the pool. Dropping it does
+ * an over-long prepend wraps to ~65535 and the memcopy lands far outside the pool. Dropping it does
  * not produce a wrong answer, it produces a segfault somewhere else entirely.
  */
 /* Put a buffer you already hold back into the state acquire() would have given it: the payload
@@ -282,7 +282,7 @@ static inline uint32_t buffer_pool_acquires(const buffer_pool_t *const p) {
 //
 // A different beast from the pool. The pool owns bytes and counts holders; the queue owns TIME --
 // a due moment and an expiry -- and is simply one of those holders. Entries carry a handle, never
-// a copy, so queueing a received frame for forwarding costs a reference and no memcpy.
+// a copy, so queueing a received frame for forwarding costs a reference and no memcopy.
 //
 // The expiry is what makes back-pressure survivable. A radio that cannot accept a frame now is not
 // an error: the caller leaves the frame queued and asks again next cycle, and only the expiry

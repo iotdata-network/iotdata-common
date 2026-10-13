@@ -41,6 +41,37 @@ IOTDATA_SRC_DEPEND  ?= $(IOTDATA_SRC)/iotdata-depend
 IOTDATA_SRC_COMMON  ?= $(IOTDATA_SRC)/iotdata-common
 IOTDATA_SRC_DEVICE  ?= $(IOTDATA_SRC)/iotdata-device
 IOTDATA_SRC_EXAMPLE ?= $(IOTDATA_SRC)/iotdata-example
+IOTDATA_SRC_DEPLOY  ?= $(IOTDATA_SRC)/iotdata-deploy
+
+# ------------------------------------------------------------------------------------------------
+# THE DEPLOYMENT -- which site's release tree a build stages into.
+#
+# A release is staged FOR A SITE, not for the world. Each deployment keeps its own tree at
+# iotdata-deploy/<deployment>/release, in the same one-subtree-per-platform shape the packaging
+# rules expect, so staging, packaging and OTA bundling all work there exactly as they did in the
+# single shared tree. $(IOTDATA_DEPLOYMENT) names which one: normally exported from .bashrc, or
+# per-invocation with `make stage IOTDATA_DEPLOYMENT=se-67194`.
+#
+# THERE IS NO DEFAULT, DELIBERATELY. A release staged into the wrong site's tree is
+# indistinguishable from a correct one afterwards -- same name, same manifest, same bytes -- and the
+# first evidence would be which fleet got the update. A default would make that the quiet case, so
+# the staging rules refuse instead.
+#
+# They refuse IN THE RECIPE, not here: an unset deployment must not break a build that is only
+# compiling, and `make all` has nothing to do with where a release would go.
+IOTDATA_DEPLOYMENT ?=
+IOTDATA_DEPLOYMENT_DIR     = $(IOTDATA_SRC_DEPLOY)/$(IOTDATA_DEPLOYMENT)
+IOTDATA_DEPLOYMENT_RELEASE = $(IOTDATA_DEPLOYMENT_DIR)/release
+# One line, expanded into a recipe by whoever needs the deployment to be named. It lists what is
+# actually there, because the answer to "it is not set" is nearly always one of two or three names
+# and nobody remembers which spelling.
+IOTDATA_DEPLOYMENT_ASSERT = \
+    test -n "$(IOTDATA_DEPLOYMENT)" || { \
+      echo "IOTDATA_DEPLOYMENT is not set -- say which deployment to stage into:" >&2; \
+      echo "    export IOTDATA_DEPLOYMENT=<name>      (normally in .bashrc)" >&2; \
+      echo "    make stage IOTDATA_DEPLOYMENT=<name>  (one build only)" >&2; \
+      echo "  deployments in $(IOTDATA_SRC_DEPLOY): $$(ls -1 $(IOTDATA_SRC_DEPLOY) 2>/dev/null | tr '\n' ' ')" >&2; \
+      exit 1; }
 
 # iotdata-example internal sub-paths.
 #   IOTDATA_SRC_EXAMPLE_SIMULATOR -> simulator sources

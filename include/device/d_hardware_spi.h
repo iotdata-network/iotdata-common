@@ -25,7 +25,7 @@ spi_device_handle_t s_spi_dev = NULL;
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void _hw_spi_pins_enable(void) {
+static inline void _hw_spi_pins_enable(void) {
     // mosi/clk enabled by spi_bus_initialize()
     // DC pin: output, default low (command mode)
     hw_gpio_cfg_enable_output(s_spi_dc);
@@ -36,7 +36,7 @@ void _hw_spi_pins_enable(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void _hw_spi_pins_disable(void) {
+static inline void _hw_spi_pins_disable(void) {
     hw_gpio_cfg_disable_four(s_spi_mosi, s_spi_clk, s_spi_dc, s_spi_busy);
     if (s_spi_cs != GPIO_NUM_NC)
         hw_gpio_cfg_disable(s_spi_cs);
@@ -90,35 +90,6 @@ hw_spi_start_failed:
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_spi_cmd(const uint8_t cmd) {
-    hw_gpio_set(s_spi_dc, false);                                                                   // command mode
-    return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = 8, .tx_buffer = &cmd })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-esp_err_t hw_spi_data(const uint8_t val) {
-    hw_gpio_set(s_spi_dc, true);                                                                    // data mode
-    return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = 8, .tx_buffer = &val })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-esp_err_t hw_spi_data_bulk(const uint8_t *const data, const size_t len) {
-    hw_gpio_set(s_spi_dc, true);                                                                          // data mode
-    return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = len * 8, .tx_buffer = data })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-bool hw_spi_busy(void) {
-    return hw_gpio_get(s_spi_busy);
-}
-
-D_WAIT_READY_FUNC(hw_spi_busy_wait, !hw_spi_busy, _SPI_BUSY_DELAY_MS, false, "hw_spi_busy_wait")
-
-// ------------------------------------------------------------------------------------------------------------------------
-
 void hw_spi_stop(void) {
     assert(s_spi_dev);
 
@@ -132,7 +103,36 @@ void hw_spi_stop(void) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_spi_cmd_data(const uint8_t cmd, const uint8_t data) {
+static inline esp_err_t hw_spi_cmd(const uint8_t cmd) {
+    hw_gpio_set(s_spi_dc, false);                                                                   // command mode
+    return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = 8, .tx_buffer = &cmd })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_spi_data(const uint8_t val) {
+    hw_gpio_set(s_spi_dc, true);                                                                    // data mode
+    return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = 8, .tx_buffer = &val })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_spi_data_bulk(const uint8_t *const data, const size_t len) {
+    hw_gpio_set(s_spi_dc, true);                                                                          // data mode
+    return spi_device_transmit(s_spi_dev, &(spi_transaction_t){ .length = len * 8, .tx_buffer = data })); // note stack local variables are OK with spi_device_transmit but not if going to DMA
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline bool hw_spi_busy(void) {
+    return hw_gpio_get(s_spi_busy);
+}
+
+D_WAIT_READY_FUNC(hw_spi_busy_wait, !hw_spi_busy, _SPI_BUSY_DELAY_MS, false, "hw_spi_busy_wait")
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_spi_cmd_data(const uint8_t cmd, const uint8_t data) {
     esp_err_t rc;
     if ((rc = hw_spi_cmd(cmd)) == ESP_OK)
         rc = hw_spi_data(data);
@@ -141,7 +141,7 @@ esp_err_t hw_spi_cmd_data(const uint8_t cmd, const uint8_t data) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_spi_cmd_data_bulk(const uint8_t cmd, const uint8_t *const data, const size_t len) {
+static inline esp_err_t hw_spi_cmd_data_bulk(const uint8_t cmd, const uint8_t *const data, const size_t len) {
     esp_err_t rc;
     if ((rc = hw_spi_cmd(cmd)) == ESP_OK)
         rc = hw_spi_data_bulk(data, len);
@@ -150,7 +150,7 @@ esp_err_t hw_spi_cmd_data_bulk(const uint8_t cmd, const uint8_t *const data, con
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_spi_cmd_busy_wait(const uint8_t cmd, const uint32_t delay_ms, const uint32_t timeout_ms) {
+static inline esp_err_t hw_spi_cmd_busy_wait(const uint8_t cmd, const uint32_t delay_ms, const uint32_t timeout_ms) {
     esp_err_t rc;
     if ((rc = hw_spi_cmd(cmd)) == ESP_OK) {
         if (delay_ms > 0)

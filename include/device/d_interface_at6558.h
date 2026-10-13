@@ -294,8 +294,7 @@ esp_err_t _gnss_validate(const gnss_reading_t *const out, const gnss_strategy_t 
         ESP_RETURN_ON_FALSE(got_gga, DEV_ERR_NO_FIX, __tag_device_at6558, "read: GGA timeout");
         ESP_RETURN_ON_FALSE(out->latitude >= _GNSS_LAT_MIN && out->latitude <= _GNSS_LAT_MAX && out->longitude >= _GNSS_LON_MIN && out->longitude <= _GNSS_LON_MAX, DEV_ERR_BAD_READING, __tag_device_at6558,
                             "read: GGA position out of range: lat=%.6f lon=%.6f", (double)out->latitude, (double)out->longitude);
-        /* Each 0 means "do not care", so a caller that has not thought about it gets what it
-           always got. */
+        /* Each 0 means "do not care", so a caller that has not thought about it gets what it always got. */
         ESP_RETURN_ON_FALSE(st->min_quality == 0 || out->fix_quality >= st->min_quality, DEV_ERR_BAD_READING, __tag_device_at6558, "read: fix quality %u below %u (6 is an ESTIMATE, not a fix)", (unsigned)out->fix_quality,
                             (unsigned)st->min_quality);
         ESP_RETURN_ON_FALSE(st->min_satellites == 0 || out->satellites >= st->min_satellites, DEV_ERR_BAD_READING, __tag_device_at6558, "read: %u satellites, wanted %u", (unsigned)out->satellites, (unsigned)st->min_satellites);
@@ -399,7 +398,7 @@ esp_err_t gnss_setup(const gnss_config_t *const config) {
     ESP_ERROR_CHECK_BOOLEAN(PIN_GNSS_PPS == GPIO_NUM_NC || GPIO_IS_VALID_INPUT_GPIO(PIN_GNSS_PPS));
 
     _GNSS_RTC_INIT();
-    memcpy(&_gnss_rtc.config, config, sizeof(_gnss_rtc.config));
+    _gnss_rtc.config = *config;
 
     ESP_LOGD(__tag_device_at6558, "setup: strategy=(fix_timeout_ms=%" PRIu32 "/nmea_timeout_ms=%" PRIu32 "/max_fix_retries=%d/min_satellites=%d/hdop_max=%.1f)", _GNSS_CONFIG(strategy).fix_timeout_ms, _GNSS_CONFIG(strategy).nmea_timeout_ms,
              _GNSS_CONFIG(strategy).max_fix_retries, _GNSS_CONFIG(strategy).min_satellites, (double)_GNSS_CONFIG(strategy).hdop_max);

@@ -468,14 +468,12 @@ static inline buffer_handle_t iotdata_node_down_window(iotdata_node_down_t *cons
             iotdata_node_down_station_t *const src = (pass == 0) ? st : &ds->station[0];
             for (int j = 0; j < IOTDATA_NODE_DOWN_SLOTS; j++) {
                 iotdata_node_down_slot_t *const sl = &src->slot[j];
-                if (sl->frame != BUFFER_NONE) {
-                    if (pass == 1 && _iotdata_node_down_sent_recently(ds, st, sl->hash, now_ms))
-                        continue;
-                    if (best == NULL || (int32_t)(sl->arrived_ms - best->arrived_ms) < 0) {
-                        best = sl;
-                        from = src;
-                    }
-                }
+                if (sl->frame != BUFFER_NONE)
+                    if (!(pass == 1 && _iotdata_node_down_sent_recently(ds, st, sl->hash, now_ms)))
+                        if (best == NULL || (int32_t)(sl->arrived_ms - best->arrived_ms) < 0) {
+                            best = sl;
+                            from = src;
+                        }
             }
         }
         if (best == NULL)

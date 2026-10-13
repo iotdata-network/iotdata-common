@@ -37,13 +37,13 @@ static bool s_uart_installed[HW_UART_PORTS] = { false };
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void _hw_uart_pins_enable(void) {
+static inline void _hw_uart_pins_enable(void) {
     // tx/rx enabled by uart_set_pin()
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void _hw_uart_pins_disable(const uart_port_t port) {
+static inline void _hw_uart_pins_disable(const uart_port_t port) {
     // tx/rx released by uart_driver_delete() anyway
     const gpio_num_t tx = s_uart_tx[port], rx = s_uart_rx[port];
     if (tx != GPIO_NUM_NC && rx != GPIO_NUM_NC)
@@ -104,37 +104,6 @@ hw_uart_start_failed:
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-int hw_uart_write(const uart_port_t port, const uint8_t *const data, const size_t len) {
-    return uart_write_bytes(port, data, len);
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-esp_err_t hw_uart_wait_tx_done(const uart_port_t port, const int timeout_ms) {
-    return uart_wait_tx_done(port, pdMS_TO_TICKS(timeout_ms));
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-int hw_uart_read(const uart_port_t port, uint8_t *const buf, const size_t len, const int timeout_ms) {
-    return uart_read_bytes(port, buf, len, pdMS_TO_TICKS(timeout_ms));
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-size_t hw_uart_available(const uart_port_t port) {
-    size_t n = 0;
-    return (uart_get_buffered_data_len(port, &n) == ESP_OK) ? n : 0;
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-esp_err_t hw_uart_flush(const uart_port_t port) {
-    return uart_flush_input(port);
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
 void hw_uart_stop(const uart_port_t port) {
     assert(port >= 0 && port < HW_UART_PORTS);
     assert(s_uart_installed[port]);
@@ -144,6 +113,37 @@ void hw_uart_stop(const uart_port_t port) {
     _hw_uart_pins_disable(port);
 
     ESP_LOGD("hw_uart", "stopped: port=%d, pins released", (int)port);
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline int hw_uart_write(const uart_port_t port, const uint8_t *const data, const size_t len) {
+    return uart_write_bytes(port, data, len);
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_uart_wait_tx_done(const uart_port_t port, const int timeout_ms) {
+    return uart_wait_tx_done(port, pdMS_TO_TICKS(timeout_ms));
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline int hw_uart_read(const uart_port_t port, uint8_t *const buf, const size_t len, const int timeout_ms) {
+    return uart_read_bytes(port, buf, len, pdMS_TO_TICKS(timeout_ms));
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline size_t hw_uart_available(const uart_port_t port) {
+    size_t n = 0;
+    return (uart_get_buffered_data_len(port, &n) == ESP_OK) ? n : 0;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_uart_flush(const uart_port_t port) {
+    return uart_flush_input(port);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------

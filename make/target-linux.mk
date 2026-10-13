@@ -38,12 +38,19 @@ VERSION        ?= 0.0.0
 VERSION_STAMP  ?= $(shell date -u +%Y%m%d%H%M)
 CFLAGS_DEFINES += -DIOTDATA_NODE_VERSION_APP='"$(NAME)"' -DIOTDATA_NODE_VERSION_SEMVER='"$(VERSION)"' -DIOTDATA_NODE_VERSION_STAMP='"$(VERSION_STAMP)"'
 
-# Staging, the same shape the esp32 rule uses: one release tree, one subtree per platform, one
-# manifest format. See iotdata-common/tools/ota-stage.
+# Staging, the same shape the esp32 rule uses: the deployment's release tree, one subtree per
+# platform, one manifest format. The root comes from $(IOTDATA_DEPLOYMENT) (config.mk), which has no
+# default -- a release belongs to a site. See iotdata-common/tools/ota-stage.
 _TARGET_LINUX_MK_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 OTA_STAGE      ?= $(_TARGET_LINUX_MK_DIR)/../tools/ota-stage/ota-stage
-STAGE_ROOT     ?= $(abspath $(_TARGET_LINUX_MK_DIR)/../../iotdata-release)
+STAGE_ROOT     ?= $(IOTDATA_DEPLOYMENT_RELEASE)
 STAGE_ARGS     ?=
+# `make stage STAGE_FORCE=1` -> --force: restage over a release already staged under this name and
+# version. 0, no and false are off. Spelled the same as the esp32 rule's, and for the reason given
+# there: FORCE alone is a build-side target name in that file, and one word meaning two things is
+# not worth the keystrokes it saves.
+STAGE_FORCE    ?=
+_STAGE_FORCE    = $(if $(filter-out 0 no false,$(STAGE_FORCE)),--force)
 # The oldest loader this build needs. Means little on linux today -- it is carried so an OTA blob
 # from a linux build has the same fields as one from an esp32 build, and so an esp32 gateway later
 # slots in without the format gaining a platform-conditional.
@@ -107,13 +114,16 @@ $(foreach _s,$(SOURCES_EXTRA),$(eval $(call _TARGET_LINUX_EXTRA_RULE,$(_s))))
 
 all: $(TARGET)
 
-## ---- stage: into the iotdata-release tree, as <name>-<version> -------------
+## ---- stage: into the deployment's release tree, as <name>-<version> --------
 ## The platform subtree is derived from the binary's own ELF header, so a cross-built aarch64
 ## artefact cannot be staged into the x86_64 tree by a forgotten variable.
 stage: $(TARGET)
+	@$(IOTDATA_DEPLOYMENT_ASSERT)
 	@test "$(VERSION)" != "0.0.0" || { echo "stage: VERSION is still the 0.0.0 default -- set it at the release point" >&2; exit 1; }
-	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- clone the iotdata-release repo there first" >&2; exit 1; }
-	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --app $(TARGET) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS)
+	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- deployment '$(IOTDATA_DEPLOYMENT)' has no release tree yet; mkdir it (and give each platform subtree the one-line Makefile that includes iotdata-common/make/release.mk)" >&2; exit 1; }
+	@test -z "$(FORCE)" || echo "stage: FORCE=$(FORCE) is not the restage switch -- you want STAGE_FORCE=1" >&2
+	@test -z "$(_STAGE_FORCE)" || echo "stage: FORCING over $(NAME)-$(VERSION) -- re-cut anything in ota/ that came from it" >&2
+	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --app $(TARGET) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS) $(_STAGE_FORCE)
 
 # MAKEFILE_LIST is a prerequisite because the makefiles carry the compile flags -- NAME, VERSION and
 # the rest -- and make has no other way to notice that one of them changed. Without it, bumping

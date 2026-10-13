@@ -894,7 +894,6 @@ const blackbox_struct_config_t iotdata_node_blackbox_config_power_detail = { "PW
 
 #if defined(ESP_PLATFORM)
 #include "esp_attr.h"
-#include "esp_timer.h"
 
 /* esp32 clock = "seq:up_ms". `seq` is a monotonic counter in RTC_NOINIT so it survives deep sleep and
  * resets -- which also means it holds GARBAGE on a true cold start.
@@ -919,7 +918,7 @@ void iotdata_node_blackbox_begin(void) {
 }
 
 int iotdata_node_blackbox_clock(char *out, size_t n) {
-    return snprintf(out, n, "%u:%u", (unsigned)(++iotdata_node_blackbox_seq), (unsigned)(esp_timer_get_time() / 1000));
+    return snprintf(out, n, "%u:%u", (unsigned)(++iotdata_node_blackbox_seq), (unsigned)hw_time_ms());
 }
 #else
 void iotdata_node_blackbox_begin(void) { /* host: the clock is a real timestamp, nothing to seed */

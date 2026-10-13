@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /*
- * ota-stage -- put a built release into the iotdata-release tree, with a manifest.
+ * ota-stage -- put a built release into a deployment's release tree, with a manifest.
  *
- *   ota-stage -d .../iotdata-release -n relay   --version 0.9.9 --build build_release
- *   ota-stage -d .../iotdata-release -n gateway --version 0.9.8 --app iotdata_gateway --stamp-file iotdata_gateway.buildinfo
+ *   ota-stage -d .../iotdata-deploy/se-67194/release -n relay   --version 0.9.9 --build build_release
+ *   ota-stage -d .../iotdata-deploy/se-67194/release -n gateway --version 0.9.8 --app iotdata_gateway --stamp-file iotdata_gateway.buildinfo
  *
  * TWO PLATFORM SHAPES, ONE MANIFEST. An esp32 release is a flash set -- bootloader, partition table,
  * otadata, app -- described by ESP-IDF's flasher_args.json. A linux release is one executable. What
@@ -42,7 +42,7 @@ const A = process.argv.slice(2),
     };
 if (A.length === 0 || A.includes('-h') || A.includes('--help')) {
     console.log(`usage: ota-stage [options]
-  -d, --dir DIR        the iotdata-release tree                     [required]
+  -d, --dir DIR        the release tree (<deployment>/release)      [required]
   -n, --name NAME      release name, as the node reports itself     [required]
       --version V      release version                             [required]
       --platform P     subtree: esp32c3 | aarch64 | x86_64 | ...    (derived when it can be)
@@ -56,7 +56,7 @@ if (A.length === 0 || A.includes('-h') || A.includes('--help')) {
     process.exit(0);
 }
 
-const ROOT = sopt('d', 'dir', null) || die('set -d <iotdata-release tree>');
+const ROOT = sopt('d', 'dir', null) || die('set -d <release tree, e.g. .../iotdata-deploy/<deployment>/release>');
 const NAME = sopt('n', 'name', null) || die('set -n <name>');
 const VERSION = opt('version', null) || die('set --version <version>');
 const BOOTLOADER_MIN = parseInt(opt('bootloader-min', '1'), 10);
@@ -167,7 +167,7 @@ const base = `${NAME}-${VERSION}`;
 const dest = path.join(ROOT, platform, 'bin');
 fs.mkdirSync(dest, { recursive: true });
 const manifestPath = path.join(dest, base + '.json');
-if (fs.existsSync(manifestPath) && !FORCE) die(`${base} is already staged in ${dest} -- bump the version, or --force`);
+if (fs.existsSync(manifestPath) && !FORCE) die(`${base} is already staged in ${dest} -- bump the version, or restage over it with --force (from make: STAGE_FORCE=1)`);
 
 const files = {}, outFiles = {};
 let appEntry = null;
@@ -196,7 +196,16 @@ if (BUILD) {
     const leaf = `${base}.app`;
     fs.copyFileSync(APP, path.join(dest, leaf));
     fs.chmodSync(path.join(dest, leaf), 0o755);
-    const info = { size: fs.statSync(APP).size, sha256: sha256(APP), image_sha256: imageSha256(APP), role: 'app' };
+    /* ON LINUX THE FILE *IS* THE IMAGE. There is no esptool header to read a hash_appended flag out
+       of and no appended digest to read back, so the identity is the digest of the whole
+       executable -- which is exactly what the far end can recompute for the binary it holds.
+       Both fields carry the same number here, and that is the honest answer rather than a second
+       definition of identity: image_sha256 is what ota-bundle puts in the kvr header and what a
+       delta's base is matched on, so it has to be a number both ends can produce.
+       imageSha256() is esp32-ONLY -- it refuses anything whose first byte is not 0xe9 -- so calling
+       it here meant `make stage` could never succeed for a linux target. */
+    const digest = sha256(APP);
+    const info = { size: fs.statSync(APP).size, sha256: digest, image_sha256: digest, role: 'app' };
     files[leaf] = info;
     appEntry = Object.assign({ file: leaf }, info);
 }

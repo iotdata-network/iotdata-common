@@ -55,7 +55,7 @@ static inline esp_err_t hw_adc_oneshot_channel(const gpio_num_t gpio, adc_unit_t
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline esp_err_t hw_adc_oneshot_start(const adc_unit_t unit, const adc_channel_t channel, const adc_atten_t atten, const adc_bitwidth_t bitwidth) {
+esp_err_t hw_adc_oneshot_start(const adc_unit_t unit, const adc_channel_t channel, const adc_atten_t atten, const adc_bitwidth_t bitwidth) {
     assert(!s_hw_adc.unit);
 
     ESP_RETURN_ON_ERROR(adc_oneshot_new_unit(&(const adc_oneshot_unit_init_cfg_t){ .unit_id = unit }, &s_hw_adc.unit), __func__, "adc_oneshot_new_unit");
@@ -87,7 +87,7 @@ static inline esp_err_t hw_adc_oneshot_start(const adc_unit_t unit, const adc_ch
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline esp_err_t hw_adc_oneshot_stop(void) {
+esp_err_t hw_adc_oneshot_stop(void) {
     if (s_hw_adc.cali) {
         (void)adc_cali_delete_scheme_curve_fitting(s_hw_adc.cali);
         s_hw_adc.cali = NULL;

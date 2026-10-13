@@ -3,12 +3,12 @@
 #ifndef EMU_LINUX
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
-#include "esp_attr.h"
 #include "esp_sleep.h"
-#include "esp_timer.h"
 #include "driver/gpio.h"
 #pragma GCC diagnostic pop
 #endif
+
+// XXX convert to d_hardware_gpio.h
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -134,7 +134,7 @@ void IRAM_ATTR button_isr_handler(__attribute__((unused)) void *const arg) {
 
     _button_rtc.isr_total++;
 
-    const int64_t now = esp_timer_get_time();
+    const int64_t now = hw_timer_get_time();
 
     if (gpio_get_level(_button_rtc.config.pins.gpio_button) == 0) {
         // Pin is LOW (pressed) — record start only if not already in a press
@@ -201,14 +201,14 @@ void button_apply_wakeup_light(void) {
 bool button_event_in_progress(void) {
     if (!_BUTTON_STORE_RTC_VALID())
         return false;
-    _button_store_resolve_pending_single(esp_timer_get_time());
+    _button_store_resolve_pending_single(hw_timer_get_time());
     return _button_rtc.click_time > 0;
 }
 
 bool button_event_timed_out(void) {
     if (!_BUTTON_STORE_RTC_VALID())
         return true;
-    const int64_t now = esp_timer_get_time();
+    const int64_t now = hw_timer_get_time();
     _button_store_resolve_pending_single(now);
     return (now - _button_rtc.press_time > (_button_rtc.config.extra_long_press_ms * US_PER_MS) + (50 * US_PER_MS)); // nominal
 }
@@ -216,7 +216,7 @@ bool button_event_timed_out(void) {
 int button_event_count(void) {
     if (!_BUTTON_STORE_RTC_VALID())
         return 0;
-    _button_store_resolve_pending_single(esp_timer_get_time());
+    _button_store_resolve_pending_single(hw_timer_get_time());
     return (_button_rtc.write_index >= _button_rtc.read_index) ? _button_rtc.write_index - _button_rtc.read_index : BUTTON_EVENT_BUFFER_SIZE - _button_rtc.read_index + _button_rtc.write_index;
 }
 
@@ -282,7 +282,7 @@ void button_debug(button_handle_t *const handle) {
     if (!_BUTTON_STORE_RTC_VALID())
         ESP_LOGI(__tag_device_button, "button_events: bad rtc");
     else {
-        const int64_t now_us = esp_timer_get_time();
+        const int64_t now_us = hw_timer_get_time();
 #define _BUTTON_AGE_MS(ts) ((ts) > 0 && (ts) <= now_us ? (int64_t)((now_us - (ts)) / US_PER_MS) : (int64_t)-1)
         ESP_LOGD(__tag_device_button, "gpio=%d, wr/rd_idx=%d/%d, cnt=%" PRIu32 ", press_time=%" PRId64 "ms, click_time=%" PRId64 "ms, isr_total/debounced=%" PRIu32 "/%" PRIu32, (int)gpio_get_level(handle->config->pins.gpio_button),
                  _button_rtc.write_index, _button_rtc.read_index, _button_rtc.event_count, _BUTTON_AGE_MS(_button_rtc.press_time), _BUTTON_AGE_MS(_button_rtc.click_time), _button_rtc.isr_total, _button_rtc.isr_debounced);
@@ -331,7 +331,7 @@ void button_hardware_init(void *const _handle) {
         ESP_ERROR_CHECK(gpio_intr_enable(handle->config->pins.gpio_button));
 
         if (gpio_get_level(handle->config->pins.gpio_button) == 0) {
-            _button_rtc.press_time = esp_timer_get_time();
+            _button_rtc.press_time = hw_timer_get_time();
             ESP_ERROR_CHECK(esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(BIT(handle->config->pins.gpio_button), ESP_GPIO_WAKEUP_GPIO_HIGH));
         } else {
             _button_rtc.press_time = 0;

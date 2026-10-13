@@ -347,7 +347,7 @@ esp_err_t bme280_setup(const bme280_config_t *const config) {
     ESP_ERROR_CHECK_BOOLEAN(GPIO_IS_VALID_OUTPUT_GPIO(PIN_DEVICE_I2C_SCL));
 
     _BME280_RTC_INIT();
-    memcpy(&_bme280_rtc.config, config, sizeof(_bme280_rtc.config));
+    _bme280_rtc.config = *config;
     if (_bme280_rtc.config.i2c_addr == 0u)
         _bme280_rtc.config.i2c_addr = BME280_I2C_ADDR;
 

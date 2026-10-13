@@ -16,11 +16,11 @@ esp32-tool deploy   -p PORT -b BUILD_DIR [--pull HOST:PATH]    # flash, then mon
 ```
 
 `flash` and `deploy` also take **`-f NAME-VERSION`**, which flashes a *staged release* out of the
-iotdata-release tree instead of a build directory — the manifest beside it supplies the chip, the
+staged release tree instead of a build directory — the manifest beside it supplies the chip, the
 offsets and the binaries, so one name covers the whole set:
 
 ```sh
-esp32-tool deploy -b /opt/iotdata/src/iotdata-release/esp32c3/bin -f relay-0.9.9
+esp32-tool deploy -b /opt/iotdata/src/iotdata-deploy/se-67194/release/esp32c3/bin -f relay-0.9.9
 ```
 
 Staging is not this tool's job (see `iotdata-common/tools/ota-stage`); flashing what was staged is.

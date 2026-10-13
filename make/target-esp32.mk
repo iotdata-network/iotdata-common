@@ -12,10 +12,14 @@
 # build_release/): ESP_LOG compiled out and assertions silenced, so the format
 # strings drop out of flash. Kept entirely separate from the verbose build/.
 #
-# `make stage` then copies that image into the iotdata-release repo as
+# `make stage` then copies that image into THE DEPLOYMENT'S release tree as
 # <NAME>-<VERSION>, beside a manifest esp32-tool can flash by name:
+#   export IOTDATA_DEPLOYMENT=se-67194          # normally in .bashrc
 #   make release && make stage VERSION=0.9.3
-#   esp32-tool deploy -b .../iotdata-release/esp32c3/bin -f iotdata-relay-0.9.3
+#   make stage STAGE_FORCE=1                    # restage over the same name+version
+#   esp32-tool deploy -b .../iotdata-deploy/se-67194/release/esp32c3/bin -f relay-0.9.3
+# A release belongs to a site, so there is no default deployment and staging
+# refuses when $(IOTDATA_DEPLOYMENT) is unset -- see config.mk for why.
 # It stages the LEAN build by default, because that is the one that would go out
 # over the air -- STAGE_FROM=build to stage the verbose one deliberately.
 #
@@ -56,9 +60,11 @@ SDKCONFIG_DEFAULTS ?= sdkconfig.defaults
 RELEASE_DIR        ?= build_release
 RELEASE_DEFAULTS   ?= $(RELEASE_DIR)/sdkconfig.defaults
 
-# staging: the sibling release repo, one subtree per chip, so PLATFORM picks the directory and an
-# esp32c3 release can never land in an esp32s3 tree by a typo.
-STAGE_ROOT   ?= $(abspath $(_TARGET_ESP32_MK_DIR)/../../iotdata-release)
+# staging: the deployment's release tree, one subtree per chip, so PLATFORM picks the directory and
+# an esp32c3 release can never land in an esp32s3 tree by a typo. The ROOT comes from
+# $(IOTDATA_DEPLOYMENT) (config.mk) rather than from this file's own location: what the tree is
+# relative to is a site, not a source checkout.
+STAGE_ROOT   ?= $(IOTDATA_DEPLOYMENT_RELEASE)
 STAGE_FROM   ?= $(RELEASE_DIR)
 # The oldest bootloader this app will run on, recorded in the staged manifest and asserted by an OTA
 # blob's header. A FLOOR, not an exact match. Bump it when the app starts needing something a newer
@@ -66,6 +72,16 @@ STAGE_FROM   ?= $(RELEASE_DIR)
 # the floor to mean anything, or every bootloader in the fleet claims version 1 forever.
 BOOTLOADER_MIN ?= 1
 STAGE_ARGS   ?=
+# `make stage STAGE_FORCE=1` -> --force: restage over a release already staged under this name and
+# version. 0, no and false are off, so STAGE_FORCE=0 does not read as yes.
+#
+# NOT called FORCE: that name is already taken in this file by the phony always-rebuild target
+# further down, which is a build concept and nothing to do with this. They would not actually
+# collide -- make keeps target and variable names apart -- but one word meaning two things in one
+# makefile is how the next person loses ten minutes, so the switch wears the STAGE_ prefix the rest
+# of staging wears.
+STAGE_FORCE  ?=
+_STAGE_FORCE  = $(if $(filter-out 0 no false,$(STAGE_FORCE)),--force)
 OTA_STAGE    ?= $(_TARGET_ESP32_MK_DIR)/../tools/ota-stage/ota-stage
 
 # The common IDF config baseline lives beside this makefile. On first build a project's local
@@ -169,14 +185,22 @@ release: | $(SDKCONFIG_DEFAULTS)
 	$(BUILDER) -B $(RELEASE_DIR) -D SDKCONFIG=$(RELEASE_DIR)/sdkconfig -D SDKCONFIG_DEFAULTS=$(RELEASE_DEFAULTS) $(BUILDER_DEFS) build
 	@echo ""
 	@echo "release image: $$(ls $(RELEASE_DIR)/*.bin 2>/dev/null)"
-## ---- stage: copy a built image into the iotdata-release repo ---------------
+## ---- stage: copy a built image into the deployment's release tree ----------
 ## Named <NAME>-<VERSION> with a manifest beside it; no compression, no archive, so the staged
 ## .bin is byte-identical to the build's and a release can be diffed against a rebuild.
 stage:
+	@$(IOTDATA_DEPLOYMENT_ASSERT)
 	@test "$(VERSION)" != "0.0.0" || { echo "stage: VERSION is still the 0.0.0 default -- set it at the release point (make stage VERSION=0.9.3)" >&2; exit 1; }
-	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- clone the iotdata-release repo there first" >&2; exit 1; }
+	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- deployment '$(IOTDATA_DEPLOYMENT)' has no release tree yet; mkdir it (and give each platform subtree the one-line Makefile that includes iotdata-common/make/release.mk)" >&2; exit 1; }
 	@test -f "$(STAGE_FROM)/flasher_args.json" || { echo "stage: nothing built in $(STAGE_FROM) -- run 'make release' first, or STAGE_FROM=build to stage the verbose build" >&2; exit 1; }
-	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --build $(STAGE_FROM) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS)
+	@# FORCE=1 is the obvious guess and it does nothing here, silently, because FORCE is a target in
+	@# this makefile and not this switch. Say so rather than let the guess look like a refusal.
+	@test -z "$(FORCE)" || echo "stage: FORCE=$(FORCE) is not the restage switch (FORCE is this makefile's always-rebuild target) -- you want STAGE_FORCE=1" >&2
+	@# A FORCED restage replaces an identical name and version with different bytes, so anything cut
+	@# from the old one -- an OTA blob, or a delta that used it as a base -- describes an image that
+	@# is no longer in the tree, and a node already running the old one cannot be told apart by name.
+	@test -z "$(_STAGE_FORCE)" || echo "stage: FORCING over $(NAME)-$(VERSION) -- re-cut anything in ota/ that came from it" >&2
+	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --build $(STAGE_FROM) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS) $(_STAGE_FORCE)
 
 release-size:
 	$(BUILDER) -B $(RELEASE_DIR) size

@@ -24,7 +24,8 @@
  * On non-esp32 (host) builds this compiles to no-ops, so shared code can include it unconditionally.
  *
  * esp32 component requirements (the TU that defines the implementation must be in a component that
- * REQUIRES these): esp_driver_usb_serial_jtag, vfs, esp_app_format. (esp_timer / esp_hw_support /
+ * REQUIRES these): esp_driver_usb_serial_jtag, vfs, esp_app_format, app_update (`vers` reports the
+ * running slot through iotdata_node_firmware.h). (esp_timer / esp_hw_support /
  * heap / log / esp_system come in as common dependencies.)
  */
 
@@ -57,7 +58,6 @@
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "esp_system.h"
-#include "esp_timer.h"
 #pragma GCC diagnostic pop
 #endif
 
@@ -258,18 +258,37 @@ static const char *iotdata_node_con_reset_name(int r) {
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
+/* THE IDENTITY THIS REPORTS IS THE ONE THE REST OF THE SYSTEM USES, which it did not used to be.
+   It printed esp_app_desc_t and nothing else, and that descriptor answers a different question:
+   project_name is the CMake project (iotdata_relay), version is a git describe (5b7555d-dirty), and
+   date/time are deliberately BLANK under CONFIG_APP_REPRODUCIBLE_BUILD -- so a box running
+   relay 0.9.10 reported `app=iotdata_relay vers=5b7555d-dirty built=`, with the release nowhere in
+   it. An OTA blob is matched on app/semver/stamp (iotdata_node_content_ota.h) and the fleet reports
+   VERSION over the air in the same grammar, so those are what "which version is this?" means.
+
+   The first two lines are the boot banner's own, built by the same two calls, so what a reboot
+   logged and what the console answers now cannot drift -- and after an update the one that matters
+   is `firmware:`, which says which slot is running and whether it is still ON PROBATION.
+   (Caps are the one thing the banner has and this does not: they live in the platform state, which
+   is declared after this header. They are a build-time inventory, not an answer to this question.)
+
+   iotdata_node_version.h and iotdata_node_firmware.h are both included ahead of this file by
+   iotdata_node_platform.h -- the same arrangement iotdata_node_console_content.h relies on. */
 static void iotdata_node_con_cmd_vers(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
     const esp_app_desc_t *const d = esp_app_get_description();
     esp_chip_info_t chip;
     esp_chip_info(&chip);
-    emit("app=%s vers=%s built=%s %s\n", d ? d->project_name : "?", d ? d->version : "?", d ? d->date : "?", d ? d->time : "?");
+    char vbuf[IOTDATA_NODE_VERSION_STR_MAX + 1], ibuf[IOTDATA_NODE_FIRMWARE_STR_MAX + 1];
+    emit("version: %s\n", iotdata_node_version_str(vbuf, sizeof(vbuf), NULL));
+    emit("firmware: %s\n", iotdata_node_firmware_str(ibuf, sizeof(ibuf)));
+    emit("image: %s %s\n", d ? d->project_name : "?", d ? d->version : "?");
     emit("platform=%s chip-rev=%d cores=%d idf=%s\n", CONFIG_IDF_TARGET, (int)chip.revision, (int)chip.cores, esp_get_idf_version());
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
 static void iotdata_node_con_cmd_stat(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
-    emit("uptime=%us reset=%s\n", (unsigned)(esp_timer_get_time() / 1000000), iotdata_node_con_reset_name((int)esp_reset_reason()));
+    emit("uptime=%us reset=%s\n", (unsigned)(hw_time_ms() / 1000), iotdata_node_con_reset_name((int)esp_reset_reason()));
     emit("heap: free=%u min=%u largest=%u\n", (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
 }
 
@@ -435,7 +454,7 @@ void iotdata_node_console_tick(const uint32_t now_ms) {
     uint8_t chunk[64];
     size_t n;
     while ((n = iotdata_node_con_read(chunk, sizeof(chunk))) > 0u) {
-        for (size_t i = 0; i < n;) {
+        for (size_t i = 0; i < n;)
             if (iotdata_node_con_sink != NULL) {
                 const size_t avail = n - i;
                 size_t took = iotdata_node_con_sink(iotdata_node_con_sink_ctx, now_ms, chunk + i, avail);
@@ -444,21 +463,19 @@ void iotdata_node_console_tick(const uint32_t now_ms) {
                 i += took;
                 if (took < avail)
                     iotdata_node_console_sink_clear(); /* less than it was offered: finished */
-                continue;
-            }
-            const char c = (char)chunk[i++];
-            if (c == '\r') {
-                //
-            } else if (c == '\n') {
-                iotdata_node_con_line[iotdata_node_con_len] = '\0';
-                iotdata_node_con_len = 0; /* cleared BEFORE the dispatch, which may install a sink */
-                iotdata_node_console_dispatch(now_ms, iotdata_node_con_line);
-            } else if (iotdata_node_con_len < sizeof(iotdata_node_con_line) - 1) {
-                iotdata_node_con_line[iotdata_node_con_len++] = c;
             } else {
-                iotdata_node_con_len = 0; /* overlong line -> drop it */
+                const char c = (char)chunk[i++];
+                if (c == '\r') {
+                    //
+                } else if (c == '\n') {
+                    iotdata_node_con_line[iotdata_node_con_len] = '\0';
+                    iotdata_node_con_len = 0; /* cleared BEFORE the dispatch, which may install a sink */
+                    iotdata_node_console_dispatch(now_ms, iotdata_node_con_line);
+                } else if (iotdata_node_con_len < sizeof(iotdata_node_con_line) - 1)
+                    iotdata_node_con_line[iotdata_node_con_len++] = c;
+                else
+                    iotdata_node_con_len = 0; /* overlong line -> drop it */
             }
-        }
         if (n < sizeof(chunk))
             break; /* a short read is everything there was */
     }

@@ -301,18 +301,16 @@ static inline size_t _iotdata_node_console_content_sink(void *const ctx, const u
     size_t i = 0;
     while (i < len && s->up) {
         const char c = (char)buf[i++];
-        if (c == '\r')
-            continue;
-        if (c == '\n') {
+        if (c == '\r') {
+            //
+        } else if (c == '\n') {
             s->line[s->line_len] = '\0';
             const size_t was = s->line_len;
             s->line_len = 0u;
             if (was > 0u || s->line_over)
                 _iotdata_node_console_content_up_line(s, now_ms, s->line);
             s->line_over = false;
-            continue;
-        }
-        if (s->line_len < sizeof(s->line) - 1u)
+        } else if (s->line_len < sizeof(s->line) - 1u)
             s->line[s->line_len++] = c;
         else
             s->line_over = true;

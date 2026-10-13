@@ -3,10 +3,11 @@
 #ifndef EMU_LINUX
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
-#include "esp_timer.h"
 #include "driver/gpio.h"
 #pragma GCC diagnostic pop
 #endif
+
+// XXX convert to d_hardware_gpio.h
 
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -55,7 +56,7 @@ typedef struct {
 
 typedef struct {
     const led_config_t *config;
-    esp_timer_handle_t timer;
+    hw_timer_handle_t timer;
     volatile uint32_t timer_count;
     volatile bool busy;
     volatile led_pattern_t pattern;
@@ -83,7 +84,7 @@ void led_timer_callback(void *const arg) {
     case LED_PATTERN_BLINK:
         ESP_ERROR_CHECK(gpio_set_level(handle->config->pins.gpio_led, (uint32_t)(handle->blink_state++ % 2)));
         if (handle->blink_state >= handle->blink_count * 2) {
-            ESP_ERROR_CHECK(esp_timer_stop(handle->timer));
+            hw_timer_stop(handle->timer);
             handle->busy = false;
         }
         break;
@@ -96,7 +97,7 @@ void led_timer_callback(void *const arg) {
     case LED_PATTERN_SOLID:
     default:
         ESP_ERROR_CHECK(gpio_set_level(handle->config->pins.gpio_led, LED_LEVEL_OFF));
-        ESP_ERROR_CHECK(esp_timer_stop(handle->timer));
+        hw_timer_stop(handle->timer);
         handle->busy = false;
         break;
     }
@@ -105,20 +106,18 @@ void led_timer_callback(void *const arg) {
 void led_timer_init(led_handle_t *const handle) {
 
     if (!handle->timer)
-        ESP_ERROR_CHECK(esp_timer_create(
-            &(const esp_timer_create_args_t){
-                .callback = led_timer_callback,
-                .arg = handle,
-                .dispatch_method = ESP_TIMER_TASK,
-                .name = "led_timer_callback",
-            },
-            &handle->timer));
+        handle->timer = hw_timer_create(&(const hw_timer_conf_t){
+            .callback = led_timer_callback,
+            .arg = handle,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "led_timer_callback",
+        });
 }
 
 void led_timer_term(led_handle_t *const handle) {
 
     if (handle->timer) {
-        ESP_ERROR_CHECK(esp_timer_delete(handle->timer));
+        hw_timer_delete(handle->timer);
         handle->timer = NULL;
     }
 }
@@ -129,7 +128,7 @@ void led_stop(led_handle_t *const handle) {
 
     if (handle->busy) {
         if (handle->pattern == LED_PATTERN_BLINK || handle->pattern == LED_PATTERN_PULSE)
-            ESP_ERROR_CHECK(esp_timer_stop(handle->timer));
+            hw_timer_stop(handle->timer);
         ESP_ERROR_CHECK(gpio_set_level(handle->config->pins.gpio_led, LED_LEVEL_OFF));
         handle->busy = false;
     }
@@ -152,13 +151,13 @@ void led_start(led_handle_t *const handle, const led_pattern_t pattern, const ui
         handle->blink_count = arg > 0 ? (int)arg : 1;
         led_timer_init(handle);
         handle->busy = true;
-        ESP_ERROR_CHECK(esp_timer_start_periodic(handle->timer, handle->config->blink_ms * US_PER_MS));
+        hw_timer_start_periodic(handle->timer, handle->config->blink_ms * US_PER_MS);
         return;
 
     case LED_PATTERN_PULSE:
         led_timer_init(handle);
         handle->busy = true;
-        ESP_ERROR_CHECK(esp_timer_start_periodic(handle->timer, (arg > 0 ? arg : handle->config->pulse_slow_ms) * US_PER_MS));
+        hw_timer_start_periodic(handle->timer, (arg > 0 ? arg : handle->config->pulse_slow_ms) * US_PER_MS);
         return;
 
     case LED_PATTERN_OFF:

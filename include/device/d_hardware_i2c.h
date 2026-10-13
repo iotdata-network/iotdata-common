@@ -31,11 +31,11 @@ i2c_master_dev_handle_t s_i2c_dev = NULL;
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void _hw_i2c_pins_enable(void) {
+static inline void _hw_i2c_pins_enable(void) {
     // sda/scl enabled by i2c_new_master_bus()
 }
 
-void _hw_i2c_pins_disable(void) {
+static inline void _hw_i2c_pins_disable(void) {
     // sda/scl released by i2c_del_master_bus() anyway
     hw_gpio_cfg_disable_two(s_i2c_sda, s_i2c_scl);
 }
@@ -86,33 +86,6 @@ hw_i2c_start_failed:
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_i2c_write_reg(const uint8_t reg, const uint8_t *const data, const size_t len) {
-    ESP_RETURN_ON_FALSE(len <= I2C_MAX_TRANSFER_SIZE, ESP_ERR_INVALID_SIZE, __func__, "invalid length %d (> %d)", (int)len, I2C_MAX_TRANSFER_SIZE);
-    uint8_t buf[1 + I2C_MAX_TRANSFER_SIZE];
-    buf[0] = reg;
-    memcpy(buf + 1, data, len);
-    return i2c_master_transmit(s_i2c_dev, buf, 1 + len, I2C_TIMEOUT_MS);
-}
-// ------------------------------------------------------------------------------------------------------------------------
-
-esp_err_t hw_i2c_read_reg(const uint8_t reg, uint8_t *const data, const size_t len) {
-    return i2c_master_transmit_receive(s_i2c_dev, &reg, 1, data, len, I2C_TIMEOUT_MS);
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-esp_err_t hw_i2c_write_byte(const uint8_t reg, const uint8_t val) {
-    return i2c_master_transmit(s_i2c_dev, (uint8_t[2]){ reg, val }, 2, I2C_TIMEOUT_MS);
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-esp_err_t hw_i2c_read_byte(const uint8_t reg, uint8_t *const val) {
-    return i2c_master_transmit_receive(s_i2c_dev, &reg, 1, val, 1, I2C_TIMEOUT_MS);
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
 void hw_i2c_stop(void) {
     assert(s_i2c_dev && s_i2c_bus);
 
@@ -123,6 +96,33 @@ void hw_i2c_stop(void) {
     _hw_i2c_pins_disable();
 
     ESP_LOGD("hw_i2c", "stopped: pins released");
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_i2c_write_reg(const uint8_t reg, const uint8_t *const data, const size_t len) {
+    ESP_RETURN_ON_FALSE(len <= I2C_MAX_TRANSFER_SIZE, ESP_ERR_INVALID_SIZE, __func__, "invalid length %d (> %d)", (int)len, I2C_MAX_TRANSFER_SIZE);
+    uint8_t buf[1 + I2C_MAX_TRANSFER_SIZE];
+    buf[0] = reg;
+    memcpy(buf + 1, data, len);
+    return i2c_master_transmit(s_i2c_dev, buf, 1 + len, I2C_TIMEOUT_MS);
+}
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_i2c_read_reg(const uint8_t reg, uint8_t *const data, const size_t len) {
+    return i2c_master_transmit_receive(s_i2c_dev, &reg, 1, data, len, I2C_TIMEOUT_MS);
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_i2c_write_byte(const uint8_t reg, const uint8_t val) {
+    return i2c_master_transmit(s_i2c_dev, (uint8_t[2]){ reg, val }, 2, I2C_TIMEOUT_MS);
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline esp_err_t hw_i2c_read_byte(const uint8_t reg, uint8_t *const val) {
+    return i2c_master_transmit_receive(s_i2c_dev, &reg, 1, val, 1, I2C_TIMEOUT_MS);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -195,13 +195,13 @@ void hw_i2c_bus_stop(void) {
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_i2c_dev_probe(const uint8_t addr) {
+static inline esp_err_t hw_i2c_dev_probe(const uint8_t addr) {
     return i2c_master_probe(s_i2c_bus, addr, I2C_TIMEOUT_MS);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_i2c_dev_add(const uint8_t addr, i2c_master_dev_handle_t *const out) {
+static inline esp_err_t hw_i2c_dev_add(const uint8_t addr, i2c_master_dev_handle_t *const out) {
     return i2c_master_bus_add_device(s_i2c_bus,
                                      &(const i2c_device_config_t){
                                          .dev_addr_length = I2C_ADDR_BIT_LEN_7,
@@ -213,25 +213,25 @@ esp_err_t hw_i2c_dev_add(const uint8_t addr, i2c_master_dev_handle_t *const out)
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_i2c_dev_del(const i2c_master_dev_handle_t dev) {
+static inline esp_err_t hw_i2c_dev_del(const i2c_master_dev_handle_t dev) {
     return i2c_master_bus_rm_device(dev);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_i2c_dev_reg_write_byte(const i2c_master_dev_handle_t dev, const uint8_t reg, const uint8_t val) {
+static inline esp_err_t hw_i2c_dev_reg_write_byte(const i2c_master_dev_handle_t dev, const uint8_t reg, const uint8_t val) {
     return i2c_master_transmit(dev, (uint8_t[2]){ reg, val }, 2, I2C_TIMEOUT_MS);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_i2c_dev_reg_read(const i2c_master_dev_handle_t dev, const uint8_t reg, uint8_t *const data, const size_t len) {
+static inline esp_err_t hw_i2c_dev_reg_read(const i2c_master_dev_handle_t dev, const uint8_t reg, uint8_t *const data, const size_t len) {
     return i2c_master_transmit_receive(dev, &reg, 1, data, len, I2C_TIMEOUT_MS);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-esp_err_t hw_i2c_dev_write(const i2c_master_dev_handle_t dev, const uint8_t *const data, const size_t len) {
+static inline esp_err_t hw_i2c_dev_write(const i2c_master_dev_handle_t dev, const uint8_t *const data, const size_t len) {
     return i2c_master_transmit(dev, data, len, I2C_TIMEOUT_MS);
 }
 

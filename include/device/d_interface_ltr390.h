@@ -240,7 +240,7 @@ esp_err_t ltr390_setup(const ltr390_config_t *const config) {
     ESP_ERROR_CHECK_BOOLEAN(GPIO_IS_VALID_OUTPUT_GPIO(PIN_DEVICE_I2C_SCL));
 
     _LTR390_RTC_INIT();
-    memcpy(&_ltr390_rtc.config, config, sizeof(_ltr390_rtc.config));
+    _ltr390_rtc.config = *config;
     if (_ltr390_rtc.config.i2c_addr == 0u)
         _ltr390_rtc.config.i2c_addr = LTR390_I2C_ADDR;
 

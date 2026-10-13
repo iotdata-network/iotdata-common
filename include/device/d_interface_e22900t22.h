@@ -503,7 +503,7 @@ esp_err_t lora_sleep(void) {
 esp_err_t lora_setup(const lora_config_t *const config) {
 
     _LORA_RTC_INIT();
-    memcpy(&_lora_rtc.config, config, sizeof(_lora_rtc.config));
+    _lora_rtc.config = *config;
 
     if (!_LORA_IS_USB()) {
         ESP_ERROR_CHECK_BOOLEAN(GPIO_IS_VALID_OUTPUT_GPIO(PIN_DEVICE_UART_TX));

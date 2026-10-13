@@ -291,7 +291,7 @@ static const char *__tag_iapp = "iapp";
 
 static void _iapp_node_status(__attribute__((unused)) const uint16_t station, iotdata_node_status_t *const out) {
     const iapp_operating_t *const s = iapp_state.operating;
-    out->uptime_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    out->uptime_s = (uint32_t)(hw_time_ms() / 1000);
     out->reason = iotdata_node_reason_reset();
     out->has_heap = true;
     out->heap_free = (uint32_t)esp_get_free_heap_size();
@@ -411,11 +411,23 @@ static void iapp_fail(iapp_state_t *const as) {
 static bool iapp_init(iapp_state_t *const as) {
 
     const app_descr_t *const ad = app_spec;
+
+
+
+    const esp_reset_reason_t reset_reason = esp_reset_reason();
+    const bool restarted = (reset_reason != ESP_RST_DEEPSLEEP);
+
+    iotdata_node_diagnostics_emit_set(_iapp_diagnostics_emit);
+    if (!iotdata_node_diagnostics_begin((uint8_t)reset_reason, restarted))
+        ESP_LOGW(__tag_iapp, "diag: the recorder did not start");
+    iotdata_node_diagnostics_flush();
+
+
+    
+
     iotdata_node_t *const node = &as->operating->node;
 
     // capture reset reason
-    const esp_reset_reason_t reset_reason = esp_reset_reason();
-    const bool restarted = (reset_reason != ESP_RST_DEEPSLEEP);
     if (restarted)
         as->operating->restarts++;
 
@@ -433,12 +445,6 @@ static bool iapp_init(iapp_state_t *const as) {
         ad->func_init_log(&app_state, node, buffer, sizeof(buffer));
     ESP_LOGI(__tag_iapp, "app :: %s :: variant: %s%s%s", ad->name, iotdata_vsuite_name(ad->variant), buffer[0] != '\0' ? ", details: " : "", buffer);
     ESP_LOGI(__tag_iapp, "boot: reset_reason=%d %s", (int)reset_reason, reset_reason_str(reset_reason));
-
-    // bring up diagnostics and flush any pending records if in RTC
-    iotdata_node_diagnostics_emit_set(_iapp_diagnostics_emit);
-    if (!iotdata_node_diagnostics_begin((uint8_t)reset_reason, restarted))
-        ESP_LOGW(__tag_iapp, "diag: the recorder did not start");
-    iotdata_node_diagnostics_flush();
 
     // deal with power reset issues
     if (reset_reason == ESP_RST_BROWNOUT && brownout_mv > 0) {

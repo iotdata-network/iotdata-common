@@ -19,7 +19,7 @@
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void hw_gpio_cfg_enable_input(const gpio_num_t pin, const bool pullup) {
+static inline void hw_gpio_cfg_enable_input(const gpio_num_t pin, const bool pullup) {
     ESP_ERROR_CHECK(gpio_config(&(const gpio_config_t){
         .pin_bit_mask = (1ULL << pin),
         .mode = GPIO_MODE_INPUT,
@@ -31,7 +31,7 @@ void hw_gpio_cfg_enable_input(const gpio_num_t pin, const bool pullup) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void hw_gpio_cfg_enable_output(const gpio_num_t pin) {
+static inline void hw_gpio_cfg_enable_output(const gpio_num_t pin) {
     ESP_ERROR_CHECK(gpio_config(&(const gpio_config_t){
         .pin_bit_mask = (1ULL << pin),
         .mode = GPIO_MODE_OUTPUT,
@@ -43,7 +43,7 @@ void hw_gpio_cfg_enable_output(const gpio_num_t pin) {
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void hw_gpio_cfg_disable(const gpio_num_t pin) {
+static inline void hw_gpio_cfg_disable(const gpio_num_t pin) {
     ESP_ERROR_CHECK(gpio_config(&(const gpio_config_t){
         .pin_bit_mask = (1ULL << pin),
         .mode = GPIO_MODE_INPUT,
@@ -53,7 +53,7 @@ void hw_gpio_cfg_disable(const gpio_num_t pin) {
     }));
 }
 
-void hw_gpio_cfg_disable_two(const gpio_num_t pin_a, const gpio_num_t pin_b) {
+static inline void hw_gpio_cfg_disable_two(const gpio_num_t pin_a, const gpio_num_t pin_b) {
     ESP_ERROR_CHECK(gpio_config(&(const gpio_config_t){
         .pin_bit_mask = (1ULL << pin_a) | (1ULL << pin_b),
         .mode = GPIO_MODE_INPUT,
@@ -63,7 +63,7 @@ void hw_gpio_cfg_disable_two(const gpio_num_t pin_a, const gpio_num_t pin_b) {
     }));
 }
 
-void hw_gpio_cfg_disable_four(const gpio_num_t pin_a, const gpio_num_t pin_b, const gpio_num_t pin_c, const gpio_num_t pin_d) {
+static inline void hw_gpio_cfg_disable_four(const gpio_num_t pin_a, const gpio_num_t pin_b, const gpio_num_t pin_c, const gpio_num_t pin_d) {
     ESP_ERROR_CHECK(gpio_config(&(const gpio_config_t){
         .pin_bit_mask = (1ULL << pin_a) | (1ULL << pin_b) | (1ULL << pin_c) | (1ULL << pin_d),
         .mode = GPIO_MODE_INPUT,
@@ -75,23 +75,23 @@ void hw_gpio_cfg_disable_four(const gpio_num_t pin_a, const gpio_num_t pin_b, co
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-bool hw_gpio_get(const gpio_num_t pin) {
+static inline bool hw_gpio_get(const gpio_num_t pin) {
     return gpio_get_level(pin) != 0;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void hw_gpio_set(const gpio_num_t pin, const bool level) {
+static inline void hw_gpio_set(const gpio_num_t pin, const bool level) {
     ESP_ERROR_CHECK(gpio_set_level(pin, level ? 1 : 0));
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-void hw_gpio_revoke(const gpio_num_t pin) {
+static inline void hw_gpio_revoke(const gpio_num_t pin) {
     (void)esp_gpio_revoke(pin == GPIO_NUM_NC ? 0 : (1ULL << pin));
 }
 
-void hw_gpio_revoke_two(const gpio_num_t pin_a, const gpio_num_t pin_b) {
+static inline void hw_gpio_revoke_two(const gpio_num_t pin_a, const gpio_num_t pin_b) {
     (void)esp_gpio_revoke((pin_a == GPIO_NUM_NC ? 0 : (1ULL << pin_a)) | (pin_b == GPIO_NUM_NC ? 0 : (1ULL << pin_b)));
 }
 
