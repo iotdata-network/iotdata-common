@@ -68,7 +68,7 @@ test:
 # write failures and the attempt counter across a reboot are all reachable without a cable
 # -lz: the suite inflates a REAL raw-deflate stream through d_module_inflate_linux.h, rather than
 # standing in for one -- see the note in that header
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device -I$(IOTDATA_SRC_HPATCH) test_node_content_ota_apply.c $(IOTDATA_SRC_HPATCH)/hpatch_lite.c -o $(TEST_DIR)/test_node_content_ota_apply -lm -lz
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device -I$(IOTDATA_SRC_HPATCH) test_node_content_ota_apply.c -o $(TEST_DIR)/test_node_content_ota_apply -lm -lz
 	@$(TEST_DIR)/test_node_content_ota_apply
 # the console and CONTROL words over that same backend. The one suite here that catches stdout,
 # because for a download the reply IS the protocol that esp32-tool parses.

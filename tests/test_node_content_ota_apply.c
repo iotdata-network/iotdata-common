@@ -48,6 +48,10 @@
 #include "d_module_filestore_ram.h"
 #include "d_module_inflate_linux.h" /* the REAL raw-deflate codec, not a stand-in: see its header */
 #include "d_module_hpatch.h"        /* and the REAL patcher, which needs no platform at all */
+/* and its ENGINE, which lives in a .c. This suite drives the apply path directly, without the
+   facade in iotdata_node_otaupdate.h that compiles HPatchLite in for an application, so it
+   compiles it in itself -- the same unity-build move as iotdata.c above. */
+#include "hpatch_lite.c"
 
 static int fails = 0;
 #define CHECK(c, m) \

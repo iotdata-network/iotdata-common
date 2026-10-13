@@ -41,6 +41,10 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef IOTDATA_NODE_HPATCH_IMPLEMENTATION
+#include "hpatch_lite.c"
+#endif
+
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* THE ONE OBJECT. Sized by the consumer inside it, which carries the apply path's two buffers, so

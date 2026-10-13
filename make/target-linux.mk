@@ -78,11 +78,14 @@ $(if $(TEST_MAIN),$(eval -include $(TEST_TARGET).d))
 
 # --- SOURCES_EXTRA: vendored C that has to be COMPILED, not just included -----------------------
 #
-# Some seams are a header over a real library: d_module_hpatch.h is HPatchLite's two entry points,
-# and those live in iotdata-depend/hpatchlite/hpatch_lite.c. A project naming that file here gets
-# it built and linked. The esp32 side says the same thing in its own dialect -- the CMakeLists
-# carry it in idf_component_register's SRCS -- so both platforms declare the dependency rather
-# than one of them getting it by luck.
+# Some seams are a header over a real library whose code lives in a .c: a project naming that file
+# here gets it built and linked, and the esp32 side says the same thing in its own dialect through
+# idf_component_register's SRCS.
+#
+# NO PROJECT USES THIS TODAY. Its one user was HPatchLite's hpatch_lite.c, which
+# iotdata_node_otaupdate.h now compiles in itself (stb-style, like the blackbox), so no build file
+# names it on either platform. The hook stays for the next vendored .c that cannot be included the
+# same way -- and if none appears, this block and its two link lines are deletable.
 #
 # AN OBJECT EACH, AND NOT TWO .c FILES ON THE LINK LINE, WHICH IS THE WHOLE POINT OF THIS BLOCK.
 # `gcc -MMD -MF one.d -o bin main.c vendor.c` writes the dependencies of the LAST source only:
@@ -92,10 +95,11 @@ $(if $(TEST_MAIN),$(eval -include $(TEST_TARGET).d))
 # source to its own object with its own .d keeps $(MAIN) the only .c on its command line, so its
 # depfile stays complete.
 #
-# THEY ARE BUILT WITH THE PROJECT'S FLAGS, deliberately: hpatch_lite.c passes the full -Werror
-# -Wconversion -Wpedantic set unchanged, which is worth knowing about a vendored dependency. A
-# future one that cannot take them needs its own rule and a note saying which flag it failed --
-# not a blanket relaxation here that would quietly cover this file too.
+# THEY ARE BUILT WITH THE PROJECT'S FLAGS, deliberately: hpatch_lite.c passed the full -Werror
+# -Wconversion -Wpedantic set unchanged, which is worth knowing about a vendored dependency and is
+# why including it into the application's translation unit works at all. A future one that cannot
+# take them needs its own rule and a note saying which flag it failed -- not a blanket relaxation
+# here that would quietly cover this file too.
 #
 # NOT in SOURCES_ALL, so `format` never rewrites them: they are somebody else's code, carried at a
 # recorded upstream commit, and reformatting would make the next vendor bump a conflict.

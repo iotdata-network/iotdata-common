@@ -34,6 +34,7 @@
 #include "iotdata_node_content_control.h"
 
 // modules: firmware
+#define IOTDATA_NODE_HPATCH_IMPLEMENTATION
 #include "iotdata_node_otaupdate.h"
 
 // platform runtime
