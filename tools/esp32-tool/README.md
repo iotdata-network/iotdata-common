@@ -23,7 +23,7 @@ offsets and the binaries, so one name covers the whole set:
 esp32-tool deploy -b /opt/iotdata/src/iotdata-deploy/se-67194/release/esp32c3/bin -f relay-0.9.9
 ```
 
-Staging is not this tool's job (see `iotdata-common/tools/ota-stage`); flashing what was staged is.
+Staging is not this tool's job (see `iotdata-platform/tools/ota-stage`); flashing what was staged is.
 
 
 Everything the flash needs — chip, flash settings, the three binaries and their offsets — is read

@@ -40,7 +40,7 @@ CFLAGS_DEFINES += -DIOTDATA_NODE_VERSION_APP='"$(NAME)"' -DIOTDATA_NODE_VERSION_
 
 # Staging, the same shape the esp32 rule uses: the deployment's release tree, one subtree per
 # platform, one manifest format. The root comes from $(IOTDATA_DEPLOYMENT) (config.mk), which has no
-# default -- a release belongs to a site. See iotdata-common/tools/ota-stage.
+# default -- a release belongs to a site. See iotdata-platform/tools/ota-stage.
 _TARGET_LINUX_MK_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 OTA_STAGE      ?= $(_TARGET_LINUX_MK_DIR)/../tools/ota-stage/ota-stage
 STAGE_ROOT     ?= $(IOTDATA_DEPLOYMENT_RELEASE)
@@ -120,7 +120,7 @@ all: $(TARGET)
 stage: $(TARGET)
 	@$(IOTDATA_DEPLOYMENT_ASSERT)
 	@test "$(VERSION)" != "0.0.0" || { echo "stage: VERSION is still the 0.0.0 default -- set it at the release point" >&2; exit 1; }
-	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- deployment '$(IOTDATA_DEPLOYMENT)' has no release tree yet; mkdir it (and give each platform subtree the one-line Makefile that includes iotdata-common/make/release.mk)" >&2; exit 1; }
+	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- deployment '$(IOTDATA_DEPLOYMENT)' has no release tree yet; mkdir it (and give each platform subtree the one-line Makefile that includes iotdata-platform/make/release.mk)" >&2; exit 1; }
 	@test -z "$(FORCE)" || echo "stage: FORCE=$(FORCE) is not the restage switch -- you want STAGE_FORCE=1" >&2
 	@test -z "$(_STAGE_FORCE)" || echo "stage: FORCING over $(NAME)-$(VERSION) -- re-cut anything in ota/ that came from it" >&2
 	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --app $(TARGET) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS) $(_STAGE_FORCE)

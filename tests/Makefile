@@ -1,5 +1,5 @@
 ##
-## Host tests for the shared headers in iotdata-common/include.
+## Host tests for the shared headers in iotdata-platform/include.
 ##
 ## They live here because the headers belong to no single project: their consumers are ESP-IDF
 ## applications a host toolchain cannot build, so this is the only place they get compiled with
@@ -8,20 +8,20 @@
 
 IOTDATA_SRC          = ../..
 IOTDATA_SRC_LIBRARY  = $(IOTDATA_SRC)/iotdata-library
-IOTDATA_SRC_COMMON   = $(IOTDATA_SRC)/iotdata-common
+IOTDATA_SRC_PLATFORM = $(IOTDATA_SRC)/iotdata-platform
 IOTDATA_SRC_EXAMPLE  = $(IOTDATA_SRC)/iotdata-example
 IOTDATA_SRC_BLACKBOX = $(IOTDATA_SRC)/iotdata-depend/blackbox/include
 IOTDATA_SRC_HPATCH   = $(IOTDATA_SRC)/iotdata-depend/hpatchlite
 
 ## a variant has to be named: the library includes no default by design
-IOTDATA_VARIANT ?= $(abspath $(IOTDATA_SRC_COMMON)/include/iotdata_variant_weather_station.h)
+IOTDATA_VARIANT ?= $(abspath $(IOTDATA_SRC_PLATFORM)/include/iotdata_variant_weather_station.h)
 
 TEST_CC     ?= gcc
 ## _DEFAULT_SOURCE because -std=c11 is strict ISO, which hides POSIX from the system headers --
 ## iotdata_node_utils.h calls gethostname() to derive a node identity on a host, and anything that
 ## includes it needs the declaration. Set once here rather than per test, since the reach spreads.
 TEST_CFLAGS ?= -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -Wconversion -Wshadow \
-               -I$(IOTDATA_SRC_LIBRARY) -I$(IOTDATA_SRC_COMMON)/include -I$(IOTDATA_SRC_EXAMPLE)/include \
+               -I$(IOTDATA_SRC_LIBRARY) -I$(IOTDATA_SRC_PLATFORM)/include -I$(IOTDATA_SRC_EXAMPLE)/include \
                -DIOTDATA_VARIANT='"$(IOTDATA_VARIANT)"' -DIOTDATA_NO_JSON
 TEST_DIR    ?= build_test
 TEST_VERSION_DEFS ?= -DIOTDATA_NODE_VERSION_APP='"testapp"' -DIOTDATA_NODE_VERSION_SEMVER='"1.2.3"' -DIOTDATA_NODE_VERSION_STAMP='"$(shell date -u +%Y%m%d%H%M)"'
@@ -45,34 +45,34 @@ test:
 	@$(TEST_CC) $(TEST_CFLAGS) -UIOTDATA_NO_JSON test_node_status.c -o $(TEST_DIR)/test_node_status -lm -lcjson
 	@$(TEST_DIR)/test_node_status
 # the filestore SEAM lives in include/device now, and content.h is written against it
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_content_ota.c -o $(TEST_DIR)/test_node_content_ota -lm
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device test_node_content_ota.c -o $(TEST_DIR)/test_node_content_ota -lm
 	@$(TEST_DIR)/test_node_content_ota
 # both ways, because the table is a size/speed knob and an untested alternative implementation is
 # worse than no alternative. -ldl: the suite dlopens liblzma to check itself against the reference.
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_crc64.c -o $(TEST_DIR)/test_node_crc64 -ldl
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device test_node_crc64.c -o $(TEST_DIR)/test_node_crc64 -ldl
 	@$(TEST_DIR)/test_node_crc64
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device -D_IOTDATA_CRC64_TABLE=0 test_node_crc64.c -o $(TEST_DIR)/test_node_crc64_bitwise -ldl
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device -D_IOTDATA_CRC64_TABLE=0 test_node_crc64.c -o $(TEST_DIR)/test_node_crc64_bitwise -ldl
 	@$(TEST_DIR)/test_node_crc64_bitwise
 # the RAM backend lives in include/device, so this needs that on the path as the cart test does
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_content.c -o $(TEST_DIR)/test_node_content -lm
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device test_node_content.c -o $(TEST_DIR)/test_node_content -lm
 	@$(TEST_DIR)/test_node_content
 # again with a table smaller than the store, which is the only way the ownership overflow -- a
 # misdimensioning, counted rather than hidden -- is reachable at all
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device -DIOTDATA_NODE_CONTENT_OWNED_MAX=4 test_node_content.c -o $(TEST_DIR)/test_node_content_tight -lm
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device -DIOTDATA_NODE_CONTENT_OWNED_MAX=4 test_node_content.c -o $(TEST_DIR)/test_node_content_tight -lm
 	@$(TEST_DIR)/test_node_content_tight
 # the DIRECTORY backend, against a real filesystem -- and driven side by side with the exact RAM
 # model, which is the comparison that backend was written for and had no host counterpart until now
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_filestore_linux.c -o $(TEST_DIR)/test_node_filestore_linux -lm
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device test_node_filestore_linux.c -o $(TEST_DIR)/test_node_filestore_linux -lm
 	@$(TEST_DIR)/test_node_filestore_linux
 # the OTA CONSUMER, with a scripted slot and a scripted digest -- which is why claim decisions, the
 # write failures and the attempt counter across a reboot are all reachable without a cable
 # -lz: the suite inflates a REAL raw-deflate stream through d_module_inflate_linux.h, rather than
 # standing in for one -- see the note in that header
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device -I$(IOTDATA_SRC_HPATCH) test_node_content_ota_apply.c $(IOTDATA_SRC_HPATCH)/hpatch_lite.c -o $(TEST_DIR)/test_node_content_ota_apply -lm -lz
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device -I$(IOTDATA_SRC_HPATCH) test_node_content_ota_apply.c $(IOTDATA_SRC_HPATCH)/hpatch_lite.c -o $(TEST_DIR)/test_node_content_ota_apply -lm -lz
 	@$(TEST_DIR)/test_node_content_ota_apply
 # the console and CONTROL words over that same backend. The one suite here that catches stdout,
 # because for a download the reply IS the protocol that esp32-tool parses.
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_node_console_content.c -o $(TEST_DIR)/test_node_console_content -lm
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device test_node_console_content.c -o $(TEST_DIR)/test_node_console_content -lm
 	@$(TEST_DIR)/test_node_console_content
 	@$(TEST_CC) $(TEST_CFLAGS) test_node_config_blocks.c -o $(TEST_DIR)/test_node_config_blocks -lm
 	@$(TEST_DIR)/test_node_config_blocks
@@ -104,7 +104,7 @@ test:
 	@$(TEST_DIR)/test_node_settings_console
 # a device header, which is unusual here: it is testable on the host because its whole seam is one
 # gpio pair and a clock, both of which a test can own outright.
-	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_COMMON)/include/device test_interface_cart.c -o $(TEST_DIR)/test_interface_cart -lm
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device test_interface_cart.c -o $(TEST_DIR)/test_interface_cart -lm
 	@$(TEST_DIR)/test_interface_cart
 
 test-clean:

@@ -5,7 +5,7 @@
  *   ota-bundle -d .../<deployment>/release/esp32c3 -r relay-0.9.9 --form full  --codec deflate
  *   ota-bundle -d .../<deployment>/release/esp32c3 -r relay-0.9.9 --form delta --base relay-0.9.8
  *
- * The format is defined by iotdata-common/include/iotdata_node_content_ota.h and that header is the
+ * The format is defined by iotdata-platform/include/iotdata_node_content_ota.h and that header is the
  * authority -- this is its encoder, and the two are meant to be read side by side. Magic, then kvr
  * pairs, then an END sentinel, then the payload.
  *
@@ -147,6 +147,13 @@ if (FORM_S === 'delta') {
     if (!base.ota.image_sha256 || !t.ota.image_sha256)
         die(`${!base.ota.image_sha256 ? basename : RELEASE} was staged before image hashes were recorded -- restage it, a delta cannot be checked against an unknown base`);
     if (base.ota.image_sha256 === t.ota.image_sha256) die(`${BASE} and ${RELEASE} have identical app images -- there is nothing to diff`);
+    /* A DEV BASE AND A RELEASE TARGET IS NOT AN ERROR, and it is worth saying out loud. It is what
+       you want when the board is running a verbose build and the next thing it should run is the
+       real release -- but the two differ by every log string, so the patch will be a large fraction
+       of a full image rather than the 2-3% a release-to-release delta costs, and that is a surprise
+       worth having before the transfer rather than after it. */
+    if (!!base.dev !== !!t.dev)
+        console.log(`  note: ${base.dev ? basename : RELEASE} is a dev build and ${base.dev ? RELEASE : basename} is not -- every log string differs, so expect a large patch`);
     fs.mkdirSync(OUT, { recursive: true });
     const tmp = path.join(OUT, '.' + RELEASE + '.hdiff');
     /* hdiffI, NOT hdiffz. The two are the same project and not the same format: hdiffz's output is

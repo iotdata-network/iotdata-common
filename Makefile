@@ -1,5 +1,5 @@
 
-# Makefile — iotdata-common.
+# Makefile — iotdata-platform.
 #
 # This repo builds nothing of its own: it is headers, app bodies and host test
 # suites that other repos compile. So the only target that does real work is
@@ -8,7 +8,7 @@
 # obvious next one) without changing the shape of this file.
 #
 # Paths resolve from THIS file's own location, the same idiom make/config.mk uses
-# on itself, so `make -f .../iotdata-common/Makefile format` works from any
+# on itself, so `make -f .../iotdata-platform/Makefile format` works from any
 # directory, and so an overridden IOTDATA_SRC can never aim `format` at a
 # different tree than the one this Makefile sits in.
 #
@@ -45,18 +45,18 @@ format-check: ## report what `format` would change, rewriting nothing (exits 1 i
 	@$(FORMAT) --dry-run --Werror $(FORMAT_SOURCES)
 
 config: ## show the resolved paths and file counts
-	@echo "IOTDATA_APEX        = $(IOTDATA_APEX)"
-	@echo "IOTDATA_SRC         = $(IOTDATA_SRC)"
-	@echo "IOTDATA_SRC_COMMON  = $(IOTDATA_SRC_COMMON)"
-	@echo "IOTDATA_HOST        = $(IOTDATA_HOST)"
-	@echo "FORMAT              = $(FORMAT)"
-	@echo "FORMAT_SOURCES      = $(words $(FORMAT_SOURCES)) files"
+	@echo "IOTDATA_APEX         = $(IOTDATA_APEX)"
+	@echo "IOTDATA_SRC          = $(IOTDATA_SRC)"
+	@echo "IOTDATA_SRC_PLATFORM = $(IOTDATA_SRC_PLATFORM)"
+	@echo "IOTDATA_HOST         = $(IOTDATA_HOST)"
+	@echo "FORMAT               = $(FORMAT)"
+	@echo "FORMAT_SOURCES       = $(words $(FORMAT_SOURCES)) files"
 	@echo "  include/*.h         $(words $(wildcard $(_HERE)/include/*.h))"
 	@echo "  include/device/*.h  $(words $(wildcard $(_HERE)/include/device/*.h))"
 	@echo "  apps/*.c            $(words $(wildcard $(_HERE)/apps/*.c))"
 	@echo "  tests/*.c           $(words $(wildcard $(_HERE)/tests/*.c))"
 
 help: ## this list
-	@echo "iotdata-common — headers, app bodies and host tests; nothing to build"
+	@echo "iotdata-platform — headers, app bodies and host tests; nothing to build"
 	@echo
 	@awk 'BEGIN{FS=":.*## "} /^[a-zA-Z_-]+:.*## /{printf "  make %-13s %s\n",$$1,$$2}' $(MAKEFILE_LIST)

@@ -36,7 +36,7 @@
 #
 # OTA BLOBS ARE A DIFFERENT THING FROM THE BUNDLES ABOVE. A bundle is every partition, compressed for
 # a cable flash at the far end. A blob is the app alone, with a kvr header asserting what it needs --
-# one file, over the air, defined by iotdata-common/include/iotdata_node_content_ota.h.
+# one file, over the air, defined by iotdata-platform/include/iotdata_node_content_ota.h.
 # ---------------------------------------------------------------------------------------------
 
 # COMPRESSION IS AT MAXIMUM, deliberately and not by much. On a ~250KB payload xz -9 and the -6
@@ -89,7 +89,7 @@ list:
 	@if ! ls $(BIN)/*.json >/dev/null 2>&1; then echo "nothing staged in $(BIN)/"; else \
 	  for m in $(BIN)/*.json; do \
 	    python3 -c "import json,sys;m=json.load(open(sys.argv[1]))['iotdata'];\
-print('  %-28s %-10s %9d B  %s' % (m['name']+'-'+m['version'], m.get('platform') or m.get('chip','?'), m['ota']['size'] if m.get('ota') else 0, m['staged_utc']))" $$m; \
+print('  %-28s %-10s %9d B  %s%s' % (m['name']+'-'+m['version'], m.get('platform') or m.get('chip','?'), m['ota']['size'] if m.get('ota') else 0, m['staged_utc'], '  [dev build]' if m.get('dev') else ''))" $$m; \
 	  done; fi
 
 # ---- the tools this pipeline needs ---------------------------------------

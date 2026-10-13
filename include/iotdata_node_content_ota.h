@@ -5,7 +5,7 @@
 // iotdata_node_content_ota.h -- the OTA blob format: a kvr header, then the payload.
 //
 // NOT WIRED INTO ANYTHING YET. This is the format definition and its decoder, written first so the
-// off-box bundler (iotdata-common/tools/ota-bundle) and the eventual on-device client cannot drift
+// off-box bundler (iotdata-platform/tools/ota-bundle) and the eventual on-device client cannot drift
 // apart. Nothing includes this header yet, and that is deliberate.
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------

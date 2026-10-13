@@ -48,6 +48,7 @@ if (A.length === 0 || A.includes('-h') || A.includes('--help')) {
       --platform P     subtree: esp32c3 | aarch64 | x86_64 | ...    (derived when it can be)
       --bootloader-min N  minimum bootloader this release needs     (default 1)
       --force          overwrite a release of this name and version
+      --dev            mark it as staged from a DEVELOPMENT build, not the release one
   esp32 (a flash set):
       --build DIR      an ESP-IDF build directory with flasher_args.json
   linux (one executable):
@@ -61,6 +62,15 @@ const NAME = sopt('n', 'name', null) || die('set -n <name>');
 const VERSION = opt('version', null) || die('set --version <version>');
 const BOOTLOADER_MIN = parseInt(opt('bootloader-min', '1'), 10);
 const FORCE = A.includes('--force');
+/* A RELEASE STAGED FROM THE DEV BUILD IS A DIFFERENT BINARY UNDER THE SAME NAME -- same release
+   name, same version, ~40% more flash because the log strings are still in it, and a different
+   image hash. That is legitimate while debugging (an OTA delta has to be cut against the image the
+   board is ACTUALLY running), and it is also how an afternoon goes missing when the base no longer
+   matches and nothing says why. `staged_from` has always recorded the directory, but a path is
+   something you have to go and read: this is the flag everything downstream can see. Told to us by
+   the caller, because only the build system knows which directory was the release one -- absent, it
+   is not recorded at all, which is what a hand-run ota-stage has always done. */
+const DEV = A.includes('--dev');
 const BUILD = opt('build', null);
 const APP = opt('app', null);
 if (!BUILD && !APP) die('give either --build <esp-idf build dir> or --app <binary>');
@@ -235,12 +245,13 @@ out.iotdata = {
     project_version: BUILD ? pd.project_version : undefined,
     stamp: built.stamp,
     bootloader_min: BOOTLOADER_MIN,
+    dev: DEV ? true : undefined,
     files: files,
     ota: appEntry,
 };
 fs.writeFileSync(manifestPath, JSON.stringify(out, null, 2) + '\n');
 
-console.log(`${C.cyan}stage${C.off} ${base} -> ${dest}`);
+console.log(`${C.cyan}stage${C.off} ${base}${DEV ? ' ' + C.warn + '[dev build]' + C.off : ''} -> ${dest}`);
 for (const [leaf, i] of Object.entries(files))
     console.log(`       ${(i.offset || '').padStart(8)}  ${leaf}  ${String(i.size).padStart(8)} B${i.role ? '  [' + i.role + ']' : ''}`);
 console.log(`       manifest  ${path.basename(manifestPath)}`);

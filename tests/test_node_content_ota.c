@@ -5,7 +5,7 @@
 // iotdata_node_ota_parse, and walk iotdata_node_ota_check through each way it can say no.
 //
 // The second is the reason this test exists at all. The format has TWO implementations in TWO
-// languages -- this header decodes it, iotdata-common/tools/ota-bundle encodes it -- and no device
+// languages -- this header decodes it, iotdata-platform/tools/ota-bundle encodes it -- and no device
 // client yet to notice when they disagree. So the last test reads the bundler's own source and
 // asserts its key numbers, magic, hash length and enum values match the defines here. A renumbered
 // key is otherwise silent until a field device reads a blob wrong.
@@ -319,7 +319,7 @@ static void test_payload_hash(void) {
 
 static const char *bundler(void) {
     static char buf[80000];
-    static const char *paths[] = { "../tools/ota-bundle/ota-bundle", "../../iotdata-common/tools/ota-bundle/ota-bundle" };
+    static const char *paths[] = { "../tools/ota-bundle/ota-bundle", "../../iotdata-platform/tools/ota-bundle/ota-bundle" };
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
         FILE *f = fopen(paths[i], "r");
         if (f != NULL) {

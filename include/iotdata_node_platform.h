@@ -1,20 +1,17 @@
 // ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
 
 // common utils
 #include "iotdata_node_utils.h"
 
 // persistent state support
 #include "iotdata_node_state.h"
+#include "iotdata_node_firmware.h"
 
 // over the air functionality (mapping to TLVs)
 #include "iotdata_node_partial.h"
 #define IOTDATA_NODE_VERSION_HAS_BLACKBOX
 #include "iotdata_node_version.h"
-// Beside version, and BEFORE the console block: both answer "what is this node running", and the
-// console's `vers` reports them together the way the boot banner does. It depends on nothing
-// between here and where it used to sit (esp_ota_ops + esp_partition, and snprintf_inline from
-// utils above), so the only thing that moved is when its declarations become available.
-#include "iotdata_node_firmware.h"
 #include "iotdata_node_variant.h"
 #include "iotdata_node_status.h"
 #include "iotdata_node_settings.h"
@@ -43,10 +40,7 @@
 #include "iotdata_node_runtime.h"
 
 // ------------------------------------------------------------------------------------------------------------------------
-// THE BRING-UP BELOW IS ESP32-ONLY, which the guard is here to say out loud: it reads the reset
-// reason, keeps its state in RTC memory so it survives a deep sleep, and logs through ESP_LOG.
-// Everything ABOVE the line is shared -- a host build (the gateway) includes this header for the
-// headers it gathers, and would otherwise try to compile this too.
+
 #if defined(PLATFORM_ESP32)
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -66,7 +60,7 @@ static _RTC_DATA_STRUCT iotdata_node_platform_state_t s_node_platform_state;
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static const iotdata_node_version_caps_t* iotdata_node_platform_caps(void) {
+static inline const iotdata_node_version_caps_t* iotdata_node_platform_caps(void) {
     return &s_node_platform_state.caps;
 }
 

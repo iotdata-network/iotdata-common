@@ -1,4 +1,4 @@
-# iotdata-common/tools
+# iotdata-platform/tools
 
 Host-side helpers. One directory per tool; each carries its own README with the full detail.
 
@@ -22,9 +22,9 @@ and it still works on a device that has stopped talking.
 
 It became its own repository, `github.com/matthewgream/dialout`, and arrives here as a submodule of
 iotdata-depend: `iotdata-depend/dialout`. It was always standalone — nothing in it imports iotdata —
-and it is installed on boxes rather than built into anything, so carrying it inside iotdata-common
+and it is installed on boxes rather than built into anything, so carrying it inside iotdata-platform
 only tied its history to a repo it had no dependency on. The cart's ESP32 side stays where it was,
-in `iotdata-common/include/device/d_interface_cart.h`.
+in `iotdata-platform/include/device/d_interface_cart.h`.
 
 ## [`topology`](topology/README.md)
 

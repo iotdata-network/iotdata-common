@@ -23,7 +23,7 @@
 # It stages the LEAN build by default, because that is the one that would go out
 # over the air -- STAGE_FROM=build to stage the verbose one deliberately.
 #
-# Source paths come from iotdata-common/make/config.mk — include that first so
+# Source paths come from iotdata-platform/make/config.mk — include that first so
 # BUILDER_DEFS can reference the SRC_* variables.
 
 BUILDER      ?= idf.py
@@ -66,6 +66,12 @@ RELEASE_DEFAULTS   ?= $(RELEASE_DIR)/sdkconfig.defaults
 # relative to is a site, not a source checkout.
 STAGE_ROOT   ?= $(IOTDATA_DEPLOYMENT_RELEASE)
 STAGE_FROM   ?= $(RELEASE_DIR)
+# STAGE_FROM=build stages the VERBOSE build instead, which is a real thing to want: an OTA delta has
+# to be cut against the image the board is actually running, and while debugging that is the dev
+# build. What it must not be is quiet -- the two produce the same release NAME from different bytes
+# (~40% apart, because the log strings are still in one of them), so the staged release says so and
+# the manifest carries `dev: true`. The comparison tolerates a trailing slash on either side.
+_STAGE_DEV    = $(if $(filter-out $(patsubst %/,%,$(RELEASE_DIR)),$(patsubst %/,%,$(STAGE_FROM))),--dev)
 # The oldest bootloader this app will run on, recorded in the staged manifest and asserted by an OTA
 # blob's header. A FLOOR, not an exact match. Bump it when the app starts needing something a newer
 # bootloader provides -- and note CONFIG_BOOTLOADER_PROJECT_VER has to actually be set and bumped for
@@ -84,14 +90,14 @@ STAGE_FORCE  ?=
 _STAGE_FORCE  = $(if $(filter-out 0 no false,$(STAGE_FORCE)),--force)
 OTA_STAGE    ?= $(_TARGET_ESP32_MK_DIR)/../tools/ota-stage/ota-stage
 
-# The common IDF config baseline lives beside this makefile. On first build a project's local
+# The platform IDF config baseline lives beside this makefile. On first build a project's local
 # sdkconfig.defaults is SEEDED from it (only when absent — never overwritten), with an optional
 # per-host sdkconfig.$(IOTDATA_HOST).defaults appended. Delete the local copy to re-seed after
 # the baseline changes. Keeps every esp32 project on one consistent config; host tweaks stay local.
 _TARGET_ESP32_MK_DIR       := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-SDKCONFIG_COMMON           ?= $(_TARGET_ESP32_MK_DIR)/sdkconfig.defaults
+SDKCONFIG_PLATFORM           ?= $(_TARGET_ESP32_MK_DIR)/sdkconfig.defaults
 # Optional TRACKED per-project overlay (committed in the project dir); layered ON TOP of the
-# common baseline and BELOW the per-host file. For settings that are project-specific but not
+# platform baseline and BELOW the per-host file. For settings that are project-specific but not
 # host-specific, e.g. a solar board's brownout level. Named to dodge the sdkconfig.*.defaults
 # gitignore so it stays tracked.
 SDKCONFIG_PROJECT_DEFAULTS ?= sdkconfig.defaults.project
@@ -131,7 +137,7 @@ endif
 
 # FORCE, because make is the wrong tool to decide this and cannot be made right. SOURCES is a
 # hand-kept list -- most projects name only main/app.c -- so editing a shared header under
-# iotdata-common leaves make certain the image is current, and it hands you a stale binary with no
+# iotdata-platform leaves make certain the image is current, and it hands you a stale binary with no
 # indication. ninja already tracks every header through the compiler's own depfiles, so the honest
 # arrangement is: make always asks, ninja decides. A no-op build costs a second or two; a silently
 # stale image costs however long you spend debugging the firmware you did not flash.
@@ -144,15 +150,15 @@ FORCE:
 $(BUILDER_CFGS): | $(SDKCONFIG_DEFAULTS)
 	$(BUILDER) $(BUILDER_DEFS) set-target $(PLATFORM)
 
-# Seed the local sdkconfig.defaults from the common baseline the first time only: a target with
+# Seed the local sdkconfig.defaults from the platform baseline the first time only: a target with
 # no prerequisites runs its recipe just when the file is missing, so an existing (possibly edited)
 # local copy is left untouched. Appended after it: the optional per-host overrides. It is an
 # ORDER-ONLY prerequisite of the configure step above, so it is created before `set-target` reads
 # it, but its mtime never triggers a spurious reconfigure.
 $(SDKCONFIG_DEFAULTS):
-	@test -f "$(SDKCONFIG_COMMON)" || { echo "target-esp32: missing common baseline $(SDKCONFIG_COMMON)"; exit 1; }
-	@cp "$(SDKCONFIG_COMMON)" "$@"
-	@src="common baseline"; \
+	@test -f "$(SDKCONFIG_PLATFORM)" || { echo "target-esp32: missing platform baseline $(SDKCONFIG_PLATFORM)"; exit 1; }
+	@cp "$(SDKCONFIG_PLATFORM)" "$@"
+	@src="platform baseline"; \
 	if [ -f "$(SDKCONFIG_PROJECT_DEFAULTS)" ]; then \
 	    printf '\n# --- project overrides appended from %s ---\n' "$(SDKCONFIG_PROJECT_DEFAULTS)" >> "$@"; \
 	    cat "$(SDKCONFIG_PROJECT_DEFAULTS)" >> "$@"; \
@@ -191,7 +197,7 @@ release: | $(SDKCONFIG_DEFAULTS)
 stage:
 	@$(IOTDATA_DEPLOYMENT_ASSERT)
 	@test "$(VERSION)" != "0.0.0" || { echo "stage: VERSION is still the 0.0.0 default -- set it at the release point (make stage VERSION=0.9.3)" >&2; exit 1; }
-	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- deployment '$(IOTDATA_DEPLOYMENT)' has no release tree yet; mkdir it (and give each platform subtree the one-line Makefile that includes iotdata-common/make/release.mk)" >&2; exit 1; }
+	@test -d "$(STAGE_ROOT)" || { echo "stage: $(STAGE_ROOT) not found -- deployment '$(IOTDATA_DEPLOYMENT)' has no release tree yet; mkdir it (and give each platform subtree the one-line Makefile that includes iotdata-platform/make/release.mk)" >&2; exit 1; }
 	@test -f "$(STAGE_FROM)/flasher_args.json" || { echo "stage: nothing built in $(STAGE_FROM) -- run 'make release' first, or STAGE_FROM=build to stage the verbose build" >&2; exit 1; }
 	@# FORCE=1 is the obvious guess and it does nothing here, silently, because FORCE is a target in
 	@# this makefile and not this switch. Say so rather than let the guess look like a refusal.
@@ -200,7 +206,8 @@ stage:
 	@# from the old one -- an OTA blob, or a delta that used it as a base -- describes an image that
 	@# is no longer in the tree, and a node already running the old one cannot be told apart by name.
 	@test -z "$(_STAGE_FORCE)" || echo "stage: FORCING over $(NAME)-$(VERSION) -- re-cut anything in ota/ that came from it" >&2
-	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --build $(STAGE_FROM) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS) $(_STAGE_FORCE)
+	@test -z "$(_STAGE_DEV)" || echo "stage: from $(STAGE_FROM), NOT $(RELEASE_DIR) -- a development image under a release name; marked dev in the manifest" >&2
+	$(OTA_STAGE) -d $(STAGE_ROOT) -n $(NAME) --version $(VERSION) --build $(STAGE_FROM) --bootloader-min $(BOOTLOADER_MIN) $(STAGE_ARGS) $(_STAGE_FORCE) $(_STAGE_DEV)
 
 release-size:
 	$(BUILDER) -B $(RELEASE_DIR) size

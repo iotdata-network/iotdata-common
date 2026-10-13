@@ -5,8 +5,8 @@
 # sim-loss) stay in that project's own CMakeLists.
 #
 # A component's main/CMakeLists.txt includes this AFTER idf_component_register() (so COMPONENT_LIB
-# exists), located via the IOTDATA_SRC_COMMON cache var the Makefile injects (target-esp32.mk):
-#   include("${IOTDATA_SRC_COMMON}/make/target-esp32.cmake")
+# exists), located via the IOTDATA_SRC_PLATFORM cache var the Makefile injects (target-esp32.mk):
+#   include("${IOTDATA_SRC_PLATFORM}/make/target-esp32.cmake")
 
 # --- optional config / variant selection (FILE paths the Makefile injects as -D cache vars) ---
 if(DEFINED IOTDATA_VARIANT AND NOT "${IOTDATA_VARIANT}" STREQUAL "")

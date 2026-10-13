@@ -1,4 +1,4 @@
-# sdkconfig.defaults — common ESP-IDF config baseline for the iotdata esp32 projects.
+# sdkconfig.defaults — platform ESP-IDF config baseline for the iotdata esp32 projects.
 #
 # SINGLE SOURCE OF TRUTH. target-esp32.mk seeds a project's local sdkconfig.defaults from
 # this file on first build (only if absent — it is never overwritten afterwards), appending
