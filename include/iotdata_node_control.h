@@ -26,11 +26,17 @@
 #endif
 
 /*
- * THE MQTT MANAGEMENT CHANNEL. Two topics, suffixed onto whatever prefix a deployment uses: one
- * that requests arrive on, one that every answer goes to.
+ * THE MQTT MANAGEMENT CHANNEL. Requests arrive on one flat topic; everything a station has to say
+ * goes out under a subtree, at <prefix>/manage/from/<station>, keyed the same way the telemetry
+ * topics are. So `manage/from/#` is the whole fleet and `manage/from/F1B` is one node, without a
+ * client having to filter either.
+ *
+ * REQUESTS STAY FLAT. The gateway subscribes to them and wants all of them, the target is already
+ * in the payload, and putting it in the topic as well would be a second source of truth for the
+ * same fact. The two directions stay in disjoint subtrees, so neither wildcard catches the other.
  */
 #define IOTDATA_NODE_MQTT_MANAGE_TOPIC_REQ  "/manage/req"
-#define IOTDATA_NODE_MQTT_MANAGE_TOPIC_RESP "/manage/resp"
+#define IOTDATA_NODE_MQTT_MANAGE_TOPIC_FROM "/manage/from"
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------

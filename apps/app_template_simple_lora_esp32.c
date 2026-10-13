@@ -412,8 +412,6 @@ static bool iapp_init(iapp_state_t *const as) {
 
     const app_descr_t *const ad = app_spec;
 
-
-
     const esp_reset_reason_t reset_reason = esp_reset_reason();
     const bool restarted = (reset_reason != ESP_RST_DEEPSLEEP);
 
@@ -421,9 +419,6 @@ static bool iapp_init(iapp_state_t *const as) {
     if (!iotdata_node_diagnostics_begin((uint8_t)reset_reason, restarted))
         ESP_LOGW(__tag_iapp, "diag: the recorder did not start");
     iotdata_node_diagnostics_flush();
-
-
-    
 
     iotdata_node_t *const node = &as->operating->node;
 

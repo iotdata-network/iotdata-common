@@ -52,7 +52,7 @@ typedef struct {
     iotdata_node_diagnostics_emit_fn diag_emit_fn;
 } iotdata_node_platform_conf_t;
 
-#define NODE_PLATFORM_STATE_MAGIC           0xB1E28003UL
+#define NODE_PLATFORM_STATE_MAGIC 0xB1E28003UL
 typedef struct {
     _RTC_DATA_STAMP_ENTRY;
     iotdata_node_version_caps_t caps;
@@ -61,20 +61,21 @@ static _RTC_DATA_STRUCT iotdata_node_platform_state_t s_node_platform_state;
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline const iotdata_node_version_caps_t* iotdata_node_platform_caps(void) {
+static inline const iotdata_node_version_caps_t *iotdata_node_platform_caps(void) {
     return &s_node_platform_state.caps;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
-static inline bool iotdata_node_platform_init (const char* const tag, const iotdata_node_platform_conf_t* const conf) {
-    
+static inline bool iotdata_node_platform_init(const char *const tag, const iotdata_node_platform_conf_t *const conf) {
+
     const esp_reset_reason_t reset_reason = esp_reset_reason();
     const bool restarted = (reset_reason != ESP_RST_DEEPSLEEP);
     const bool cold_boot = reset_reason == ESP_RST_USB || !_RTC_DATA_VALID(&s_node_platform_state, NODE_PLATFORM_STATE_MAGIC);
 
     // diagnostics
-    if (conf->diag_emit_fn) iotdata_node_diagnostics_emit_set(conf->diag_emit_fn);
+    if (conf->diag_emit_fn)
+        iotdata_node_diagnostics_emit_set(conf->diag_emit_fn);
     if (!iotdata_node_diagnostics_begin((uint8_t)reset_reason, restarted))
         ESP_LOGW(tag, "diag: the recorder did not start");
     iotdata_node_diagnostics_flush();
@@ -83,7 +84,8 @@ static inline bool iotdata_node_platform_init (const char* const tag, const iotd
     if (cold_boot) {
         _RTC_DATA_INIT(&s_node_platform_state, NODE_PLATFORM_STATE_MAGIC);
         iotdata_node_version_caps_init(&s_node_platform_state.caps);
-        if (conf->caps_fn) conf->caps_fn (&s_node_platform_state.caps);
+        if (conf->caps_fn)
+            conf->caps_fn(&s_node_platform_state.caps);
     }
     char vbuf[IOTDATA_NODE_VERSION_STR_MAX + 1];
     ESP_LOGI(tag, "version: %s", iotdata_node_version_str(vbuf, sizeof(vbuf), &(const iotdata_node_version_t){ .caps = &s_node_platform_state.caps }));
