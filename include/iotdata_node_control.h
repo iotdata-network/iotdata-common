@@ -38,6 +38,18 @@
 #define IOTDATA_NODE_MQTT_MANAGE_TOPIC_REQ  "/manage/req"
 #define IOTDATA_NODE_MQTT_MANAGE_TOPIC_FROM "/manage/from"
 
+/*
+ * TELEMETRY, under its own category for the same reason: <prefix>/variant/<name>/<station>.
+ *
+ * THE FIRST SEGMENT AFTER THE PREFIX IS ALWAYS A CATEGORY -- `manage`, `stats`, `variant` -- and
+ * never a payload kind. It used to be <prefix>/<variant name>/<station>, which put `weather_station`
+ * at the same level as `manage`: a reader could not tell structurally whether a segment named a
+ * kind of thing or one particular variant, "all telemetry" meant "everything except the two
+ * categories I happen to know about", and a variant named like a category would have collided.
+ * One level down, `variant/#` is every reading and `variant/snow_depth/#` is one kind of them.
+ */
+#define IOTDATA_NODE_MQTT_VARIANT_TOPIC     "/variant"
+
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
