@@ -52,7 +52,6 @@ static inline time_t hw_clock(void) {
     return time(NULL);
 }
 
-
 #pragma GCC diagnostic pop
 
 // ------------------------------------------------------------------------------------------------------------------------

@@ -106,6 +106,11 @@ test:
 # gpio pair and a clock, both of which a test can own outright.
 	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device test_interface_cart.c -o $(TEST_DIR)/test_interface_cart -lm
 	@$(TEST_DIR)/test_interface_cart
+# another device header, and the only one here that links a third-party library: the subscriber
+# table routes with mosquitto's own topic matcher, which is pure string work -- no broker, no
+# connection, nothing started. -lmosquitto is for that one function.
+	@$(TEST_CC) $(TEST_CFLAGS) -I$(IOTDATA_SRC_PLATFORM)/include/device test_module_mqtt_linux.c -o $(TEST_DIR)/test_module_mqtt_linux -lm -lmosquitto
+	@$(TEST_DIR)/test_module_mqtt_linux
 
 test-clean:
 	@rm -rf $(TEST_DIR)
