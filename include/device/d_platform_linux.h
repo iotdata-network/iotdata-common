@@ -179,6 +179,17 @@ static inline const char *esp_err_to_name(const esp_err_t e) {
 #define RTC_NOINIT_ATTR
 #define RTC_DATA_ATTR
 
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* THE WALL CLOCK, and the one place a port has to think about one. hw_time_ms() is what anything
+   that must HAPPEN runs on -- it exists from reset and never steps -- so this is for the other two
+   jobs only: an instant a reader reads as a date, and a stamp another host compares against its
+   own clock. time_t is the platform's own, 2038 and all: when that has to change, it changes here.
+   See hw_clock_is_set() in d_common.h -- the value may be nothing but seconds since boot. */
+static inline time_t hw_clock(void) {
+    return time(NULL);
+}
+
 static inline int64_t esp_timer_get_time(void) {
     struct timespec ts;
     (void)clock_gettime(CLOCK_MONOTONIC, &ts);

@@ -142,6 +142,18 @@ static inline uint32_t hw_time_ms(void) {
     return (uint32_t)(esp_timer_get_time() / US_PER_MS);
 }
 
+/* hw_clock() IS THE PLATFORM'S, defined in d_platform_{linux,esp32}.h, because <time.h> cannot be
+   included from here: IDF carries its own platform_include/time.h and pulling in newlib's early
+   makes its clock_gettime/settime/getres declarations redundant, which -Werror=redundant-decls
+   then refuses. Each platform header has the libc declarations in scope already.
+   A node with no SNTP counts from the epoch at boot, so hw_clock() is SMALL rather than wrong --
+   this is how a caller asks whether it means anything before publishing it as a date. */
+#define HW_CLOCK_SET_FROM 1000000000 /* 2001-09-09: anything earlier is a clock nobody ever set */
+
+static inline bool hw_clock_is_set(void) {
+    return hw_clock() >= (time_t)HW_CLOCK_SET_FROM;
+}
+
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 

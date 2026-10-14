@@ -32,6 +32,26 @@
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+/* <time.h> FOR hw_clock() BELOW, and it needs the suppression: IDF carries its own
+   esp_libc/platform_include/time.h which redeclares clock_settime/clock_gettime/clock_getres on top
+   of newlib's, and the project builds with -Werror=redundant-decls. The demotion is scoped to this
+   one include rather than being turned off for the component -- nothing of ours is excused by it. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wredundant-decls"
+#include <time.h>
+#pragma GCC diagnostic pop
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* THE WALL CLOCK, and the one place a port has to think about one. hw_time_ms() is what anything
+   that must HAPPEN runs on -- it exists from reset and never steps -- so this is for the other two
+   jobs only: an instant a reader reads as a date, and a stamp another host compares against its
+   own clock. time_t is the platform's own, 2038 and all: when that has to change, it changes here.
+   See hw_clock_is_set() in d_common.h -- the value may be nothing but seconds since boot. */
+static inline time_t hw_clock(void) {
+    return time(NULL);
+}
+
 
 #pragma GCC diagnostic pop
 
