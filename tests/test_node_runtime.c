@@ -271,10 +271,10 @@ int main(void) {
     /* adopting one restarts the stream: ONE STATION ONE SEQUENCE means a new id is a new sequence */
     iotdata_node_init(&n, 0x0111, NULL, 0u);
     n.sequence = 42;
-    CHECK(iotdata_node_adopt_station(&n, 0x0537), "adopted");
+    CHECK(iotdata_node_station_adopt(&n, 0x0537), "adopted");
     CHECK(iotdata_node_station(&n) == 0x0537 && n.sequence == 0, "identity and sequence move together");
-    CHECK(!iotdata_node_adopt_station(&n, 0x0537), "adopting the same one changes nothing");
-    CHECK(!iotdata_node_adopt_station(&n, IOTDATA_STATION_MAX), "and broadcast is not a station");
+    CHECK(!iotdata_node_station_adopt(&n, 0x0537), "adopting the same one changes nothing");
+    CHECK(!iotdata_node_station_adopt(&n, IOTDATA_STATION_MAX), "and broadcast is not a station");
 
     /* DIAGNOSTICS is advertised by every node unconditionally, so every node must answer it. A
        device with no recorder answers EMPTY -- absent would look exactly like being ignored. */
@@ -349,7 +349,7 @@ int main(void) {
     CHECK(iotdata_node_window_active(&n, 123456u), "but is always active");
 
     /* a sleeping node still schedules and advertises normally */
-    const iotdata_node_params_t sleeper = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = false, .receive_every_ms = 60000u, .receive_window_ms = 30000u };
+    const iotdata_node_params_t sleeper = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = false, .receive_every_s = 60u, .receive_window_s = 30u };
     iotdata_node_init(&n, 0x0538, NULL, 0u);
     iotdata_node_attach(&n, &sleeper);
     CHECK(!iotdata_node_window_advance(&n, 1000u), "not due yet");
@@ -359,6 +359,24 @@ int main(void) {
     iotdata_node_window_begin(&n, 1000u);
     CHECK(iotdata_node_window_active(&n, 2000u), "active inside the window");
     CHECK(!iotdata_node_window_active(&n, 1000u + 30000u), "and closed after it");
+
+    /* STATED IN SECONDS, COMPUTED IN MILLISECONDS: the _s forms are what the wire and the operator
+       see, the _ms forms are what the schedule runs on, and the conversion lives in one named place
+       so that no caller is left multiplying. */
+    CHECK(iotdata_node_window_s(&n) == 30u && iotdata_node_window_ms(&n) == 30000u, "the window, said one way and used the other");
+    CHECK(iotdata_node_window_every_s(&n) == 60u && iotdata_node_window_every_ms(&n) == 60000u, "and the cadence with it");
+    {
+        /* The settings cap does not reach the fallback: an application can put any uint32 of seconds
+           there, and a uint32 of milliseconds runs out at 49.7 days. So the multiply saturates --
+           a near-century cadence must not wrap round into a frantic one. */
+        const iotdata_node_params_t absurd = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = false, .receive_every_s = 0xFFFFFFFFu, .receive_window_s = 30u };
+        iotdata_node_attach(&n, &absurd);
+        CHECK(iotdata_node_window_every_ms(&n) == 0xFFFFFFFFu, "an absurd cadence saturates");
+        CHECK(!iotdata_node_window_advance(&n, 3600u * 1000u), "and is still not due an hour later");
+        const iotdata_node_params_t unreachable = { .caps = &caps, .status = st_cb, .tx = tx_cb, .receive_always = false, .receive_every_s = 0u, .receive_window_s = 30u };
+        iotdata_node_attach(&n, &unreachable);
+        CHECK(iotdata_node_window_every_ms(&n) == 0u, "while 0 stays 0, and still means never");
+    }
 
     printf(fails ? "\nFAILED (%d)\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

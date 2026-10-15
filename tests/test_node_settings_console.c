@@ -95,17 +95,86 @@ int main(void) {
     CHECK(said("not assignable"), "nor is the broadcast id");
     CHECK(iotdata_node_settings_station(&settings) == DERIVED_STATION, "and neither took");
 
+    printf("\nthe window and the interval, each named with the unit it is in\n");
+    node("window-s", "30", NULL, NULL);
+    CHECK(iotdata_node_settings_window_s(&settings) == 30, "window-s took");
+    node("window_s", "45", NULL, NULL);
+    CHECK(iotdata_node_settings_window_s(&settings) == 45, "and the underscore spelling is the same field");
+    node("window", "60", NULL, NULL);
+    CHECK(said("try `node`"), "the bare name is NOT the field: the unit is part of what it is called");
+    CHECK(iotdata_node_settings_window_s(&settings) == 45, "and nothing moved");
+    node("interval-m", "90", NULL, NULL);
+    CHECK(iotdata_node_settings_interval_s(&settings) == 90u * 60u, "interval-m is MINUTES, and the reader answers in seconds");
+
+    printf("\nboth ends of a slipped digit, refused rather than clamped\n");
+    node("window-s", "7200", NULL, NULL);
+    CHECK(said("is not a window"), "past the cap: an hour is already past any real duty cycle");
+    node("window-s", "0", NULL, NULL);
+    CHECK(said("is not a window"), "and 0 is not a decision here -- on the wire it reads as the default, which this node would not be awake for");
+    CHECK(iotdata_node_settings_window_s(&settings) == 45, "neither took");
+    node("interval-m", "20000", NULL, NULL);
+    CHECK(said("past the cap"), "a week is the interval's limit, for the opposite reason");
+    CHECK(iotdata_node_settings_interval_s(&settings) == 90u * 60u, "and that did not take either");
+
+    printf("\nthe same caps over the air, where there is nobody to read the refusal\n");
+    {
+        /* 5000 is the millisecond window a node persisted before the unit changed, and what a
+           manager that has not been updated would still write. Per FIELD, not per record: the
+           triple arrives whole, and one bad value must not cost the other two. */
+        uint8_t kvbuf[32], r[IOTDATA_NODE_SETTINGS_RECEIVE_SIZE];
+        iotdata_kvr_t kv;
+        iotdata_kvr_init(&kv, kvbuf, sizeof(kvbuf));
+        iotdata_node_settings_put_u16(r, 0, 5000);
+        iotdata_node_settings_put_u16(r, 2, 120);
+        iotdata_node_settings_put_u16(r, 4, 0);
+        iotdata_kvr_add(&kv, IOTDATA_NODE_SETTINGS_RECEIVE, r, (uint8_t)sizeof(r));
+        CHECK(iotdata_node_settings_apply(&settings, kvbuf, kv.len), "the write took something");
+        CHECK(iotdata_node_settings_window_s(&settings) == 45, "but not the window past the cap");
+        CHECK(iotdata_node_settings_interval_s(&settings) == 120u * 60u, "and the interval beside it still landed");
+    }
+
     printf("\na report schedule, by type name\n");
-    node("report", "STATUS", "period", "3600");
+    node("report", "STATUS", "period-s", "3600");
     CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 3600, "the period took");
     node("report", "STATUS", "at-startup", "on");
     CHECK(iotdata_node_settings_at_startup(&settings, IOTDATA_NODE_TLV_STATUS), "at-startup too");
     CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 3600, "and changing one did not clear the other");
-    node("report", "STATUS", "period", "off");
+    node("report", "STATUS", "period_s", "off");
     CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 0, "'off' means NEVER, which is a value -- the flag carries it, not a sentinel");
     CHECK(iotdata_node_settings_at_startup(&settings, IOTDATA_NODE_TLV_STATUS), "and still says nothing about at-startup");
-    node("report", "nonesuch", "period", "10");
+    node("report", "STATUS", "period", "900");
+    CHECK(said("expected"), "and the bare name is not the word here either: the unit is part of it");
+    CHECK(iotdata_node_settings_period_s(&settings, IOTDATA_NODE_TLV_STATUS) == 0, "so nothing moved");
+    node("report", "nonesuch", "period-s", "10");
     CHECK(said("not a reportable type"), "an unknown subject is named");
+
+    printf("\nthe vocabulary as a whole: a key that names a quantity names its unit\n");
+    {
+        /* Asserted over the GENERATED list rather than name by name, because the rule is the point:
+           seconds and minutes are what the wire and the operator see, milliseconds are what the code
+           works in, and the only thing that keeps the two from being confused is that every stated
+           quantity says which it is. Anything added later that measures a time and does not say in
+           what fails here. */
+        char key[IOTDATA_NODE_SETTINGS_KEY_MAX];
+        int named = 0;
+        for (int i = 0; i < IOTDATA_NODE_SETTINGS_KEY_COUNT; i++)
+            /* a subject nobody can report has no row at all, which is not a naming fault */
+            if (iotdata_node_settings_key_name(i, key, sizeof(key))) {
+                named++;
+                const size_t n = strlen(key);
+                /* a station is a name and at-startup is a yes or no: neither is a quantity */
+                const bool unitless = strcmp(key, "node-station") == 0 || (n > 11 && strcmp(key + n - 11, "-at-startup") == 0);
+                const bool suffixed = n > 2 && key[n - 2] == '-' && (key[n - 1] == 's' || key[n - 1] == 'm');
+                if (!unitless && !suffixed) {
+                    printf("  FAIL: '%s' names a quantity and not its unit (line %d)\n", key, __LINE__);
+                    fails++;
+                }
+            }
+        CHECK(named > IOTDATA_NODE_SETTINGS_SCALAR_COUNT, "and there were rows to check");
+        CHECK(iotdata_node_settings_key_name(1, key, sizeof(key)) && strcmp(key, "node-window-s") == 0, "the window row is spelled in seconds");
+        CHECK(iotdata_node_settings_key_index("node-report-status-period-s") >= 0, "a report cadence says seconds too");
+        CHECK(iotdata_node_settings_key_index("node-report-status-period") < 0, "and the unsuffixed spelling is not a key: a unit change breaks it, loudly");
+    }
 
     printf("\nit persists, because the state block is where settings live\n");
     node("station", "0x123", NULL, NULL);

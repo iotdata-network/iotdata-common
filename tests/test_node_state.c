@@ -158,6 +158,45 @@ static void test_registration_changes(void) {
     datastore_close(&ds);
 }
 
+/* THE CASE THE RESIZE TEST DOES NOT COVER, and the one a unit change needs: same tag, same size,
+   different VERSION. A field that changed from milliseconds to seconds does not move a byte, so
+   size tells the loader nothing and only the version stands between a node and a value a thousand
+   times too large. */
+static void test_version_change(void) {
+    printf("\na field that changed MEANING without changing size: the version is the only guard\n");
+    datastore_t ds;
+    store_reset(&ds);
+    (void)datastore_erase(&ds, "state");
+
+    block_a_t a;
+    iotdata_node_state_t s;
+    iotdata_node_state_init(&s, &ds, "state");
+    (void)iotdata_node_state_insert(&s, TAG_A, 1u, &a, sizeof(a), NULL);
+    (void)iotdata_node_state_load(&s);
+    a.cycles = 5000u; /* stand in for the millisecond window that used to live here */
+    a.battery_mv = 4100u;
+    CHECK(iotdata_node_state_flush(&s), "written by the old firmware");
+
+    /* the same block, same width, read by a build that bumped its version */
+    static const block_a_t A_DEFAULTS = { .cycles = 5u, .battery_mv = 0u };
+    block_a_t a2 = { 0 };
+    iotdata_node_state_t s2;
+    iotdata_node_state_init(&s2, &ds, "state");
+    (void)iotdata_node_state_insert(&s2, TAG_A, 2u, &a2, sizeof(a2), &A_DEFAULTS);
+    CHECK(!iotdata_node_state_load(&s2), "nothing restored: the stored version is not this one");
+    CHECK(a2.cycles == 5u, "the block DEFAULTED rather than being reinterpreted");
+    CHECK(s2.stat_defaulted == 1u && s2.stat_restored == 0u, "and said so in the counters");
+
+    /* and the version that WROTE it still reads it, so the bump is a one-way step and not a wipe */
+    block_a_t a3 = { 0 };
+    iotdata_node_state_t s3;
+    iotdata_node_state_init(&s3, &ds, "state");
+    (void)iotdata_node_state_insert(&s3, TAG_A, 1u, &a3, sizeof(a3), NULL);
+    CHECK(iotdata_node_state_load(&s3), "the original version still matches");
+    CHECK(a3.cycles == 5000u, "and gets its bytes back unchanged");
+    datastore_close(&ds);
+}
+
 static void test_tick_gating(void) {
     printf("\ntick: write-behind is gated, write-through is not\n");
     datastore_t ds;
@@ -213,6 +252,7 @@ int main(void) {
     test_first_boot_defaults();
     test_round_trip();
     test_registration_changes();
+    test_version_change();
     test_tick_gating();
     test_persistence_detection();
 

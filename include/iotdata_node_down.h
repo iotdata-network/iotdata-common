@@ -136,7 +136,7 @@ typedef struct {
     uint32_t down_last_ms; /* last arrival for this target, for eviction ordering */
     bool window_seen;      /* have we ever snooped a RECEIVE from it: whether we can deliver at all */
     uint32_t window_ms;    /* what it advertises, or the system default */
-    uint32_t window_ms_at; /* when we last saw it open one */
+    uint32_t window_at_ms; /* when we last saw it open one */
     iotdata_node_down_slot_t slot[IOTDATA_NODE_DOWN_SLOTS];
     iotdata_node_down_sent_t sent[IOTDATA_NODE_DOWN_SENT_SLOTS];
 } iotdata_node_down_station_t;
@@ -298,8 +298,8 @@ static inline bool iotdata_node_down_holds(iotdata_node_down_t *const ds, const 
 static inline uint32_t iotdata_node_down_window_remaining_ms(const iotdata_node_down_station_t *const st, const uint32_t now_ms) {
     if (!st->window_seen)
         return 0u;
-    const uint32_t elapsed = (uint32_t)(now_ms - st->window_ms_at);
-    return (elapsed < st->window_ms) ? (st->window_ms - elapsed) : 0u;
+    const uint32_t elapsed_ms = (uint32_t)(now_ms - st->window_at_ms);
+    return (elapsed_ms < st->window_ms) ? (st->window_ms - elapsed_ms) : 0u;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -453,31 +453,49 @@ static inline buffer_handle_t iotdata_node_down_window(iotdata_node_down_t *cons
 
     iotdata_node_down_station_t *const st = _iotdata_node_down_station_obtain(ds, station);
     st->window_seen = true;
-    st->window_ms = iotdata_node_receive_window_ms(rx);
-    st->window_ms_at = now_ms;
+    st->window_ms = (uint32_t)iotdata_node_receive_window_s(rx) * 1000u; /* the one conversion: seconds arrive, milliseconds are kept */
+    /* THE STAMP IS WHEN THE WINDOW OPENS, not when we heard about it. A stated DELAY_S puts that in
+       the future, and iotdata_node_down_window_remaining_ms() then answers 0 until it arrives, so a
+       frame is HELD instead of being transmitted at a node that is not listening yet. The other half
+       -- waking at that instant to send, rather than only on the next snoop -- is not built, so a
+       delayed window currently costs a delivery rather than earning one. */
+    st->window_at_ms = now_ms + iotdata_node_receive_delay_s(rx) * 1000u;
 
     if (!iotdata_node_receive_accepts(rx, IOTDATA_NODE_DOWN_ASSUMED_TYPE))
         return BUFFER_NONE;
 
     /* Oldest first, across both sources, taking the first that fits: a frame too big for what is
-       left of the window must not block a smaller one behind it. */
+       left of the window must not block a smaller one behind it.
+     *
+     * SET ASIDE, NOT ALTERED. A candidate that does not fit is masked off for THIS CALL ONLY, which
+       is the only way the search can terminate: it was previously excluded by making the frame look
+       newly arrived (and a broadcast, by recording it as sent). Neither actually removed it from
+       candidacy -- a lone frame too big for the window was picked, re-stamped and picked again,
+       forever -- and both lied about the queue afterwards: a frame that did not fit lost its place
+       in arrival order, and a broadcast that did not fit went unsent for a whole repeat interval.
+       Nothing here mutates now, so what did not fit this window keeps its place for the next. */
+    uint32_t aside_station = 0u, aside_bcast = 0u;
+    _Static_assert(IOTDATA_NODE_DOWN_SLOTS <= 32, "the set-aside masks are one bit per slot");
     for (;;) {
         iotdata_node_down_station_t *from = NULL;
         iotdata_node_down_slot_t *best = NULL;
+        int best_j = -1;
         for (int pass = 0; pass < 2; pass++) {
             iotdata_node_down_station_t *const src = (pass == 0) ? st : &ds->station[0];
+            const uint32_t aside = (pass == 0) ? aside_station : aside_bcast;
             for (int j = 0; j < IOTDATA_NODE_DOWN_SLOTS; j++) {
                 iotdata_node_down_slot_t *const sl = &src->slot[j];
-                if (sl->frame != BUFFER_NONE)
+                if (sl->frame != BUFFER_NONE && (aside & (1u << j)) == 0u)
                     if (!(pass == 1 && _iotdata_node_down_sent_recently(ds, st, sl->hash, now_ms)))
                         if (best == NULL || (int32_t)(sl->arrived_ms - best->arrived_ms) < 0) {
                             best = sl;
+                            best_j = j;
                             from = src;
                         }
             }
         }
         if (best == NULL)
-            return BUFFER_NONE;
+            return BUFFER_NONE; /* nothing left that fits -- including a window that has not opened yet */
 
         const size_t len = buffer_len(ds->pool, best->frame);
         if (iotdata_node_receive_fits_ms(len, bps, iotdata_node_down_window_remaining_ms(st, now_ms))) {
@@ -493,12 +511,10 @@ static inline buffer_handle_t iotdata_node_down_window(iotdata_node_down_t *cons
             }
             return out;
         } else {
-            /* Not this one, and not this pass: mark it considered by pretending it was sent, so the
-               loop can look past it without mutating anything that matters. */
             if (from == &ds->station[0])
-                _iotdata_node_down_sent_record(st, best->hash, now_ms);
+                aside_bcast |= (uint32_t)1u << best_j;
             else
-                best->arrived_ms = now_ms; /* youngest: it stops being the oldest candidate */
+                aside_station |= (uint32_t)1u << best_j;
         }
     }
 }
@@ -520,11 +536,11 @@ static inline int iotdata_node_down_tick(iotdata_node_down_t *const ds, const ui
     for (int i = 0; i < IOTDATA_NODE_DOWN_STATIONS; i++) {
         iotdata_node_down_station_t *const st = &ds->station[i];
         if (st->station != 0u) {
-            const uint32_t ttl = iotdata_node_down_ttl_of(ds, st);
+            const uint32_t ttl_ms = iotdata_node_down_ttl_of(ds, st);
             bool empty = true;
             for (int j = 0; j < IOTDATA_NODE_DOWN_SLOTS; j++)
                 if (st->slot[j].hash != 0u) {
-                    if (_iotdata_node_down_older(now_ms, st->slot[j].arrived_ms, ttl)) {
+                    if (_iotdata_node_down_older(now_ms, st->slot[j].arrived_ms, ttl_ms)) {
                         _iotdata_node_down_slot_clear(ds, &st->slot[j]);
                         ds->stat_expired++;
                         expired++;

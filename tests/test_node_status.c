@@ -35,14 +35,14 @@ static void a_relay(iotdata_node_status_t *const s) {
     s->uptime_s = 4242;
     s->reason = IOTDATA_NODE_REASON_POWER_ON;
     s->has_heap = true;
-    s->heap_free = 100000;
-    s->heap_min = 90000;
+    s->heap_free_bytes = 100000;
+    s->heap_min_bytes = 90000;
     s->mesh.present = true;
     s->mesh.state = IOTDATA_NODE_STATUS_MESH_STATE_JOINED;
     s->mesh.parent = 0x0537;
     s->mesh.cost = 2;
     s->mesh.peers = 3;
-    s->mesh.parent_rssi = -71;
+    s->mesh.parent_rssi_dbm = -71;
 }
 static void a_gateway(iotdata_node_status_t *const s) {
     memset(s, 0, sizeof(*s));
@@ -123,7 +123,7 @@ static void test_one_shape(void) {
         devices[d](&s);
         iotdata_kvr_init(&kv, buf, sizeof(buf));
         (void)iotdata_node_status_pack(&kv, &s, 0);
-        if (!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_UPTIME) || !has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_REASON))
+        if (!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_UPTIME_S) || !has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_REASON))
             printf("  FAIL: %s omitted uptime or reason\n", names[d]), fails++;
     }
 }
@@ -139,8 +139,8 @@ static void test_presence(void) {
     a_gateway(&s);
     iotdata_kvr_init(&kv, buf, sizeof(buf));
     (void)iotdata_node_status_pack(&kv, &s, 0);
-    CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_SUPPLY), "no supply reading, no supply key");
-    CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_HEAP_FREE), "no heap figure, no heap key");
+    CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_SUPPLY_MV), "no supply reading, no supply key");
+    CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_HEAP_FREE_BYTES), "no heap figure, no heap key");
     CHECK(!has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_RESTARTS), "and no restart count");
 
     /* the value being zero is not the same as having no value */
@@ -148,7 +148,7 @@ static void test_presence(void) {
     s.supply_mv = 0;
     iotdata_kvr_init(&kv, buf, sizeof(buf));
     (void)iotdata_node_status_pack(&kv, &s, 0);
-    CHECK(has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_SUPPLY), "a declared zero IS reported");
+    CHECK(has_key(buf, (uint8_t)kv.len, IOTDATA_NODE_STATUS_SUPPLY_MV), "a declared zero IS reported");
 
     /* THE IMAGE: slot 0x0 is a real slot and state 0x0 is "unknown", so 0x00 is a perfectly
        sayable value -- which is exactly why presence is carried by the flag and not by the byte.
@@ -278,7 +278,7 @@ static void test_json(void) {
     CHECK(iotdata_node_status_json_key(o, "mesh-state", IOTDATA_NODE_STATUS_MESH_STATE, &state, 1), "mesh state is ours");
     CHECK(iotdata_node_status_json_key(o, "accepting", IOTDATA_NODE_STATUS_MESH_ACCEPTING, &yes, 1), "accepting is ours");
     /* a counter is left to the generic renderer: it IS its value */
-    CHECK(!iotdata_node_status_json_key(o, "uptime", IOTDATA_NODE_STATUS_UPTIME, uptime, 4), "a counter is not ours");
+    CHECK(!iotdata_node_status_json_key(o, "uptime", IOTDATA_NODE_STATUS_UPTIME_S, uptime, 4), "a counter is not ours");
     /* malformed: the wrong width is handed back rather than guessed at */
     CHECK(!iotdata_node_status_json_key(o, "reason", IOTDATA_NODE_STATUS_REASON, uptime, 4), "a mis-sized enum is not ours either");
     /* two nibbles a reader should not have to know about: rendered as an object, not as 0x12 */

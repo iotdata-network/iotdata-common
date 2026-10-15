@@ -213,8 +213,8 @@ static iapp_running_t _iapp_running = { .node_config = {
                                             .control_actions = _iapp_control_actions,
                                             .control_actions_count = IAPP_CONTROL_ACTIONS_COUNT,
                                             .diag = IOTDATA_NODE_DIAGNOSTICS_PULL,
-                                            .receive_every_ms = IOTDATA_NODE_RECEIVE_EVERY_MS,
-                                            .receive_window_ms = IOTDATA_NODE_RECEIVE_WINDOW_MS,
+                                            .receive_every_s = IOTDATA_NODE_RECEIVE_EVERY_S,
+                                            .receive_window_s = IOTDATA_NODE_RECEIVE_WINDOW_S,
                                             .settings = &_iapp_running.node_settings,
                                             .state = &_iapp_running.node,
                                             .config_build = _iapp_node_config_build,
@@ -294,8 +294,8 @@ static void _iapp_node_status(__attribute__((unused)) const uint16_t station, io
     out->uptime_s = (uint32_t)(hw_time_ms() / 1000);
     out->reason = iotdata_node_reason_reset();
     out->has_heap = true;
-    out->heap_free = (uint32_t)esp_get_free_heap_size();
-    out->heap_min = (uint32_t)esp_get_minimum_free_heap_size();
+    out->heap_free_bytes = (uint32_t)esp_get_free_heap_size();
+    out->heap_min_bytes = (uint32_t)esp_get_minimum_free_heap_size();
     out->has_restarts = true;
     out->restarts = (uint16_t)s->restarts;
     if (s->battery_present && s->battery_mv > 0) {
@@ -362,7 +362,7 @@ static uint32_t iapp_sleep_remaining(iapp_state_t *const as, const uint32_t star
 static void iapp_node_receive(iapp_state_t *const as) {
     iotdata_node_t *const n = &as->operating->node;
 
-    ESP_LOGI(__tag_iapp, "receive: window opened for %us (station=%03" PRIX16 ")", (unsigned)(IOTDATA_NODE_RECEIVE_WINDOW_MS / 1000), iotdata_node_station(n));
+    ESP_LOGI(__tag_iapp, "receive: window opened for %us (station=%03" PRIX16 ")", (unsigned)IOTDATA_NODE_RECEIVE_WINDOW_S, iotdata_node_station(n));
     iotdata_node_window_begin(n, (uint32_t)hw_time_ms());
     iotdata_node_diagnostics_event(IOTDATA_NODE_BB_LC_WAKE, 0);
     bool reboot = false;
@@ -479,7 +479,7 @@ static bool iapp_init(iapp_state_t *const as) {
             ESP_LOGW(__tag_iapp, "state: persistence binding failed");
         const bool restored = iotdata_node_state_load(&as->running->node);
         ESP_LOGI(__tag_iapp, "state: persistence %s %u block(s)", restored ? "restored" : "defaulted", (unsigned)as->running->node.count);
-        if (iotdata_node_restore_station(&as->operating->node, &as->running->node_settings))
+        if (iotdata_node_station_restore(&as->operating->node, &as->running->node_settings))
             ESP_LOGI(__tag_iapp, "node: station=%" PRIu16 " restored from persisted settings", iotdata_node_station(&as->operating->node));
         if (!iotdata_node_config_load(&as->running->datastore))
             ESP_LOGI(__tag_iapp, "config: persistence empty, using defaults");

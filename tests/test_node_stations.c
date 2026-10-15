@@ -47,7 +47,7 @@ static void test_seen_and_update(void) {
     const int i = stations_locate(&t, 0x123);
     CHECK(i == 0, "locate finds it");
     CHECK(t.s[i].rx_count == 2, "rx_count counts every sighting, not every station");
-    CHECK(t.s[i].rssi == -80, "rssi is the LATEST, not the first");
+    CHECK(t.s[i].rssi_dbm == -80, "rssi is the LATEST, not the first");
     CHECK(t.s[i].last_ms == 2000, "and so is last_ms");
 
     printf("\na different station is a different row\n");

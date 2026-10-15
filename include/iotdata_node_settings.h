@@ -28,7 +28,13 @@
 #endif
 
 #define IOTDATA_NODE_SETTINGS_STATE_TAG     0x53455431u /* "SET1" */
-#define IOTDATA_NODE_SETTINGS_STATE_VERSION 2u
+/* 3: the receive window became SECONDS. The layout did not move -- same offset, same width -- which
+   is exactly why this had to be bumped: the loader matches on tag, version and size, so without it
+   every node already in the field restores a millisecond count as a second count and comes back
+   holding its receiver on for 5000 SECONDS. The cost is that the block defaults, and the station
+   is the only thing in it that cannot be re-derived, so a commissioned node needs commissioning
+   again. That is a visit; the alternative was a fleet with an 83-minute receive window. */
+#define IOTDATA_NODE_SETTINGS_STATE_VERSION 3u
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -45,7 +51,7 @@ typedef struct {
    struct, so this IS what lands in the datastore, and a layout change must bump the version. */
 typedef struct {
     uint16_t station;
-    uint16_t window_ms;  /* how long the receiver stays on  */
+    uint16_t window_s;   /* how long the receiver stays on  */
     uint16_t interval_m; /* how often it opens, in MINUTES  */
     uint16_t offset_m;   /* phase within the interval, MINUTES -- declared, not yet consumed */
     uint8_t report_count;
@@ -78,19 +84,25 @@ typedef struct {
 #endif
 
 /* How long the receiver stays on, and how often it opens. An application that listens on some
-   other cadence overrides these before including; what matters is that the node HAS an answer. */
-#ifndef IOTDATA_NODE_SETTINGS_DEFAULT_WINDOW_MS
-#define IOTDATA_NODE_SETTINGS_DEFAULT_WINDOW_MS 5000u
+   other cadence overrides these before including; what matters is that the node HAS an answer.
+ *
+ * THE SAME NUMBER THE PROTOCOL ASSUMES, by derivation rather than by coincidence. A holder that
+   hears no duration assumes IOTDATA_NODE_RECEIVE_WINDOW_S_DEFAULT (iotdata_node.h), so a node
+   whose own window disagreed with it would be the odd case rather than the normal one -- and two
+   copies of the number is how they come to disagree. */
+#ifndef IOTDATA_NODE_SETTINGS_DEFAULT_WINDOW_S
+#define IOTDATA_NODE_SETTINGS_DEFAULT_WINDOW_S IOTDATA_NODE_RECEIVE_WINDOW_S_DEFAULT
 #endif
 
 /* MINUTES, not seconds: u16 seconds capped the interval at 18h, and a slow-cycle node spends more
    of its budget on the receive window than on sensing. One-minute granularity is the whole range
    anyone wants -- nobody reaches for 6025 seconds over 100 minutes.
-   This default deliberately MATCHES IOTDATA_NODE_RECEIVE_EVERY_MS. They disagreed before, so a node with a
-   settings block listened every 60s while one without listened every 6h, and the configured value
-   was not the one anybody had read. */
+   This default deliberately MATCHES IOTDATA_NODE_RECEIVE_EVERY_S, and iotdata_node_runtime.h
+   asserts that it does -- they disagreed before, so a node with a settings block listened every
+   60s while one without listened every 6h, and the configured value was not the one anybody had
+   read. It cannot be derived from it, because the cadence is declared in the later header. */
 #ifndef IOTDATA_NODE_SETTINGS_DEFAULT_INTERVAL_M
-#define IOTDATA_NODE_SETTINGS_DEFAULT_INTERVAL_M (6u * 60u) /* 6 hours, as IOTDATA_NODE_RECEIVE_EVERY_MS */
+#define IOTDATA_NODE_SETTINGS_DEFAULT_INTERVAL_M (6u * 60u) /* 6 hours, as IOTDATA_NODE_RECEIVE_EVERY_S */
 #endif
 
 /* THE ONE SETTING THAT CAN PUT A NODE BEYOND REACH. The receive window is the only way in, so an
@@ -104,6 +116,21 @@ static inline bool iotdata_node_settings_interval_is_valid(const uint16_t minute
     return minutes <= (uint16_t)IOTDATA_NODE_SETTINGS_INTERVAL_M_MAX;
 }
 
+/* THE SAME MISTAKE FROM THE OTHER END. The interval's cap stops a node being put out of reach; this
+   one stops it being left awake. The window is receiver-on time out of a battery, and in seconds a
+   slipped digit buys 18 hours of it where the type's own ceiling is the only other limit. An hour
+   is past any real duty cycle -- a node that genuinely never sleeps sets receive_always and never
+   consults this field at all.
+ *
+ * 0 IS NOT A DECISION HERE, unlike the interval's 0. On the wire 0 means "unstated", which a holder
+   reads as the system default, so a node storing 0 advertises a window it will not actually be
+   awake for. Refused rather than clamped, as everywhere else: a typo should not look accepted. */
+#define IOTDATA_NODE_SETTINGS_WINDOW_S_MAX (60u * 60u) /* 3600 */
+
+static inline bool iotdata_node_settings_window_is_valid(const uint16_t seconds) {
+    return seconds > 0u && seconds <= (uint16_t)IOTDATA_NODE_SETTINGS_WINDOW_S_MAX;
+}
+
 /* Spread the startup burst over this window. A fleet that lost power together comes back together,
    and without this every node in it would announce itself in the same second. */
 #ifndef IOTDATA_NODE_SETTINGS_DEFAULT_STARTUP_BACKOFF_MS
@@ -113,22 +140,23 @@ static inline bool iotdata_node_settings_interval_is_valid(const uint16_t minute
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void iotdata_node_settings_defaults(iotdata_node_settings_t *const s, const uint16_t derived) {
-    if (s == NULL)
+static inline void iotdata_node_settings_defaults(iotdata_node_settings_t *const s, const uint16_t station) {
+    if (!s)
         return;
-    *s = (iotdata_node_settings_t){ 0 };
-    s->station = derived;
-    s->window_ms = (uint16_t)IOTDATA_NODE_SETTINGS_DEFAULT_WINDOW_MS;
-    s->interval_m = (uint16_t)IOTDATA_NODE_SETTINGS_DEFAULT_INTERVAL_M;
-    s->offset_m = 0;
+    *s = (iotdata_node_settings_t){
+        .station = station,
+        .window_s = (uint16_t)IOTDATA_NODE_SETTINGS_DEFAULT_WINDOW_S,
+        .interval_m = (uint16_t)IOTDATA_NODE_SETTINGS_DEFAULT_INTERVAL_M,
+        .offset_m = 0,
+    };
     for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT && s->report_count < (uint8_t)IOTDATA_NODE_SETTINGS_REPORT_MAX; t++)
         if (iotdata_node_tlv_is_reportable(t)) {
-            const bool at_startup = ((IOTDATA_NODE_SETTINGS_DEFAULT_STARTUP >> t) & 1u) != 0u;
-            const uint16_t period = (t == IOTDATA_NODE_TLV_STATUS) ? (uint16_t)IOTDATA_NODE_SETTINGS_DEFAULT_PERIOD_STATUS_S : 0u;
+            const bool startup = ((IOTDATA_NODE_SETTINGS_DEFAULT_STARTUP >> t) & 1u) != 0u;
+            const uint16_t period_s = (t == IOTDATA_NODE_TLV_STATUS) ? (uint16_t)IOTDATA_NODE_SETTINGS_DEFAULT_PERIOD_STATUS_S : 0u;
             s->report[s->report_count++] = (iotdata_node_settings_report_t){
                 .subject = t,
-                .flags = (uint16_t)((at_startup ? IOTDATA_NODE_REPORT_AT_STARTUP : 0u) | ((period > 0u) ? IOTDATA_NODE_REPORT_ON_PERIOD : 0u)),
-                .period_s = period,
+                .flags = (uint16_t)((startup ? IOTDATA_NODE_REPORT_AT_STARTUP : 0u) | ((period_s > 0u) ? IOTDATA_NODE_REPORT_ON_PERIOD : 0u)),
+                .period_s = period_s,
                 .change_s = 0,
                 .events = 0,
             };
@@ -177,21 +205,21 @@ static inline void iotdata_node_settings_saver_attach(const iotdata_node_setting
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_node_settings_freeze(const iotdata_node_settings_t *const s) {
-    if (s != NULL)
+    if (s)
         _iotdata_node_settings_default = *s;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_node_settings_attach(iotdata_node_settings_t *const s, iotdata_node_state_t *const state) {
-    if (s == NULL || state == NULL)
+    if (!s || !state)
         return false;
     iotdata_node_settings_freeze(s);
     return iotdata_node_state_insert(state, IOTDATA_NODE_SETTINGS_STATE_TAG, IOTDATA_NODE_SETTINGS_STATE_VERSION, s, sizeof(*s), &_iotdata_node_settings_default);
 }
 
 static inline bool iotdata_node_settings_attach_as(iotdata_node_settings_t *const s, iotdata_node_state_t *const state, const uint32_t tag, iotdata_node_settings_t *const defaults) {
-    if (s == NULL || state == NULL || defaults == NULL)
+    if (!s || !state || !defaults)
         return false;
     *defaults = *s;
     return iotdata_node_state_insert(state, tag, IOTDATA_NODE_SETTINGS_STATE_VERSION, s, sizeof(*s), defaults);
@@ -200,7 +228,7 @@ static inline bool iotdata_node_settings_attach_as(iotdata_node_settings_t *cons
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline const iotdata_node_settings_report_t *iotdata_node_settings_report_find(const iotdata_node_settings_t *const s, const uint8_t subject) {
-    if (s == NULL)
+    if (!s)
         return NULL;
     for (uint8_t i = 0; i < s->report_count; i++)
         if (s->report[i].subject == subject)
@@ -217,7 +245,7 @@ static inline bool iotdata_node_settings_subject_ok(const uint8_t subject) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_node_settings_report_set(iotdata_node_settings_t *const s, const iotdata_node_settings_report_t *const r) {
-    if (s == NULL || r == NULL || !iotdata_node_settings_subject_ok(r->subject))
+    if (!s || !r || !iotdata_node_settings_subject_ok(r->subject))
         return false;
     for (uint8_t i = 0; i < s->report_count; i++)
         if (s->report[i].subject == r->subject) {
@@ -234,12 +262,12 @@ static inline bool iotdata_node_settings_report_set(iotdata_node_settings_t *con
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline uint16_t iotdata_node_settings_station(const iotdata_node_settings_t *const s) {
-    return (s != NULL) ? s->station : 0u;
+    return s ? s->station : 0u;
 }
 
 static inline uint16_t _iotdata_node_settings_flags(const iotdata_node_settings_t *const s, const uint8_t subject) {
     const iotdata_node_settings_report_t *const r = iotdata_node_settings_report_find(s, subject);
-    return (r != NULL) ? r->flags : 0u;
+    return r ? r->flags : 0u;
 }
 
 static inline bool iotdata_node_settings_at_startup(const iotdata_node_settings_t *const s, const uint8_t subject) {
@@ -248,22 +276,22 @@ static inline bool iotdata_node_settings_at_startup(const iotdata_node_settings_
 
 static inline uint16_t iotdata_node_settings_period_s(const iotdata_node_settings_t *const s, const uint8_t subject) {
     const iotdata_node_settings_report_t *const r = iotdata_node_settings_report_find(s, subject);
-    return (r == NULL || (r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) == 0u) ? 0u : r->period_s;
+    return (!r || (r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) == 0u) ? 0u : r->period_s;
 }
 
-static inline uint16_t iotdata_node_settings_window_ms(const iotdata_node_settings_t *const s) {
-    return (s != NULL) ? s->window_ms : 0u;
+static inline uint16_t iotdata_node_settings_window_s(const iotdata_node_settings_t *const s) {
+    return s ? s->window_s : 0u;
 }
 
-static inline uint32_t iotdata_node_settings_interval_ms(const iotdata_node_settings_t *const s) {
-    return (s != NULL) ? (uint32_t)s->interval_m * 60000u : 0u; /* 10080 * 60000 fits a uint32 */
+static inline uint32_t iotdata_node_settings_interval_s(const iotdata_node_settings_t *const s) {
+    return s ? (uint32_t)s->interval_m * 60u : 0u;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline int iotdata_node_settings_pack(iotdata_kvr_t *const kv, const iotdata_node_settings_t *const s, const uint8_t *const sel, const uint8_t sellen) {
-    if (kv == NULL || s == NULL)
+    if (!kv || !s)
         return -1;
     bool want_station = (sellen == 0), want_report = (sellen == 0), want_receive = (sellen == 0);
     for (uint8_t i = 0; i < sellen; i++) {
@@ -285,7 +313,7 @@ static inline int iotdata_node_settings_pack(iotdata_kvr_t *const kv, const iotd
         }
     if (want_receive) {
         uint8_t r[IOTDATA_NODE_SETTINGS_RECEIVE_SIZE];
-        iotdata_node_settings_put_u16(r, 0, s->window_ms);
+        iotdata_node_settings_put_u16(r, 0, s->window_s);
         iotdata_node_settings_put_u16(r, 2, s->interval_m);
         iotdata_node_settings_put_u16(r, 4, s->offset_m);
         iotdata_kvr_add(kv, IOTDATA_NODE_SETTINGS_RECEIVE, r, (uint8_t)sizeof(r));
@@ -296,7 +324,7 @@ static inline int iotdata_node_settings_pack(iotdata_kvr_t *const kv, const iotd
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_node_settings_apply(iotdata_node_settings_t *const s, const uint8_t *const kv, const size_t kvlen) {
-    if (s == NULL || kv == NULL)
+    if (!s || !kv)
         return false;
     size_t cur = 0;
     uint8_t key, vlen;
@@ -321,15 +349,15 @@ static inline bool iotdata_node_settings_apply(iotdata_node_settings_t *const s,
                     .events = iotdata_node_settings_get_u16(val, 7),
                 };
                 const iotdata_node_settings_report_t *const had = iotdata_node_settings_report_find(s, r.subject);
-                if ((had == NULL || memcmp(had, &r, sizeof(r)) != 0) && !iotdata_node_settings_report_is_pinned(r.subject) && iotdata_node_settings_report_set(s, &r))
+                if ((!had || memcmp(had, &r, sizeof(r)) != 0) && !iotdata_node_settings_report_is_pinned(r.subject) && iotdata_node_settings_report_set(s, &r))
                     changed = true;
             }
             break;
         case IOTDATA_NODE_SETTINGS_RECEIVE:
             if (vlen == IOTDATA_NODE_SETTINGS_RECEIVE_SIZE) {
                 const uint16_t w = iotdata_node_settings_get_u16(val, 0), i = iotdata_node_settings_get_u16(val, 2), o = iotdata_node_settings_get_u16(val, 4);
-                if (w != s->window_ms && !iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_WINDOW))
-                    s->window_ms = w, changed = true;
+                if (w != s->window_s && iotdata_node_settings_window_is_valid(w) && !iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_WINDOW))
+                    s->window_s = w, changed = true;
                 if (i != s->interval_m && iotdata_node_settings_interval_is_valid(i) && !iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_INTERVAL))
                     s->interval_m = i, changed = true;
                 if (o != s->offset_m && iotdata_node_settings_interval_is_valid(o) && !iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_OFFSET))
@@ -344,21 +372,22 @@ static inline bool iotdata_node_settings_apply(iotdata_node_settings_t *const s,
 }
 
 static inline bool iotdata_node_settings_persists(const iotdata_node_state_t *const state) {
-    return (_iotdata_node_settings_saver != NULL) || (state != NULL);
+    return _iotdata_node_settings_saver || state;
 }
 
 static inline bool iotdata_node_settings_commit(iotdata_node_settings_t *const s, iotdata_node_state_t *const state) {
-    if (_iotdata_node_settings_saver != NULL)
+    if (_iotdata_node_settings_saver)
         return _iotdata_node_settings_saver(s);
-    return (state != NULL) && iotdata_node_state_flush(state);
+    return state && iotdata_node_state_flush(state);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define IOTDATA_NODE_SETTINGS_KEY_PREFIX "node-"
-#define IOTDATA_NODE_SETTINGS_KEY_COUNT  (4 + 2 * IOTDATA_NODE_TLV_SYSTEM_COUNT)
-#define IOTDATA_NODE_SETTINGS_KEY_MAX    64
+#define IOTDATA_NODE_SETTINGS_KEY_PREFIX   "node-"
+#define IOTDATA_NODE_SETTINGS_SCALAR_COUNT 4 /* station, window, interval, offset -- named below */
+#define IOTDATA_NODE_SETTINGS_KEY_COUNT    (IOTDATA_NODE_SETTINGS_SCALAR_COUNT + 2 * IOTDATA_NODE_TLV_SYSTEM_COUNT)
+#define IOTDATA_NODE_SETTINGS_KEY_MAX      64
 
 static inline bool _iotdata_node_settings_cat(char *const out, const size_t size, size_t *const n, const char *add) {
     for (; *add != '\0'; add++) {
@@ -414,30 +443,41 @@ static inline bool _iotdata_node_settings_a2b(const char *const t, bool *const o
     return true;
 }
 
+/* THE SCALAR SETTINGS, NAMED ONCE. These four strings are the config-file key (behind the node-
+   prefix), the --argument and the console subcommand, so a rename cannot leave two vocabularies
+   behind for one field.
+ *
+ * EACH CARRIES ITS UNIT, because the fields do not share one -- window is SECONDS while interval
+   and offset are MINUTES -- and a file row has no column to put it in. `node-window = 300` is
+   unreadable without the suffix and reads as five minutes or as five hours with equal confidence;
+   `node-window-s = 300` cannot. It is the convention the gateway's own rows already follow. */
+static inline const char *iotdata_node_settings_scalar_name(const int i) {
+    static const char *const name[IOTDATA_NODE_SETTINGS_SCALAR_COUNT] = { "station", "window-s", "interval-m", "offset-m" };
+    return (i >= 0 && i < IOTDATA_NODE_SETTINGS_SCALAR_COUNT) ? name[i] : NULL;
+}
+
 static inline uint8_t _iotdata_node_settings_key_subject(const int i) {
-    return (uint8_t)((i - 4) / 2);
+    return (uint8_t)((i - IOTDATA_NODE_SETTINGS_SCALAR_COUNT) / 2);
 }
 
 static inline bool _iotdata_node_settings_key_is_startup(const int i) {
-    return ((i - 4) % 2) == 0;
+    return ((i - IOTDATA_NODE_SETTINGS_SCALAR_COUNT) % 2) == 0;
 }
 
 static inline bool iotdata_node_settings_key_name(const int i, char *const out, const size_t size) {
-    if (out == NULL || size == 0 || i < 0 || i >= IOTDATA_NODE_SETTINGS_KEY_COUNT)
+    if (!out || size == 0 || i < 0 || i >= IOTDATA_NODE_SETTINGS_KEY_COUNT)
         return false;
     size_t n = 0;
     out[0] = '\0';
     if (!_iotdata_node_settings_cat(out, size, &n, IOTDATA_NODE_SETTINGS_KEY_PREFIX))
         return false;
-    if (i < 4) {
-        static const char *const scalar[4] = { "station", "window", "interval", "offset" };
-        return _iotdata_node_settings_cat(out, size, &n, scalar[i]);
-    }
+    if (i < IOTDATA_NODE_SETTINGS_SCALAR_COUNT)
+        return _iotdata_node_settings_cat(out, size, &n, iotdata_node_settings_scalar_name(i));
     const uint8_t subject = _iotdata_node_settings_key_subject(i);
     const char *const name = iotdata_node_tlv_name(subject);
-    if (name == NULL || !iotdata_node_tlv_is_reportable(subject))
+    if (!name || !iotdata_node_tlv_is_reportable(subject))
         return false;
-    return _iotdata_node_settings_cat(out, size, &n, "report-") && _iotdata_node_settings_cat(out, size, &n, name) && _iotdata_node_settings_cat(out, size, &n, _iotdata_node_settings_key_is_startup(i) ? "-at-startup" : "-period");
+    return _iotdata_node_settings_cat(out, size, &n, "report-") && _iotdata_node_settings_cat(out, size, &n, name) && _iotdata_node_settings_cat(out, size, &n, _iotdata_node_settings_key_is_startup(i) ? "-at-startup" : "-period-s");
 }
 
 static inline bool _iotdata_node_settings_same(const char *a, const char *b, const bool prefix) {
@@ -446,8 +486,19 @@ static inline bool _iotdata_node_settings_same(const char *a, const char *b, con
     return prefix ? (*b == '\0') : (*a == '\0' && *b == '\0');
 }
 
+/* One of the four by its bare name, or -1. The same spelling rules the config keys get: case and
+   the -/_ difference do not matter, so a console typing window_s finds window-s. */
+static inline int iotdata_node_settings_scalar_index(const char *const name) {
+    if (!name)
+        return -1;
+    for (int i = 0; i < IOTDATA_NODE_SETTINGS_SCALAR_COUNT; i++)
+        if (_iotdata_node_settings_same(name, iotdata_node_settings_scalar_name(i), false))
+            return i;
+    return -1;
+}
+
 static inline int iotdata_node_settings_key_index(const char *const key) {
-    if (key == NULL)
+    if (!key)
         return -1;
     char name[IOTDATA_NODE_SETTINGS_KEY_MAX];
     for (int i = 0; i < IOTDATA_NODE_SETTINGS_KEY_COUNT; i++)
@@ -457,20 +508,17 @@ static inline int iotdata_node_settings_key_index(const char *const key) {
 }
 
 static inline bool iotdata_node_settings_key_is_ours(const char *const key) {
-    return (key != NULL) && _iotdata_node_settings_same(key, IOTDATA_NODE_SETTINGS_KEY_PREFIX, true);
+    return key && _iotdata_node_settings_same(key, IOTDATA_NODE_SETTINGS_KEY_PREFIX, true);
 }
 
 static inline bool iotdata_node_settings_key_read(const iotdata_node_settings_t *const s, const int i, char *const out, const size_t size) {
-    if (s == NULL || out == NULL || size == 0 || i < 0 || i >= IOTDATA_NODE_SETTINGS_KEY_COUNT)
+    if (!s || !out || size == 0 || i < 0 || i >= IOTDATA_NODE_SETTINGS_KEY_COUNT)
         return false;
-    if (i < 4) {
-        static const size_t off[4] = { 0, 1, 2, 3 };
-        const uint16_t v = (off[i] == 0) ? s->station : (off[i] == 1) ? s->window_ms : (off[i] == 2) ? s->interval_m : s->offset_m;
-        return _iotdata_node_settings_u2a(v, out, size);
-    }
+    if (i < IOTDATA_NODE_SETTINGS_SCALAR_COUNT)
+        return _iotdata_node_settings_u2a((i == 0) ? s->station : (i == 1) ? s->window_s : (i == 2) ? s->interval_m : s->offset_m, out, size);
     const uint8_t subject = _iotdata_node_settings_key_subject(i);
     const iotdata_node_settings_report_t *const r = iotdata_node_settings_report_find(s, subject);
-    if (r == NULL)
+    if (!r)
         return false;
     if (_iotdata_node_settings_key_is_startup(i)) {
         size_t n = 0;
@@ -486,19 +534,21 @@ static inline bool iotdata_node_settings_key_read(const iotdata_node_settings_t 
 }
 
 static inline bool iotdata_node_settings_key_write(iotdata_node_settings_t *const s, const int i, const char *const text) {
-    if (s == NULL || text == NULL || i < 0 || i >= IOTDATA_NODE_SETTINGS_KEY_COUNT)
+    if (!s || !text || i < 0 || i >= IOTDATA_NODE_SETTINGS_KEY_COUNT)
         return false;
     uint32_t v = 0;
-    if (i < 4) {
+    if (i < IOTDATA_NODE_SETTINGS_SCALAR_COUNT) {
         if (!_iotdata_node_settings_a2u(text, &v) || v > 0xFFFFu)
             return false;
         if (i == 0 && !iotdata_station_is_assignable((uint16_t)v))
             return false;
         if (i == 0)
             s->station = (uint16_t)v;
-        else if (i == 1)
-            s->window_ms = (uint16_t)v;
-        else if (i == 2) {
+        else if (i == 1) {
+            if (!iotdata_node_settings_window_is_valid((uint16_t)v))
+                return false;
+            s->window_s = (uint16_t)v;
+        } else if (i == 2) {
             if (!iotdata_node_settings_interval_is_valid((uint16_t)v))
                 return false; /* refused, rather than clamped: a typo should not look accepted */
             s->interval_m = (uint16_t)v;
@@ -514,7 +564,7 @@ static inline bool iotdata_node_settings_key_write(iotdata_node_settings_t *cons
         return false;
     /* stated whole: start from what is already there, so setting one half keeps the other */
     const iotdata_node_settings_report_t *const cur = iotdata_node_settings_report_find(s, subject);
-    iotdata_node_settings_report_t r = (cur != NULL) ? *cur : (iotdata_node_settings_report_t){ .subject = subject, .flags = 0, .period_s = 0, .change_s = 0, .events = 0 };
+    iotdata_node_settings_report_t r = cur ? *cur : (iotdata_node_settings_report_t){ .subject = subject, .flags = 0, .period_s = 0, .change_s = 0, .events = 0 };
     r.subject = subject;
     if (_iotdata_node_settings_key_is_startup(i)) {
         bool on = false;
@@ -538,7 +588,7 @@ _Static_assert(IOTDATA_NODE_SETTINGS_PIN_STATION == (1u << 0) && IOTDATA_NODE_SE
 static inline void iotdata_node_settings_key_pin(const int i) {
     if (i < 0 || i >= IOTDATA_NODE_SETTINGS_KEY_COUNT)
         return;
-    if (i < 4)
+    if (i < IOTDATA_NODE_SETTINGS_SCALAR_COUNT)
         iotdata_node_settings_pin((uint8_t)(1u << i)); /* STATION, WINDOW, INTERVAL, OFFSET, in order */
     else
         iotdata_node_settings_pin_report(_iotdata_node_settings_key_subject(i));
@@ -547,7 +597,7 @@ static inline void iotdata_node_settings_key_pin(const int i) {
 static inline bool iotdata_node_settings_key_is_pinned(const int i) {
     if (i < 0 || i >= IOTDATA_NODE_SETTINGS_KEY_COUNT)
         return false;
-    return (i < 4) ? iotdata_node_settings_is_pinned((uint8_t)(1u << i)) : iotdata_node_settings_report_is_pinned(_iotdata_node_settings_key_subject(i));
+    return (i < IOTDATA_NODE_SETTINGS_SCALAR_COUNT) ? iotdata_node_settings_is_pinned((uint8_t)(1u << i)) : iotdata_node_settings_report_is_pinned(_iotdata_node_settings_key_subject(i));
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------

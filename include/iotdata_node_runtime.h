@@ -19,8 +19,8 @@
 // WHAT THE WINDOW IS FOR is the end-device case, and it shapes the design even though the other
 // roles do not sleep. A sensor is asleep almost always, so it cannot be commanded whenever a manager
 // feels like it, because there is nothing listening. Instead it advertises: every
-// IOTDATA_NODE_RECEIVE_EVERY_MS it puts a RECEIVE TLV in its next outbound frame and then holds its
-// receiver on for IOTDATA_NODE_RECEIVE_WINDOW_MS. Whoever is holding a downstream frame for it --
+// IOTDATA_NODE_RECEIVE_EVERY_S it puts a RECEIVE TLV in its next outbound frame and then holds its
+// receiver on for IOTDATA_NODE_RECEIVE_WINDOW_S. Whoever is holding a downstream frame for it --
 // gateway or relay, see iotdata_node_down.h -- sends it in that window. An always-on role simply
 // never closes its window, and the same code serves both.
 //
@@ -42,18 +42,23 @@
 //
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#ifndef IOTDATA_NODE_RECEIVE_EVERY_MS
-#define IOTDATA_NODE_RECEIVE_EVERY_MS (6u * 60u * 60u * 1000u) /* 6 hours between windows */
+#ifndef IOTDATA_NODE_RECEIVE_EVERY_S
+#define IOTDATA_NODE_RECEIVE_EVERY_S (6u * 60u * 60u) /* 6 hours between windows */
 #endif
 
-#ifndef IOTDATA_NODE_RECEIVE_WINDOW_MS
-/* How long the receiver stays on. The SAME number the protocol assumes when a RECEIVE
-   advertisement states no duration (IOTDATA_NODE_RECEIVE_WINDOW_MS_DEFAULT): a node whose own
-   window disagreed with what everyone else assumes of a silent one would be the odd case rather
-   than the normal one. A manager can change it over the air -- it is a SETTINGS value -- so this is
-   a default and not a limit. */
-#define IOTDATA_NODE_RECEIVE_WINDOW_MS IOTDATA_NODE_RECEIVE_WINDOW_MS_DEFAULT
+/* The SAME number the protocol assumes of a RECEIVE that states no duration, by derivation through
+   iotdata_node.h rather than by two copies agreeing: a node whose own window disagreed with what
+   everyone else assumes of a silent one would be the odd case rather than the normal one. A manager
+   can change it over the air -- it is a SETTINGS value -- so this is a default and not a limit. */
+#ifndef IOTDATA_NODE_RECEIVE_WINDOW_S
+#define IOTDATA_NODE_RECEIVE_WINDOW_S IOTDATA_NODE_RECEIVE_WINDOW_S_DEFAULT
 #endif
+
+/* The cadence cannot be derived the same way -- it is this header's and the settings default is
+   declared before this file is read -- so it is asserted instead. A node WITH a settings block and
+   one without must wake on the same schedule; they disagreed once, and the configured value turned
+   out not to be the one anybody had read. Override one of these and the build says so. */
+_Static_assert((unsigned)IOTDATA_NODE_SETTINGS_DEFAULT_INTERVAL_M * 60u == (unsigned)IOTDATA_NODE_RECEIVE_EVERY_S, "IOTDATA_NODE_SETTINGS_DEFAULT_INTERVAL_M and IOTDATA_NODE_RECEIVE_EVERY_S must describe the same cadence");
 
 #ifndef IOTDATA_NODE_DIAG_RECORD_MAX
 #define IOTDATA_NODE_DIAG_RECORD_MAX 128 /* one diagnostic record: only allocated when a device HAS a recorder */
@@ -132,11 +137,11 @@ typedef struct {
      * The one thing given up is the retry path: if that immediate transmission is lost on the air,
      * nothing prompts the holder to try again, so the command has to be reissued. For a bench
      * instrument that is the right trade; a field node that wants the retry should advertise
-     * occasionally instead, which is what receive_every_ms is for.
+     * occasionally instead, which is what receive_every_s is for.
      */
     bool receive_always;
-    uint32_t receive_every_ms;  /* 0 = never open a window: this node cannot be reached */
-    uint16_t receive_window_ms; /* advertised, so a sender can skip one too short to use */
+    uint32_t receive_every_s;  /* 0 = never open a window: this node cannot be reached */
+    uint16_t receive_window_s; /* advertised, so a sender can skip one too short to use */
     uint16_t packet_max;
 } iotdata_node_params_t;
 
@@ -168,6 +173,8 @@ typedef struct {
     uint8_t _kvbuf[IOTDATA_TLV_VALUE_MAX];
 } iotdata_node_t;
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 /* REQUIRED, ON EVERY BOOT, before anything else touches the node. Separate from bind() because the
    two are not equally optional -- `state` may be NULL and an unpersisted node still works, whereas
    a node with no config cannot answer a request, build a report or decide a window. Separate from
@@ -178,22 +185,40 @@ static inline void iotdata_node_attach(iotdata_node_t *const n, const iotdata_no
     n->cfg = cfg;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline const iotdata_node_params_t *iotdata_node_params(const iotdata_node_t *const n) {
     return n->cfg;
 }
 
-/* The receive cadence, resolved ONCE here rather than at each of the three places that want it.
-   A node that keeps a settings block holds the answer there -- always, because settings are seeded
-   dense; a node built without one has only what its config states. That is the whole composition,
-   and having it in one function is why the gateway cannot silently disagree with the relay. */
-static inline uint16_t iotdata_node_window_ms(const iotdata_node_t *const n) {
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline uint16_t iotdata_node_window_s(const iotdata_node_t *const n) {
     const iotdata_node_params_t *const cfg = n->cfg;
-    return (cfg->settings != NULL) ? iotdata_node_settings_window_ms(cfg->settings) : cfg->receive_window_ms;
+    return cfg->settings ? iotdata_node_settings_window_s(cfg->settings) : cfg->receive_window_s;
 }
+
+static inline uint32_t iotdata_node_window_every_s(const iotdata_node_t *const n) {
+    const iotdata_node_params_t *const cfg = n->cfg;
+    return cfg->settings ? iotdata_node_settings_interval_s(cfg->settings) : cfg->receive_every_s;
+}
+
+static inline uint32_t iotdata_node_window_ms(const iotdata_node_t *const n) {
+    return (uint32_t)iotdata_node_window_s(n) * 1000u; /* u16 seconds is 18.2h at the top, nowhere near a wrap */
+}
+
+/* Saturating, where the window above cannot overflow at all: the settings interval is capped at a
+   week, but cfg->receive_every_s is whatever the application put there and a uint32 of milliseconds
+   runs out at 49.7 days. A cadence that long and one of 0xFFFFFFFF ms are the same answer in the
+   field; what matters is that an absurd one cannot wrap round into a frantic one. 0 is still 0,
+   and still means never. */
 static inline uint32_t iotdata_node_window_every_ms(const iotdata_node_t *const n) {
-    const iotdata_node_params_t *const cfg = n->cfg;
-    return (cfg->settings != NULL) ? iotdata_node_settings_interval_ms(cfg->settings) : cfg->receive_every_ms;
+    const uint32_t every_s = iotdata_node_window_every_s(n);
+    return (every_s > 0xFFFFFFFFu / 1000u) ? 0xFFFFFFFFu : every_s * 1000u;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline size_t iotdata_node_packet_budget(const iotdata_node_t *const n) {
     const iotdata_node_params_t *const cfg = n->cfg;
@@ -228,42 +253,19 @@ static inline bool iotdata_node_bind(iotdata_node_t *const n, iotdata_node_state
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void iotdata_node_init(iotdata_node_t *const n, const uint16_t station, iotdata_node_state_t *const state, const uint32_t tag) {
-    *n = (iotdata_node_t){ 0 };
-    n->station = station;
+    *n = (iotdata_node_t){ .station = station };
     (void)iotdata_node_bind(n, state, tag);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/*
- * Adopt a written station id, live.
- *
- * IDENTITY AND SEQUENCE MOVE TOGETHER. (station, sequence) is the protocol's whole identity for a
- * packet, so a new id begins a new stream and the counter restarts rather than carrying over --
- * otherwise a receiver sees a station appear mid-sequence and reads it as loss.
- *
- * Live rather than at the next boot, because the answer to a SETTINGS write has to be true: a reply
- * saying "station 0x537" from a node still transmitting as 0x123 is the one thing the mutable-type
- * contract forbids. The transient it causes -- relays holding frames for the old id, the mesh
- * re-learning -- is the same one a reboot would cause, and it resolves the same way.
- */
-/*
- * COME BACK AS WHO YOU WERE. Run once, after iotdata_node_state_load(), to put the commissioned station
- * back in force.
- *
- * It is needed because the node's own state block persists the SEQUENCE and not the station -- the
- * station's only persistent home is the SETTINGS block, which is loaded at the same moment but was
- * not consulted by anybody. So a node commissioned over the air came back after a power cut as
- * whatever its hardware or its configuration said, having agreed to be something else.
- *
- * NOT adopt_station(), and the difference is the sequence. Adoption restarts the stream because a
- * station CHANGE makes a new identity. This is not a change: the node is remembering the id it was
- * already transmitting as before the reboot, and its sequence was persisted under that same id.
- * Restarting it here would manufacture exactly the gap adoption exists to avoid.
- */
-static inline bool iotdata_node_restore_station(iotdata_node_t *const n, const iotdata_node_settings_t *const s) {
-    if (n == NULL || s == NULL)
+static inline uint16_t iotdata_node_station(const iotdata_node_t *const n) {
+    return n->station;
+}
+
+static inline bool iotdata_node_station_restore(iotdata_node_t *const n, const iotdata_node_settings_t *const s) {
+    if (!n || !s)
         return false;
     const uint16_t station = iotdata_node_settings_station(s);
     if (station == n->station || station == 0u || station >= IOTDATA_STATION_MAX)
@@ -272,18 +274,14 @@ static inline bool iotdata_node_restore_station(iotdata_node_t *const n, const i
     return true;
 }
 
-static inline bool iotdata_node_adopt_station(iotdata_node_t *const n, const uint16_t station) {
-    if (n == NULL || station == n->station || station == 0u || station >= IOTDATA_STATION_MAX)
+static inline bool iotdata_node_station_adopt(iotdata_node_t *const n, const uint16_t station) {
+    if (!n || station == n->station || station == 0u || station >= IOTDATA_STATION_MAX)
         return false;
     n->station = station;
     n->sequence = 0;
-    if (n->state != NULL)
+    if (n->state)
         (void)iotdata_node_state_flush(n->state);
     return true;
-}
-
-static inline uint16_t iotdata_node_station(const iotdata_node_t *const n) {
-    return n->station;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -293,14 +291,6 @@ static inline uint16_t iotdata_node_sequence(const iotdata_node_t *const n) {
     return n->sequence;
 }
 
-/* It went out. Advances past the DOWN sentinel -- a plain ++ wraps 65535 -> 0 and 65535 is the
-   sentinel -- and marks the store dirty, so no call site has to remember either.
-   ALWAYS separate from peek, and there is deliberately no combined take(): a caller packs a frame
-   and only then offers it to a queue that may refuse it, so there is always a later failure to
-   wait for. The iotdata rule is that a sequence advances only if there WAS a transmission -- a
-   frame that failed to build, or that the radio or the queue refused, must not consume one, or the
-   gap it leaves would read as "sent and lost" instead of "never sent". Peek to pack; call this
-   from inside the branch where the frame has actually been handed over. */
 static inline void iotdata_node_sequence_used(iotdata_node_t *const n) {
     n->sequence = iotdata_sequence_next(n->sequence);
     iotdata_node_state_touch(n->state);
@@ -314,7 +304,7 @@ static inline void iotdata_node_sequence_used(iotdata_node_t *const n) {
 static inline bool iotdata_node_window_advance(iotdata_node_t *const n, const uint32_t delta_ms) {
     const iotdata_node_params_t *const cfg = n->cfg;
     if (cfg->receive_always)
-        return false; /* always listening: nothing to schedule and nothing to announce */
+        return false;
     const uint32_t every_ms = iotdata_node_window_every_ms(n);
     if (every_ms == 0)
         return false;
@@ -331,9 +321,6 @@ static inline bool iotdata_node_window_pending(const iotdata_node_t *const n) {
     return n->window_pending;
 }
 
-/* Called just after transmitting the frame that advertised the window: the receiver is on from
-   now. The advertisement and the window have to line up, which is why this is a separate step from
-   advancing the clock. */
 static inline void iotdata_node_window_begin(iotdata_node_t *const n, const uint32_t now_ms) {
     n->window_pending = false;
     n->window_open = true;
@@ -344,9 +331,7 @@ static inline void iotdata_node_window_begin(iotdata_node_t *const n, const uint
 
 static inline bool iotdata_node_window_active(const iotdata_node_t *const n, const uint32_t now_ms) {
     const iotdata_node_params_t *const cfg = n->cfg;
-    if (cfg->receive_always)
-        return true; /* nothing to expire */
-    return n->window_open && (int32_t)(n->window_end_ms - now_ms) > 0;
+    return cfg->receive_always || (n->window_open && (int32_t)(n->window_end_ms - now_ms) > 0);
 }
 
 static inline void iotdata_node_window_end(iotdata_node_t *const n) {
@@ -354,25 +339,33 @@ static inline void iotdata_node_window_end(iotdata_node_t *const n) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+// Builders. Same contract as the relay and gateway: the length, or -1 if it could not be built.
+// Length 0 is a valid answer, so callers test for -1 and never for 0.
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Append the advertisement to a frame being built. Empty payload: "listening, for anything", with
-   the duration stated so a sender holding something too big for the window can skip it.
+static inline void iotdata_node_add_str(iotdata_kvr_t *const kv, const uint8_t key, const char *const s) {
+    if (s && *s != '\0')
+        iotdata_kvr_add_str(kv, key, s);
+}
 
-   Riding an outbound telemetry frame is the cheap way -- two bytes on a frame already being sent. */
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
 static inline bool iotdata_node_receive_append(const iotdata_node_t *const n, iotdata_encoder_t *const enc) {
     const iotdata_node_params_t *const cfg = n->cfg;
-    uint8_t kv[8];
-    /* 0 = unstated = "listening, for anything", which is the whole truth for an always-on node */
-    const size_t kvlen = iotdata_node_receive_build(kv, sizeof(kv), cfg->receive_always ? 0u : iotdata_node_window_ms(n), 0);
+    uint8_t kv[16]; /* duration 4 + types 6 + delay 6: all three fit, so the advert cannot truncate */
+    /* 0 = unstated = "listening, for anything", which is the whole truth for an always-on node.
+     *
+     * NO DELAY EITHER, and that is a decision rather than an omission: this node advertises when its
+     * window is open or about to be, so the countdown is zero. A node that wanted to state a future
+     * window -- transmit at noon, listen in the evening -- would pass it here, but it must not until
+     * the holder side acts on it (iotdata_node_down.h holds such a window rather than serving it). */
+    const size_t kvlen = iotdata_node_receive_build(kv, sizeof(kv), cfg->receive_always ? 0u : iotdata_node_window_s(n), 0, 0);
     return iotdata_encode_tlv(enc, IOTDATA_NODE_TLV_RECEIVE, kv, (uint8_t)kvlen) == IOTDATA_OK;
 }
 
-/* The same advertisement as a frame of its own, for a node that cannot reach inside the telemetry
-   frame it is about to send. Costs a whole frame instead of two bytes, so prefer the append. */
 static inline bool iotdata_node_receive_announce(iotdata_node_t *const n) {
     const iotdata_node_params_t *const cfg = n->cfg;
-    if (cfg->tx == NULL)
+    if (!cfg->tx)
         return false;
     size_t len = 0;
     if (iotdata_encode_begin(&n->_encoder, n->_packet, iotdata_node_packet_budget(n), 0, n->station, n->sequence) != IOTDATA_OK)
@@ -386,16 +379,6 @@ static inline bool iotdata_node_receive_announce(iotdata_node_t *const n) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// Builders. Same contract as the relay and gateway: the length, or -1 if it could not be built.
-// Length 0 is a valid answer, so callers test for -1 and never for 0.
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-static inline void iotdata_node_add_str(iotdata_kvr_t *const kv, const uint8_t key, const char *const s) {
-    if (s != NULL && *s != '\0')
-        iotdata_kvr_add_str(kv, key, s);
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline int iotdata_node_build_version(const iotdata_node_t *const n, uint8_t *const buf, const size_t size) {
     const iotdata_node_params_t *const cfg = n->cfg;
@@ -406,18 +389,30 @@ static inline int iotdata_node_build_version(const iotdata_node_t *const n, uint
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* Unlike a relay or a gateway, an end device DOES produce telemetry, so this is the one place the
-   variant suite is actually reported. The manifest goes in every chunk (see iotdata_node.h) and
-   the cursor resumes where the last frame stopped -- a whole suite does not fit one frame.
- *
- * This is the builder PARTIAL was built for: it has always broken a suite across frames and until
- * now said nothing, so a reader had no way to tell a truncated suite from a short one. With a
- * partial it reports index/total and the marker goes out beside it; with NULL it behaves exactly
- * as before, which is what a caller that does not page still gets. */
-/* The suite this node PRODUCES, chunked across frames -- iotdata_node_variant.h. The selection
-   byte is VARIANT's own: a bitmask of the keys wanted, zero meaning its default. */
 static inline int iotdata_node_build_variant(uint8_t *const buf, const size_t size, const uint8_t want, iotdata_node_partial_t *const p) {
     return iotdata_node_variant_pack(buf, size, want, p);
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline int iotdata_node_build_status(const iotdata_node_t *const n, uint8_t *const buf, const size_t size, const uint8_t scope) {
+    const iotdata_node_params_t *const cfg = n->cfg;
+    iotdata_kvr_t kv;
+    iotdata_kvr_init(&kv, buf, size);
+    iotdata_node_status_t s = { 0 };
+    if (cfg->status)
+        cfg->status(n->station, &s); /* the app knows its own uptime, battery, heap */
+    s.has_image = iotdata_node_firmware_image_status(&s.image);
+    return iotdata_node_status_pack(&kv, &s, scope);
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline int iotdata_node_build_config(const iotdata_node_t *const n, uint8_t *const buf, const size_t size, iotdata_node_partial_t *const partial) {
+    const iotdata_node_params_t *const cfg = n->cfg;
+    if (cfg->config_build)
+        return cfg->config_build(buf, size, partial);
+    return 0;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -432,20 +427,13 @@ static inline int iotdata_node_build_control(const iotdata_node_t *const n, uint
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/*
- * Every node answers a diagnostics request, because "nothing recorded" is an answer -- the rule
- * VARIANT already follows, and the CONTROL report advertises DIAGNOSTICS unconditionally on that
- * basis. An end device usually has no recorder at all, and then the report is EMPTY rather than
- * absent: absent is indistinguishable from a node that ignored the request, which is precisely
- * what its own CONTROL report promised it would not do.
- */
 static inline int iotdata_node_build_diagnostics(const iotdata_node_t *const n, uint8_t *const buf, const size_t size, iotdata_node_partial_t *const p) {
     const iotdata_node_params_t *const cfg = n->cfg;
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
     uint8_t packed = 0;
     bool more = false;
-    if (cfg->diag != NULL) {
+    if (cfg->diag) {
         static char rec[IOTDATA_NODE_DIAG_RECORD_MAX]; // XXX
         size_t cursor = 0, reclen;
         iotdata_kvr_add_u8(&kv, IOTDATA_NODE_DIAGNOSTICS_TYPE, IOTDATA_NODE_DIAG_BLACKBOX);
@@ -458,11 +446,7 @@ static inline int iotdata_node_build_diagnostics(const iotdata_node_t *const n, 
             packed++;
         }
     }
-    /* The recorder is a ring being written while it is read, so a total counted up front would be
-       a guess. What this CAN say honestly is how many went out and whether more were waiting --
-       total is the running tally, which is why a diagnostics dump is assembled by identifier
-       rather than by counting down to a promised total. */
-    if (p != NULL) {
+    if (p) {
         p->chunk = packed;
         p->more = more;
         p->total = (uint8_t)(p->index + packed + (more ? 1u : 0u));
@@ -472,75 +456,36 @@ static inline int iotdata_node_build_diagnostics(const iotdata_node_t *const n, 
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* `scope` is the STATUS_REQUEST value: which groups to report, 0 (absent) meaning all of them.
-   Asking a plain end device for the MESH group correctly yields an EMPTY status -- it is in no
-   mesh -- rather than the node group it did not ask for. */
-static inline int iotdata_node_build_status(const iotdata_node_t *const n, uint8_t *const buf, const size_t size, const uint8_t scope) {
-    const iotdata_node_params_t *const cfg = n->cfg;
-    iotdata_kvr_t kv;
-    iotdata_kvr_init(&kv, buf, size);
-    iotdata_node_status_t s = { 0 };
-    if (cfg->status != NULL)
-        cfg->status(n->station, &s); /* the app knows its own uptime, battery, heap */
-    s.has_image = iotdata_node_firmware_image_status(&s.image);
-    return iotdata_node_status_pack(&kv, &s, scope);
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-/* The protocol's own settings: station, reporting schedule, receive schedule. Empty if this node
-   keeps none, which is an answer. */
 static inline int iotdata_node_build_settings(const iotdata_node_t *const n, uint8_t *const buf, const size_t size, const uint8_t *const sel, const uint8_t sellen) {
     const iotdata_node_params_t *const cfg = n->cfg;
     iotdata_kvr_t kv;
     iotdata_kvr_init(&kv, buf, size);
-    if (cfg->settings == NULL)
-        return kv.overflow ? -1 : (int)kv.len;
-    return iotdata_node_settings_pack(&kv, cfg->settings, sel, sellen);
+    if (cfg->settings)
+        return iotdata_node_settings_pack(&kv, cfg->settings, sel, sellen);
+    return kv.overflow ? -1 : (int)kv.len;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* The device's own configuration, as the [id|type][value] record stream the store and the wire
-   share. A node with no table reports NOTHING rather than an error -- an empty report is an answer.
- *
- * Not kvr, and this is the one system type that is not: a config id is 12 bits and a kvr key is 8,
- * so the ids would not fit. The record carries its own type instead, which is what lets a reader
- * that has never heard of an id still step over it.
- *
- * The schedule that used to be reported here was protocol configuration wearing CONFIG's clothes:
- * a receive window and a status cadence. Both are now the trigger record, carried by
- * control(<subject>, set-trigger), which serves a proprietary type as readily as a system one. */
-static inline int iotdata_node_build_config(const iotdata_node_t *const n, uint8_t *const buf, const size_t size, iotdata_node_partial_t *const partial) {
-    const iotdata_node_params_t *const cfg = n->cfg;
-    if (cfg->config_build == NULL)
-        return 0;
-    return cfg->config_build(buf, size, partial);
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-/* `partial` may be NULL, and NULL is the whole of the no-cost path: every builder then behaves as
-   it always did -- pack what fits, fail if it does not. The state used to be a file-static cursor
-   in here, which meant one variant walk shared by every node a simulator stood up. */
 static inline int iotdata_node_build(const iotdata_node_t *const n, const uint8_t type, uint8_t *const buf, const size_t size, const uint8_t scope, iotdata_node_partial_t *const partial) {
     switch (type) {
+    /*IOTDATA_NODE_TLV_RECEIVE*/
     case IOTDATA_NODE_TLV_VERSION:
         return iotdata_node_build_version(n, buf, size);
     case IOTDATA_NODE_TLV_VARIANT:
         return iotdata_node_build_variant(buf, size, scope, partial);
-    case IOTDATA_NODE_TLV_CONTROL:
-        return iotdata_node_build_control(n, buf, size);
     case IOTDATA_NODE_TLV_STATUS:
         return iotdata_node_build_status(n, buf, size, scope);
     case IOTDATA_NODE_TLV_CONFIG:
         return iotdata_node_build_config(n, buf, size, partial);
-    case IOTDATA_NODE_TLV_SETTINGS:
-        /* the selection is a list of KEYS, which is SETTINGS' own reading of it; the one byte the
-           dispatcher carries is the first of them */
-        return iotdata_node_build_settings(n, buf, size, (scope != 0u) ? &scope : NULL, (scope != 0u) ? 1u : 0u);
+    case IOTDATA_NODE_TLV_CONTROL:
+        return iotdata_node_build_control(n, buf, size);
     case IOTDATA_NODE_TLV_DIAGNOSTICS:
         return iotdata_node_build_diagnostics(n, buf, size, partial);
+    /*IOTDATA_NODE_TLV_DISCRIMINATOR*/
+    /*IOTDATA_NODE_TLV_CONTENT*/
+    case IOTDATA_NODE_TLV_SETTINGS:
+        return iotdata_node_build_settings(n, buf, size, scope ? &scope : NULL, scope ? 1u : 0u);
     default:
         return -1;
     }
@@ -562,19 +507,16 @@ static inline int iotdata_node_build(const iotdata_node_t *const n, const uint8_
  * cycle. */
 static inline bool iotdata_node_report_paged(iotdata_node_t *const n, const uint8_t type, const uint8_t scope, iotdata_node_partial_t *const partial) {
     const iotdata_node_params_t *const cfg = n->cfg;
-    if (cfg->tx == NULL)
+    if (!cfg->tx)
         return false;
-
     iotdata_node_partial_begin(partial, n->sequence);
     const size_t budget = iotdata_node_packet_budget(n);
     const int kvlen = iotdata_node_build(n, type, n->_kvbuf, budget < sizeof(n->_kvbuf) ? budget : sizeof(n->_kvbuf), scope, partial);
     if (kvlen < 0)
         return false;
-
     size_t len = 0;
     if (iotdata_encode_begin(&n->_encoder, n->_packet, budget, 0, n->station, n->sequence) != IOTDATA_OK)
         return false;
-    /* Immediately before its target: the binding is positional. */
     if (iotdata_node_partial_needed(partial) && !iotdata_node_partial_emit(&n->_encoder, partial))
         return false;
     if (iotdata_encode_tlv(&n->_encoder, type, n->_kvbuf, (uint8_t)kvlen) != IOTDATA_OK)
@@ -582,24 +524,35 @@ static inline bool iotdata_node_report_paged(iotdata_node_t *const n, const uint
     if (iotdata_encode_end(&n->_encoder, &len) != IOTDATA_OK)
         return false;
     n->stat_reports++;
-    if (!cfg->tx(n->_packet, len))
-        return false;
-    iotdata_node_sequence_used(n);      /* only now: the rule is that a refused frame consumes nothing */
-    iotdata_node_partial_sent(partial); /* only now: a refused frame must not skip its records */
-    return true;
+    if (cfg->tx(n->_packet, len)) {
+        iotdata_node_sequence_used(n);      /* only now: the rule is that a refused frame consumes nothing */
+        iotdata_node_partial_sent(partial); /* only now: a refused frame must not skip its records */
+        return true;
+    }
+    return false;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_node_report_scoped(iotdata_node_t *const n, const uint8_t type, const uint8_t scope) {
-    iotdata_node_partial_t partial = { 0 };
-    return iotdata_node_report_paged(n, type, scope, &partial); /* one chunk; the rest needs a caller that loops */
+    return iotdata_node_report_paged(n, type, scope, &(iotdata_node_partial_t){ 0 }); /* one chunk; the rest needs a caller that loops */
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline bool iotdata_node_report(iotdata_node_t *const n, const uint8_t type) {
     return iotdata_node_report_scoped(n, type, 0); /* 0 = every group */
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline void iotdata_node_process_config(iotdata_node_t *const n, const uint8_t *const kv, const size_t kvlen, bool *const reboot_out) {
+    const iotdata_node_params_t *const cfg = n->cfg;
+    n->stat_commands++;
+    if (cfg->config_apply)
+        (void)cfg->config_apply(kv, kvlen, reboot_out);
+    (void)iotdata_node_report_scoped(n, IOTDATA_NODE_TLV_CONFIG, 0);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -616,53 +569,34 @@ static inline void iotdata_node_process_control(iotdata_node_t *const n, const u
             const uint8_t subject = val[0];
             /* counted a request only once it is one we can answer: NODE and MESH have nothing to
                report, and a subject we do not implement is unknown rather than serviced */
-            if (!iotdata_node_tlv_is_reportable(subject)) {
-                n->stat_unknown++;
-            } else {
+            if (iotdata_node_tlv_is_reportable(subject)) {
                 n->stat_requests++;
                 (void)iotdata_node_report_scoped(n, subject, (subject == IOTDATA_NODE_TLV_STATUS && vlen >= 2) ? val[1] : 0u);
-            }
+            } else
+                n->stat_unknown++;
         } else if (key == IOTDATA_NODE_CONTROL_CONTROL && vlen >= 2) { /* CONTROL: [subject][action][args...] */
             const uint8_t subject = val[0], action = val[1];
-            const uint8_t *const args = (vlen > 2) ? val + 2 : NULL;
-            const uint8_t arglen = (uint8_t)(vlen - 2);
+            const uint8_t *const args = (vlen > 2) ? val + 2 : NULL, arglen = (uint8_t)(vlen - 2);
             if (subject == IOTDATA_NODE_SUBJECT_NODE && action == IOTDATA_NODE_ACTION_NODE_REBOOT) {
                 n->stat_commands++;
-                if (reboot_out != NULL)
+                if (reboot_out)
                     *reboot_out = true;
-                /* ROLLBACK: BACK TO THE OTHER SLOT, AND REBOOT INTO IT. Not merged with REBOOT, because
-               the two differ in exactly the way that matters -- one comes back as what it is, the
-               other comes back as something else. Asked before acted on, so a node with nothing
-               valid to go back to is left exactly as it was.
-             *
-             * WHAT THIS DOES NOT DO is tell an OTA consumer that the attempt was abandoned on
-               purpose -- which matters, because otherwise the consumer reads the rollback as a
-               failed attempt and re-applies the image just rejected. That step needs the consumer,
-               and the consumer belongs to the application: dragging iotdata_node_content_ota.h in
-               here would put the whole content stack, its checksum and a platform header behind
-               every use of the node runtime, for one verb. An application that applies updates
-               handles this subject itself and calls iotdata_node_content_ota_apply_abandon() first;
-               see relay_node.h. One that does not has no attempt record to condemn. */
             } else if (subject == IOTDATA_NODE_SUBJECT_NODE && action == IOTDATA_NODE_ACTION_NODE_ROLLBACK) {
                 if (iotdata_node_firmware_rollback_possible())
                     (void)iotdata_node_firmware_rollback(); /* does not return when it works */
-                /* REACHING HERE MEANS IT DID NOT, AND THAT IS A REFUSAL RATHER THAN AN UNKNOWN.
-                   Every node built on this runtime services the verb; what is missing is a slot to
-                   go back to, and saying "not implemented here" about a node that implements it
-                   perfectly well sends an operator to look for a build flag. */
                 n->stat_refused++;
                 n->refusal = "no fallback image to roll back to";
             } else {
                 /* not ours: offer it to the app before giving up. A mesh command reaching a node with
                 no mesh lands here and is correctly counted unknown. */
                 const char *reason = NULL;
-                switch ((cfg->control != NULL) ? cfg->control(n->station, subject, action, args, arglen, &reason) : IOTDATA_NODE_CONTROL_RESULT_UNKNOWN) {
+                switch (cfg->control ? cfg->control(n->station, subject, action, args, arglen, &reason) : IOTDATA_NODE_CONTROL_RESULT_UNKNOWN) {
                 case IOTDATA_NODE_CONTROL_RESULT_DONE:
                     n->stat_commands++;
                     break;
                 case IOTDATA_NODE_CONTROL_RESULT_REFUSED:
                     n->stat_refused++;
-                    n->refusal = (reason != NULL) ? reason : "refused, without saying why";
+                    n->refusal = reason ? reason : "refused, without saying why";
                     break;
                 default:
                     n->stat_unknown++; /* skipped, not fatal: an older node meeting a newer manager */
@@ -675,53 +609,48 @@ static inline void iotdata_node_process_control(iotdata_node_t *const n, const u
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+static inline void iotdata_node_process_settings(iotdata_node_t *const n, const uint8_t *const kv, const size_t kvlen, __attribute__((unused)) bool *const reboot_out) {
+    const iotdata_node_params_t *const cfg = n->cfg;
+    n->stat_commands++;
+    if (cfg->settings && iotdata_node_settings_apply(cfg->settings, kv, kvlen)) {
+        (void)iotdata_node_settings_commit(cfg->settings, cfg->state);
+        (void)iotdata_node_station_adopt(n, iotdata_node_settings_station(cfg->settings));
+    }
+    (void)iotdata_node_report_scoped(n, IOTDATA_NODE_TLV_SETTINGS, 0);
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-/* A frame arrived while our window was open. Returns true if it was a downstream CONTROL for us
-   and we acted on it. `station`/`sequence` are the peeked header fields. */
+/* A frame arrived while our window was open. Returns true if it was a downstream CONTROL for us and we acted on it. */
 static inline bool iotdata_node_on_frame(iotdata_node_t *const n, const uint8_t *const buf, const size_t len, bool *const reboot_out) {
-    const iotdata_node_params_t *const cfg = n->cfg;
-    uint8_t variant = 0;
-    uint16_t station = 0, sequence = 0;
-    if (len < 4)
+    if (len < IOTDATA_MIN_PACKET_SIZE)
         return false;
-    variant = (uint8_t)((buf[0] >> 4) & 0x0F);
-    station = (uint16_t)(((uint16_t)(buf[0] & 0x0F) << 8) | buf[1]);
-    sequence = (uint16_t)(((uint16_t)buf[2] << 8) | buf[3]);
 
-    /* mesh frames are not ours to read, and an ordinary sequence means someone else's telemetry */
+    const uint8_t variant = (uint8_t)((buf[0] >> 4) & 0x0F);
+    const uint16_t station = (uint16_t)(((uint16_t)(buf[0] & 0x0F) << 8) | buf[1]);
+    const uint16_t sequence = (uint16_t)(((uint16_t)buf[2] << 8) | buf[3]);
+
     if (variant == IOTDATA_VARIANT_MESH || !iotdata_node_is_down(sequence))
         return false;
     if (!iotdata_node_addressed_to(station, n->station))
         return false;
-
     if (iotdata_decode(buf, len, &n->_decoder) != IOTDATA_OK || n->_decoder.tlv_count == 0)
         return false;
     n->stat_rx++;
+
     bool acted = false;
     for (uint8_t i = 0; i < n->_decoder.tlv_count; i++) {
         const iotdata_decoder_tlv_t *const t = &n->_decoder.tlv[i];
-        /* A SETTINGS TLV arriving IS the write -- there is no command to carry it, because a write
-        is not a verb. Apply, persist NOW rather than on the tick, then answer with what is true,
-        which is the whole error channel: a value that did not take simply is not in the reply. */
-        if (t->format == IOTDATA_TLV_FMT_RAW && t->type == IOTDATA_NODE_TLV_SETTINGS) {
-            n->stat_commands++;
-            if (cfg->settings != NULL && iotdata_node_settings_apply(cfg->settings, t->raw, t->length)) {
-                (void)iotdata_node_settings_commit(cfg->settings, cfg->state);
-                /* a written station takes effect NOW, so the reply below goes out as who we have
-                become rather than as who we were */
-                (void)iotdata_node_adopt_station(n, iotdata_node_settings_station(cfg->settings));
-            }
-            (void)iotdata_node_report_scoped(n, IOTDATA_NODE_TLV_SETTINGS, 0);
-            acted = true;
-        } else if (t->format == IOTDATA_TLV_FMT_RAW && t->type == IOTDATA_NODE_TLV_CONFIG) {
-            n->stat_commands++;
-            if (cfg->config_apply != NULL)
-                (void)cfg->config_apply(t->raw, t->length, reboot_out);
-            (void)iotdata_node_report_scoped(n, IOTDATA_NODE_TLV_CONFIG, 0);
+        if (t->format == IOTDATA_TLV_FMT_RAW && t->type == IOTDATA_NODE_TLV_CONFIG) {
+            iotdata_node_process_config(n, t->raw, t->length, reboot_out);
             acted = true;
         } else if (t->format == IOTDATA_TLV_FMT_RAW && t->type == IOTDATA_NODE_TLV_CONTROL) {
             iotdata_node_process_control(n, t->raw, t->length, reboot_out);
+            acted = true;
+        } else if (t->format == IOTDATA_TLV_FMT_RAW && t->type == IOTDATA_NODE_TLV_SETTINGS) {
+            iotdata_node_process_settings(n, t->raw, t->length, reboot_out);
             acted = true;
         } else
             n->stat_unknown++;
@@ -729,6 +658,7 @@ static inline bool iotdata_node_on_frame(iotdata_node_t *const n, const uint8_t 
     return acted;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #endif /* IOTDATA_NODE_RUNTIME_H */

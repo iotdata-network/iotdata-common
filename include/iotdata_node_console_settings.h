@@ -37,11 +37,14 @@
 // one default, so "revert" would mean something different on each node, whereas a value does not.
 // The listing prints the current value and, where they differ, the one this build came up with.
 //
+// THE UNIT IS PART OF THE NAME, here exactly as in the file and on the command line: one
+// vocabulary, and a change of unit breaks the spelling rather than passing silently.
+//
 //     node                          everything, with defaults where they differ
 //     node station [<id>]
-//     node window  [<ms>]           how long the receiver stays on
-//     node interval [<s>]           how often it opens
-//     node report [<type> [...]]    at-startup on|off, period <s>|off
+//     node window-s [<s>]           how long the receiver stays on
+//     node interval-m [<m>]         how often it opens
+//     node report [<type> [...]]    at-startup on|off, period-s <s>|off
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static iotdata_node_settings_t *_iotdata_node_settings_console = NULL;
@@ -91,7 +94,7 @@ static inline void _iotdata_node_settings_show_report(const iotdata_node_console
     /* ON_PERIOD clear prints as "never" rather than as a zero with a caveat beside it: the zero is
        not a missing number, it is the answer. Two emits rather than a formatted buffer, so this
        file needs nothing of stdio beyond the callback it was handed. */
-    emit("  %-14s at-startup=%-3s period(s)=", (name != NULL) ? name : "?", (r->flags & IOTDATA_NODE_REPORT_AT_STARTUP) ? "on" : "off");
+    emit("  %-14s at-startup=%-3s period-s=", (name != NULL) ? name : "?", (r->flags & IOTDATA_NODE_REPORT_AT_STARTUP) ? "on" : "off");
     if ((r->flags & IOTDATA_NODE_REPORT_ON_PERIOD) != 0u)
         emit("%-8u", (unsigned)r->period_s);
     else
@@ -112,9 +115,11 @@ __attribute__((unused)) static void iotdata_node_settings_console(const iotdata_
 
     if (argc < 2) {
         emit("node: protocol settings%s\n", persists ? "" : " (NOT PERSISTED: nowhere to write them)");
-        _iotdata_node_settings_show_field(emit, "station", (unsigned)iotdata_node_settings_station(s), (unsigned)_iotdata_node_settings_default.station, "", iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_STATION));
-        _iotdata_node_settings_show_field(emit, "window", (unsigned)iotdata_node_settings_window_ms(s), (unsigned)_iotdata_node_settings_default.window_ms, "ms", iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_WINDOW));
-        _iotdata_node_settings_show_field(emit, "interval", (unsigned)(iotdata_node_settings_interval_ms(s) / 60000u), (unsigned)_iotdata_node_settings_default.interval_m, "m",
+        _iotdata_node_settings_show_field(emit, iotdata_node_settings_scalar_name(0), (unsigned)iotdata_node_settings_station(s), (unsigned)_iotdata_node_settings_default.station, "",
+                                          iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_STATION));
+        _iotdata_node_settings_show_field(emit, iotdata_node_settings_scalar_name(1), (unsigned)iotdata_node_settings_window_s(s), (unsigned)_iotdata_node_settings_default.window_s, "s",
+                                          iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_WINDOW));
+        _iotdata_node_settings_show_field(emit, iotdata_node_settings_scalar_name(2), (unsigned)(iotdata_node_settings_interval_s(s) / 60u), (unsigned)_iotdata_node_settings_default.interval_m, "m",
                                           iotdata_node_settings_is_pinned(IOTDATA_NODE_SETTINGS_PIN_INTERVAL));
         emit("  reports:\n");
         for (uint8_t t = 0; t < IOTDATA_NODE_TLV_SYSTEM_COUNT; t++)
@@ -125,11 +130,14 @@ __attribute__((unused)) static void iotdata_node_settings_console(const iotdata_
 
     uint32_t v = 0;
     bool wrote = false;
-    if (strcmp(argv[1], "station") == 0 || strcmp(argv[1], "window") == 0 || strcmp(argv[1], "interval") == 0) {
-        uint16_t *const field = (strcmp(argv[1], "station") == 0) ? &s->station : (strcmp(argv[1], "window") == 0) ? &s->window_ms : &s->interval_m;
-        const uint8_t pin = (uint8_t)((strcmp(argv[1], "station") == 0) ? IOTDATA_NODE_SETTINGS_PIN_STATION : (strcmp(argv[1], "window") == 0) ? IOTDATA_NODE_SETTINGS_PIN_WINDOW : IOTDATA_NODE_SETTINGS_PIN_INTERVAL);
+    /* OFFSET (index 3) is deliberately not offered: it is declared and not yet consumed, and a knob
+       that does nothing reads as one that does. */
+    const int si = iotdata_node_settings_scalar_index(argv[1]);
+    if (si >= 0 && si < 3) {
+        uint16_t *const field = (si == 0) ? &s->station : (si == 1) ? &s->window_s : &s->interval_m;
+        const uint16_t d = (si == 0) ? _iotdata_node_settings_default.station : (si == 1) ? _iotdata_node_settings_default.window_s : _iotdata_node_settings_default.interval_m;
+        const uint8_t pin = (uint8_t)(1u << si); /* STATION, WINDOW, INTERVAL in order -- asserted in iotdata_node_settings.h */
         if (argc < 3) {
-            const uint16_t d = (strcmp(argv[1], "station") == 0) ? _iotdata_node_settings_default.station : (strcmp(argv[1], "window") == 0) ? _iotdata_node_settings_default.window_ms : _iotdata_node_settings_default.interval_m;
             _iotdata_node_settings_show_field(emit, argv[1], (unsigned)*field, (unsigned)d, "", iotdata_node_settings_is_pinned(pin));
             return;
         }
@@ -145,14 +153,20 @@ __attribute__((unused)) static void iotdata_node_settings_console(const iotdata_
         }
         /* A station is checked against the protocol's own rule, not just the field's width: 0 is not
            a station and the broadcast id would make this node answer every broadcast as its own. */
-        if (strcmp(argv[1], "station") == 0 && !iotdata_station_is_assignable((uint16_t)v)) {
+        if (si == 0 && !iotdata_station_is_assignable((uint16_t)v)) {
             emit("station: %u is not assignable (1..%u)\n", (unsigned)v, (unsigned)IOTDATA_STATION_ASSIGNABLE_MAX);
             return;
         }
         /* Same reasoning one field over: the cap is what stops a slip parking this node out of
            reach, and the console can make that slip as easily as the radio. */
-        if (strcmp(argv[1], "interval") == 0 && !iotdata_node_settings_interval_is_valid((uint16_t)v)) {
-            emit("interval: %u minutes is past the cap (0..%u, one week)\n", (unsigned)v, (unsigned)IOTDATA_NODE_SETTINGS_INTERVAL_M_MAX);
+        if (si == 2 && !iotdata_node_settings_interval_is_valid((uint16_t)v)) {
+            emit("%s: %u minutes is past the cap (0..%u, one week)\n", argv[1], (unsigned)v, (unsigned)IOTDATA_NODE_SETTINGS_INTERVAL_M_MAX);
+            return;
+        }
+        /* And the other end of it: too long a window is a flat battery rather than an unreachable
+           node, which is the slower of the two failures and the harder one to see coming. */
+        if (si == 1 && !iotdata_node_settings_window_is_valid((uint16_t)v)) {
+            emit("%s: %u is not a window (1..%u seconds)\n", argv[1], (unsigned)v, (unsigned)IOTDATA_NODE_SETTINGS_WINDOW_S_MAX);
             return;
         }
         *field = (uint16_t)v;
@@ -183,9 +197,9 @@ __attribute__((unused)) static void iotdata_node_settings_console(const iotdata_
         iotdata_node_settings_report_t r = (cur != NULL) ? *cur : (iotdata_node_settings_report_t){ .subject = (uint8_t)subject, .flags = 0, .period_s = 0, .change_s = 0, .events = 0 };
         r.subject = (uint8_t)subject;
         bool on = false;
-        if (strcmp(argv[3], "at-startup") == 0 && _iotdata_node_settings_a2b(argv[4], &on))
+        if (_iotdata_node_settings_same(argv[3], "at-startup", false) && _iotdata_node_settings_a2b(argv[4], &on))
             r.flags = (uint16_t)(on ? (r.flags | IOTDATA_NODE_REPORT_AT_STARTUP) : (r.flags & (uint16_t)~IOTDATA_NODE_REPORT_AT_STARTUP));
-        else if (strcmp(argv[3], "period") == 0 && (strcmp(argv[4], "off") == 0 || (_iotdata_node_settings_a2u(argv[4], &v) && v <= 0xFFFFu))) {
+        else if (_iotdata_node_settings_same(argv[3], "period-s", false) && (strcmp(argv[4], "off") == 0 || (_iotdata_node_settings_a2u(argv[4], &v) && v <= 0xFFFFu))) {
             if (strcmp(argv[4], "off") == 0)
                 v = 0u; /* "off" and "0" are the same answer, and it is NEVER rather than "no opinion" */
             /* "off" is period 0: a stated entry with ON_PERIOD clear says NEVER, which is a real
@@ -193,7 +207,7 @@ __attribute__((unused)) static void iotdata_node_settings_console(const iotdata_
             r.period_s = (uint16_t)v;
             r.flags = (uint16_t)((r.period_s > 0u) ? (r.flags | IOTDATA_NODE_REPORT_ON_PERIOD) : (r.flags & (uint16_t)~IOTDATA_NODE_REPORT_ON_PERIOD));
         } else {
-            emit("report: expected 'at-startup on|off' or 'period <seconds>|off'\n");
+            emit("report: expected 'at-startup on|off' or 'period-s <seconds>|off'\n");
             return;
         }
         if (!iotdata_node_settings_report_set(s, &r)) {

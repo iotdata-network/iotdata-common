@@ -49,7 +49,7 @@ typedef struct {
     uint16_t parent;
     uint8_t cost;
     uint16_t generation;
-    int8_t parent_rssi;
+    int8_t parent_rssi_dbm;
     uint8_t peers;
     bool accepting;
     uint32_t beacon_rx, beacon_tx;
@@ -72,10 +72,10 @@ typedef struct {
     uint32_t uptime_s;   /* this session */
     uint32_t lifetime_s; /* cumulative across boots -- needs somewhere to persist a counter */
     uint32_t active_s;   /* awake, as against asleep: the interesting one on a duty-cycled sensor */
-    uint32_t heap_free, heap_min;
+    uint32_t heap_free_bytes, heap_min_bytes;
     uint16_t restarts;
     uint16_t supply_mv;
-    int8_t temperature;
+    int8_t temperature_c;
     uint8_t reason;                     /* IOTDATA_NODE_REASON_* */
     uint8_t stations, filters, content; /* table sizes -- SCALARS, so they survive a lost tail */
     uint8_t image;                      /* [slot:4][state:4] -- iotdata_node_firmware_image_status() */
@@ -164,22 +164,22 @@ static inline const char *iotdata_node_status_scope_name(const uint8_t scope, ch
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 static inline void _iotdata_node_status_pack_node(iotdata_kvr_t *const kv, const iotdata_node_status_t *const s) {
-    iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_UPTIME, s->uptime_s);
+    iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_UPTIME_S, s->uptime_s);
     if (s->has_lifetime)
-        iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_LIFETIME, s->lifetime_s);
+        iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_LIFETIME_S, s->lifetime_s);
     if (s->has_restarts)
         iotdata_kvr_add_u16(kv, IOTDATA_NODE_STATUS_RESTARTS, s->restarts);
     iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_REASON, s->reason);
     if (s->has_temperature)
-        iotdata_kvr_add_i8(kv, IOTDATA_NODE_STATUS_TEMPERATURE, s->temperature);
+        iotdata_kvr_add_i8(kv, IOTDATA_NODE_STATUS_TEMPERATURE_C, s->temperature_c);
     if (s->has_supply)
-        iotdata_kvr_add_u16(kv, IOTDATA_NODE_STATUS_SUPPLY, s->supply_mv);
+        iotdata_kvr_add_u16(kv, IOTDATA_NODE_STATUS_SUPPLY_MV, s->supply_mv);
     if (s->has_heap) {
-        iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_HEAP_FREE, s->heap_free);
-        iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_HEAP_MIN, s->heap_min);
+        iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_HEAP_FREE_BYTES, s->heap_free_bytes);
+        iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_HEAP_MIN_BYTES, s->heap_min_bytes);
     }
     if (s->has_active)
-        iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_ACTIVE, s->active_s);
+        iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_ACTIVE_S, s->active_s);
     /* The table sizes are scalars and go out with the rest of them, BEFORE any row. A report whose
        tail is lost then still says how big each table was, which is the half worth keeping. */
     if (s->has_stations)
@@ -201,7 +201,7 @@ static inline void _iotdata_node_status_pack_mesh(iotdata_kvr_t *const kv, const
     iotdata_kvr_add_u16(kv, IOTDATA_NODE_STATUS_MESH_PARENT, m->parent);
     iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_MESH_COST, m->cost);
     iotdata_kvr_add_u16(kv, IOTDATA_NODE_STATUS_MESH_GENERATION, m->generation);
-    iotdata_kvr_add_i8(kv, IOTDATA_NODE_STATUS_MESH_PARENT_RSSI, m->parent_rssi);
+    iotdata_kvr_add_i8(kv, IOTDATA_NODE_STATUS_MESH_PARENT_RSSI_DBM, m->parent_rssi_dbm);
     iotdata_kvr_add_u8(kv, IOTDATA_NODE_STATUS_MESH_ACCEPTING, m->accepting ? 1u : 0u);
     iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_MESH_BEACON_RX, m->beacon_rx);
     iotdata_kvr_add_u32(kv, IOTDATA_NODE_STATUS_MESH_BEACON_TX, m->beacon_tx);
@@ -261,15 +261,15 @@ static inline const char *iotdata_node_status_str(const iotdata_node_status_t *c
     if (s->has_supply)
         _STATUS_APPEND(" supply=%umV", (unsigned)s->supply_mv);
     if (s->has_temperature)
-        _STATUS_APPEND(" temp=%dC", (int)s->temperature);
+        _STATUS_APPEND(" temp=%dC", (int)s->temperature_c);
     if (s->has_heap)
-        _STATUS_APPEND(" heap=%u/%u", (unsigned)s->heap_free, (unsigned)s->heap_min);
+        _STATUS_APPEND(" heap=%u/%u", (unsigned)s->heap_free_bytes, (unsigned)s->heap_min_bytes);
     if (s->has_image)
         _STATUS_APPEND(" image=%u/%s", (unsigned)IOTDATA_NODE_STATUS_IMAGE_SLOT_OF(s->image), iotdata_node_tlv_status_image_state_str(IOTDATA_NODE_STATUS_IMAGE_STATE_OF(s->image)));
     if (s->mesh.present) {
         _STATUS_APPEND(" mesh=%s", iotdata_node_tlv_status_mesh_state_str(s->mesh.state));
         if (s->mesh.state == IOTDATA_NODE_STATUS_MESH_STATE_JOINED)
-            _STATUS_APPEND(" parent=%04X@%ddBm", (unsigned)s->mesh.parent, (int)s->mesh.parent_rssi);
+            _STATUS_APPEND(" parent=%04X@%ddBm", (unsigned)s->mesh.parent, (int)s->mesh.parent_rssi_dbm);
         if (s->mesh.state == IOTDATA_NODE_STATUS_MESH_STATE_JOINED || s->mesh.state == IOTDATA_NODE_STATUS_MESH_STATE_GATEWAY)
             _STATUS_APPEND(" cost=%u", (unsigned)s->mesh.cost);
         _STATUS_APPEND(" peers=%u", (unsigned)s->mesh.peers);
