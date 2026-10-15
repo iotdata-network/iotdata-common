@@ -20,7 +20,15 @@
 #include "iotdata_variant.h"
 #include "iotdata.c"
 #include "iotdata_node.h"
+/* what the five built-in verbs need, now that none of them is compiled out on a host: the line
+   and the log level from the d_ layer, and the two version answers the `vers` verb reports */
+#include "device/d_platform_linux.h"
+#include "device/d_common.h"
 #include "device/d_format.h"
+#include "device/d_console_linux.h"
+#include "iotdata_node_utils.h" /* iotdata_node_reason_reset(), which `stat` reports */
+#include "iotdata_node_version.h"
+#include "iotdata_node_firmware.h"
 #include "iotdata_node_console.h"
 
 static int fails = 0;
@@ -64,10 +72,16 @@ static void cmd_help_impostor(__attribute__((unused)) const iotdata_node_console
     record("impostor", now_ms, argc, argv);
 }
 
+/* tries to take `vers`, which the built-in table owns */
+static void cmd_vers_impostor(__attribute__((unused)) const iotdata_node_console_emit_fn emit, const uint32_t now_ms, int argc, char **argv) {
+    record("impostor", now_ms, argc, argv);
+}
+
 static const iotdata_node_console_t app_cmds[] = {
     { "alpha", cmd_alpha, "the first one" },
     { "beta", cmd_beta, NULL }, /* a NULL help must not crash `help` */
     { "help", cmd_help_impostor, "cannot have it" },
+    { "vers", cmd_vers_impostor, "cannot have this either" },
 };
 
 /* dispatch takes a mutable line because it tokenises in place with strtok, and the pass's clock
@@ -128,11 +142,40 @@ static void test_help_is_not_overridable(void) {
        application could hide the one command that says what the others are. */
     feed("help");
     CHECK(seen.who == NULL, "the listing ran, not the application's `help`");
+}
 
-    /* NOT COVERED HERE: that a built-in beats an application command of the same name. Every
-       built-in (vers/stat/logl/boot) is behind #if defined(ESP_PLATFORM) because each reports chip
-       state, so on a host the built-in table holds nothing but its NULL terminator and there is
-       no clash to have. That rule needs a device, or a built-in that means something on a host. */
+/* THE BUILT-INS ARE NOT A DEVICE FEATURE, which is what this pins. All four used to be compiled out
+   on a host -- so a gateway console answered `unknown command 'vers'` about a question it could
+   answer, and the precedence rule below could not be tested at all because the built-in table held
+   nothing but its terminator. The platform-shaped half of each verb now lives in
+   device/d_console_<platform>.h and the table is the same everywhere. */
+static void test_builtins_are_on_every_platform(void) {
+    printf("\nthe built-in verbs exist here too, and beat an application of the same name\n");
+    const char *const want[] = { "vers", "stat", "logl", "boot" };
+    for (size_t w = 0; w < sizeof(want) / sizeof(want[0]); w++) {
+        bool found = false;
+        for (size_t i = 0; iotdata_node_con_builtin[i].name != NULL; i++)
+            if (strcmp(iotdata_node_con_builtin[i].name, want[w]) == 0)
+                found = true;
+        CHECK(found, "the verb is in the built-in table on this platform");
+    }
+
+    /* app_cmds registers a `vers` of its own: the built-in has to win, or an application could
+       quietly answer the question the fleet asks to identify it. */
+    feed("vers");
+    CHECK(seen.who == NULL, "the built-in ran, not the application's `vers`");
+
+    /* `logl` is the one with a readable side effect, which makes it the proof that these verbs do
+       something here rather than merely existing. */
+    feed("logl debug");
+    CHECK(platform_log_level_get() == PLATFORM_LOG_DEBUG, "logl moved the platform's log ceiling");
+    feed("logl nosuchlevel");
+    CHECK(platform_log_level_get() == PLATFORM_LOG_DEBUG, "and a level it cannot parse changes nothing");
+    feed("logl info");
+    CHECK(platform_log_level_get() == PLATFORM_LOG_INFO, "and it goes back");
+
+    /* NOT COVERED, DELIBERATELY: `boot`. On a host it exits the process, which is the right answer
+       and would also end this test run. */
 }
 
 /* ------------------------------------------------------------------------------------------- */
@@ -165,6 +208,7 @@ int main(void) {
     test_arguments();
     test_blank_and_unknown();
     test_help_is_not_overridable();
+    test_builtins_are_on_every_platform();
     test_the_handler_is_given_the_passs_clock();
     printf(fails ? "\nFAILED (%d)\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

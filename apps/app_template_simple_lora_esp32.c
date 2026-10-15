@@ -41,6 +41,8 @@
 #include "d_platform_esp32.h"
 #include "d_common.h"
 #include "d_format.h"
+#include "d_module_version_esp32.h"
+#include "d_console_esp32.h"
 #include "d_module_datastore_esp32.h"
 #include "d_module_filestore_esp32.h"
 /* the OTA seams: iotdata_node_otaupdate.h assembles these, and every node that uses the
@@ -430,7 +432,13 @@ static bool iapp_init(iapp_state_t *const as) {
     const int16_t brownout_mv = cold_boot ? 0 : as->operating->battery_mv;
     if (cold_boot) {
         _RTC_DATA_INIT(as->operating, IAPP_STATE_MAGIC);
-        iotdata_node_init(node, iotdata_node_station_from_mac(__tag_iapp), NULL, 0u); // station_id may be changed in persistence load
+        iotdata_node_identity_t identity;
+        iotdata_node_init(node, iotdata_node_station_from_mac(&identity), NULL, 0u); // station_id may be changed in persistence load
+        char ibuf[IOTDATA_NODE_IDENTITY_STR_MAX + 1];
+        if (identity.source == IOTDATA_NODE_IDENTITY_MAC)
+            ESP_LOGI(__tag_iapp, "board: %s", iotdata_node_identity_str(ibuf, sizeof(ibuf), &identity));
+        else
+            ESP_LOGW(__tag_iapp, "board: %s", iotdata_node_identity_str(ibuf, sizeof(ibuf), &identity));
     }
     iotdata_node_attach(node, &as->running->node_config);
 

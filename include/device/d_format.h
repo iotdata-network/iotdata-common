@@ -26,6 +26,34 @@ __attribute__((format(printf, 3, 4))) static inline char *snprintf_inline(char *
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
+/*
+ * THE VERSION GRAMMAR'S OWN TWO STRING HELPERS, used by iotdata_node_version.h and by every
+ * d_module_version_* beside it -- which is why they live here rather than in either.
+ *
+ * version_append() LOWER-CASES AND DISARMS: '/', '+', ',', space and anything below 0x20 become
+ * '-', because those are the grammar's own separators and a board string that contains one would
+ * otherwise parse as two fields. version_sep() puts a separator in deliberately. Both keep `n` as
+ * the write cursor and never exceed `size`, so a value too long for the buffer is truncated rather
+ * than lost or overrun.
+ */
+static inline void version_append(char *const dst, const size_t size, size_t *const n, const char *const src) {
+    if (dst == NULL || size == 0)
+        return;
+    for (const char *p = src; p != NULL && *p != '\0' && *n + 1u < size; p++)
+        dst[(*n)++] = (*p == '/' || *p == '+' || *p == ',' || *p == ' ' || *p < 0x20) ? '-' : ((*p >= 'A' && *p <= 'Z') ? (char)(*p + ('a' - 'A')) : *p);
+    dst[*n] = '\0';
+}
+
+static inline void version_sep(char *const dst, const size_t size, size_t *const n, const char ch) {
+    if (dst == NULL || size == 0 || *n + 1u >= size)
+        return;
+    dst[(*n)++] = ch;
+    dst[*n] = '\0';
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
 static inline void _secs2str_put(char **const p, const char *const end, const char *s, int n) {
     while (n-- && *p < end)
         *(*p)++ = *s++;

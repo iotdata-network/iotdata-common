@@ -19,6 +19,10 @@
 #include "iotdata_variant.h"
 #include "iotdata.c"
 #include "iotdata_node.h"
+/* the d_ layer the recorder leans on: RTC_NOINIT_ATTR for the reset-surviving ring, and
+   hw_time_ms() for its clock -- platform first, then common, as everywhere else */
+#include "device/d_platform_linux.h"
+#include "device/d_common.h"
 #include "iotdata_node_status.h"
 #include "iotdata_node_control.h"
 

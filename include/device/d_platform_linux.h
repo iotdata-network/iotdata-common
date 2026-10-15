@@ -39,6 +39,7 @@
 #define D_PLATFORM_LINUX_H
 
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -58,6 +59,20 @@
 
 #ifndef PLATFORM_LINUX
 #define PLATFORM_LINUX
+
+/* The two it depends on, included rather than assumed: d_platform.h for the vocabulary it
+   answers in, d_format.h for snprintf_inline, which the identity scan composes paths with.
+   Both are self-contained and guarded, so an application including them again costs nothing. */
+#include "d_format.h"
+#include "d_platform.h"
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* The same two facts for a host: the store is a file, and the ring in front of it can afford to be
+   larger because it is ordinary RAM -- and, having no RTC domain, it holds nothing across a
+   restart anyway, so its only job is the window between flushes. */
+#define D_PERSIST_STORE_FILE      1
+#define D_PERSIST_POOL_SZ_DEFAULT 4096u
 #endif
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -105,18 +120,50 @@ static inline const char *esp_err_to_name(const esp_err_t e) {
 // Routed through the host app's PRINTF_* if it has them (the gateway does, with timestamps and
 // level tags), so driver output is not a second log format in the same file. Otherwise stderr.
 
+/* THE CEILING, and a host has to keep its own: there is no logging framework here to ask. The
+   default macros below consult it, so `logl` on a console moves them for real -- and an
+   application that defines its own PRINTF_* (the gateway does) honours it by consulting this too,
+   rather than by being told about a console it does not know exists. */
+static platform_log_level_t _platform_log_level = PLATFORM_LOG_INFO;
+
+static inline platform_log_level_t platform_log_level_get(void) {
+    return _platform_log_level;
+}
+
+static inline void platform_log_level_set(const platform_log_level_t level) {
+    _platform_log_level = level;
+}
+
+#define PLATFORM_LOG_WANTED(lvl) (_platform_log_level >= (lvl))
+
 #ifndef PRINTF_INFO
-#define PRINTF_INFO(...) fprintf(stderr, __VA_ARGS__)
+#define PRINTF_INFO(...) \
+    do { \
+        if (PLATFORM_LOG_WANTED(PLATFORM_LOG_INFO)) \
+            fprintf(stderr, __VA_ARGS__); \
+    } while (0)
 #endif
 #ifndef PRINTF_WARN
-#define PRINTF_WARN(...) fprintf(stderr, __VA_ARGS__)
+#define PRINTF_WARN(...) \
+    do { \
+        if (PLATFORM_LOG_WANTED(PLATFORM_LOG_WARN)) \
+            fprintf(stderr, __VA_ARGS__); \
+    } while (0)
 #endif
 #ifndef PRINTF_ERROR
-#define PRINTF_ERROR(...) fprintf(stderr, __VA_ARGS__)
+#define PRINTF_ERROR(...) \
+    do { \
+        if (PLATFORM_LOG_WANTED(PLATFORM_LOG_ERROR)) \
+            fprintf(stderr, __VA_ARGS__); \
+    } while (0)
 #endif
+/* DEBUG IS COMPILED, NOT COMPILED OUT, so that raising the ceiling at run time can actually produce
+   something. It used to be an empty statement, which made `logl debug` a lie on a host. */
 #ifndef PRINTF_DEBUG
 #define PRINTF_DEBUG(...) \
     do { \
+        if (PLATFORM_LOG_WANTED(PLATFORM_LOG_DEBUG)) \
+            fprintf(stderr, __VA_ARGS__); \
     } while (0)
 #endif
 
@@ -224,6 +271,93 @@ static inline void esp_rom_delay_us(const uint32_t us) {
 #define pdMS_TO_TICKS(ms) (ms)
 static inline void vTaskDelay(const uint32_t ms) {
     (void)nanosleep(&(struct timespec){ .tv_sec = (time_t)(ms / 1000u), .tv_nsec = (long)(ms % 1000u) * 1000000L }, NULL);
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+// IDENTITY
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline bool _platform_sysfs(const char *const path, char *const out, const size_t size) {
+    bool ok = false;
+    FILE *const f = fopen(path, "re");
+    if (f != NULL) {
+        ok = (fgets(out, (int)size, f) != NULL);
+        (void)fclose(f);
+        if (ok)
+            out[strcspn(out, "\r\n")] = '\0';
+    }
+    return ok;
+}
+
+static inline uint32_t _platform_hash32(const char *s) {
+    uint32_t h = 2166136261u;
+    for (; *s != '\0'; s++) {
+        h ^= (uint32_t)(unsigned char)*s;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+/*
+ * The lowest-named interface that is both ethernet (type 1) and carries a PERMANENT address
+ * (addr_assign_type 0). Both filters matter: the permanence test is what keeps a docker bridge, a
+ * veth or a bond -- whose addresses are generated, and change with the day's containers -- from
+ * becoming the node's identity, and lowest-name makes the choice the same on every boot regardless
+ * of the order the kernel happened to probe them in.
+ */
+static inline bool platform_identity_mac(uint8_t mac[6]) {
+    char best[256] = { 0 }, path[320], buf[64];
+    DIR *const dir = opendir("/sys/class/net");
+    if (dir != NULL) {
+        const struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            if (ent->d_name[0] != '.' && strcmp(ent->d_name, "lo") != 0)
+                if (_platform_sysfs(snprintf_inline(path, sizeof(path), "/sys/class/net/%s/type", ent->d_name), buf, sizeof(buf)) || atoi(buf) != 1)                 /* ARPHRD_ETHER */
+                    if (_platform_sysfs(snprintf_inline(path, sizeof(path), "/sys/class/net/%s/addr_assign_type", ent->d_name), buf, sizeof(buf)) || atoi(buf) != 0) /* NET_ADDR_PERM */
+                        if (best[0] == '\0' || strcmp(ent->d_name, best) < 0)
+                            snprintf(best, sizeof(best), "%s", ent->d_name);
+        }
+        (void)closedir(dir);
+    }
+    if (best[0] != '\0') {
+        unsigned int v[6];
+        if (_platform_sysfs(snprintf_inline(path, sizeof(path), "/sys/class/net/%s/address", best), buf, sizeof(buf)) && sscanf(buf, "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6) {
+            for (int i = 0; i < 6; i++)
+                mac[i] = (uint8_t)v[i];
+            return true;
+        }
+    }
+    for (int i = 0; i < 6; i++)
+        mac[i] = 0;
+    return false;
+}
+
+/* THE HOSTNAME, hashed: the weakest of the identities and the only one a box with no permanent NIC
+   has. It is stable across reboots and changes when somebody renames the host, which is exactly
+   what the node layer warns about when it has to fall back to this. */
+static inline uint32_t platform_identity_alt32(void) {
+    char host[256];
+    if (gethostname(host, sizeof(host)) != 0)
+        host[0] = '\0';
+    host[sizeof(host) - 1] = '\0';
+    return _platform_hash32(host);
+}
+
+static inline const char *platform_identity_alt_name(char *const buf, const size_t size) {
+    if (buf == NULL || size == 0)
+        return buf;
+    if (gethostname(buf, size) != 0)
+        buf[0] = '\0';
+    buf[size - 1] = '\0';
+    return buf;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* A HOST DOES NOT TELL US WHY IT BOOTED, not portably and not without root -- /proc/uptime and the
+   journal are both guesses about a different question. UNKNOWN is the honest answer. */
+static inline platform_reset_t platform_reset_reason(void) {
+    return PLATFORM_RESET_UNKNOWN;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------

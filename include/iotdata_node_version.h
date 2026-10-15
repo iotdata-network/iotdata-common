@@ -321,277 +321,36 @@ static inline const char *iotdata_node_version_caps_str(const iotdata_node_versi
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-static inline void _iotdata_node_version_append(char *const dst, const size_t size, size_t *const n, const char *const src) {
-    if (dst == NULL || size == 0)
-        return;
-    for (const char *p = src; p != NULL && *p != '\0' && *n + 1u < size; p++)
-        dst[(*n)++] = (*p == '/' || *p == '+' || *p == ',' || *p == ' ' || *p < 0x20) ? '-' : ((*p >= 'A' && *p <= 'Z') ? (char)(*p + ('a' - 'A')) : *p);
-    dst[*n] = '\0';
-}
-
-static inline void _iotdata_node_version_sep(char *const dst, const size_t size, size_t *const n, const char ch) {
-    if (dst == NULL || size == 0 || *n + 1u >= size)
-        return;
-    dst[(*n)++] = ch;
-    dst[*n] = '\0';
-}
-
 // -----------------------------------------------------------------------------------------------------------------------------------------
-
-#if defined(PLATFORM_ESP32)
 
 /*
- * ESP-IDF COMPONENTS THIS NEEDS. IDF only puts a component's headers on the include path when the
- * component is declared, so a project including this header must list these in its main
- * CMakeLists.txt -- otherwise the build fails on a missing header, or worse, quietly loses a field:
+ * THE FOUR DETECTED ANSWERS COME FROM THE PLATFORM, and this header only asks.
  *
- *     PRIV_REQUIRES ... esp_hw_support esp_app_format esp_bootloader_format
+ * Each is a one-line hand-off to device/d_module_version_<platform>.h, which the application
+ * includes beside its other d_ modules. Nothing here knows what a platform IS -- not even by an
+ * #ifdef -- so a third platform is a new file in that directory and no change in this one.
  *
- *   esp_hw_support          esp_chip_info.h, esp_mac.h  -> hardware, serial
- *   esp_app_format          esp_app_desc.h              -> firmware (the IDF version)
- *   esp_bootloader_format   esp_bootloader_desc.h       -> firmware's "+bl" half
- *   app_update              esp_ota_ops.h               -> image (which partition is running)
- *   esp_partition           esp_partition.h             -> image (the digest of it)
- *
- * The bootloader one is the quiet case: it is probed with __has_include, so a project that omits
- * the component still compiles and simply reports no bootloader version. That is how `idf/6.1`
- * appeared where `idf/6.1+bl1` was expected.
+ * A build that includes no module still compiles and answers "unknown", because an unanswerable
+ * question still has an answer: a node that cannot say what board it is says exactly that. BUT A
+ * FORGOTTEN INCLUDE LOOKS IDENTICAL, and is the likelier cause -- a node reporting unknown/unknown
+ * on hardware it plainly has is missing the module, not missing a capability.
  */
-
-#include "esp_app_desc.h"
-#include "esp_chip_info.h"
-#include "esp_mac.h"
-#include "esp_ota_ops.h"
-#include "esp_partition.h"
-#include "esp_system.h"
-/* The bootloader descriptor is what supplies the [+low] half of `firmware`, and it arrived in a
-   later IDF -- so it is probed rather than assumed. Without this include the guard below would be
-   false for the wrong reason and the bootloader would be silently absent from every report. */
-#if defined(__has_include)
-#if __has_include("esp_bootloader_desc.h")
-#include "esp_bootloader_desc.h"
-#endif
-#endif
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
+#if defined(D_MODULE_VERSION_PROVIDED)
 
 static inline const char *iotdata_node_version_hardware(char *const buf, const size_t size) {
-    esp_chip_info_t info;
-    esp_chip_info(&info);
-    const char *chip = "esp32", *arch = "xtensa";
-    switch (info.model) {
-    case CHIP_ESP32:
-        chip = "esp32";
-        break;
-    case CHIP_ESP32S2:
-        chip = "esp32s2";
-        break;
-    case CHIP_ESP32S3:
-        chip = "esp32s3";
-        break;
-    case CHIP_ESP32C3:
-        chip = "esp32c3";
-        arch = "riscv32";
-        break;
-    default:
-        break;
-    }
-#if defined(CONFIG_IDF_TARGET_ARCH_RISCV)
-    arch = "riscv32";
-#endif
-    return snprintf_inline(buf, size, "%s/%s", chip, arch);
+    return version_hardware(buf, size);
 }
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-/* IDF version plus the bootloader, which is the ESP32's genuine "firmware beneath the app" -- the
-   thing that is flashed separately and outlives an OTA. */
 static inline const char *iotdata_node_version_firmware(char *const buf, const size_t size) {
-    const esp_app_desc_t *const app = esp_app_get_description();
-    size_t n = 0;
-    if (size > 0)
-        buf[0] = '\0';
-    _iotdata_node_version_append(buf, size, &n, "idf");
-    _iotdata_node_version_sep(buf, size, &n, '/');
-    /* idf_ver is "v6.1" or "v6.1-dev-1234-g..." -- the leading 'v' is noise next to a field that
-       already says which stack this is, and everything from the first non-version character is
-       provenance rather than version */
-    const char *v = (app != NULL && app->idf_ver[0] != '\0') ? app->idf_ver : "unknown";
-    if (*v == 'v' || *v == 'V')
-        v++;
-    char ver[16];
-    size_t r = 0;
-    for (; *v != '\0' && r + 1u < sizeof(ver); v++) {
-        if ((*v < '0' || *v > '9') && *v != '.')
-            break;
-        ver[r++] = *v;
-    }
-    ver[r] = '\0';
-    _iotdata_node_version_append(buf, size, &n, r > 0 ? ver : "unknown");
-#if defined(ESP_BOOTLOADER_DESC_MAGIC_WORD)
-    /* the bootloader is the [+low] part: flashed separately, and it outlives an OTA */
-    const esp_bootloader_desc_t *const bl = esp_bootloader_get_description();
-    if (bl != NULL) {
-        char blv[12];
-        _iotdata_node_version_sep(buf, size, &n, '+');
-        _iotdata_node_version_append(buf, size, &n, snprintf_inline(blv, sizeof(blv), "bl%u", (unsigned)bl->version));
-    }
-#endif
-    return buf;
+    return version_firmware(buf, size);
 }
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 static inline const char *iotdata_node_version_serial(char *const buf, const size_t size) {
-    uint8_t mac[6] = { 0 };
-    (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    return snprintf_inline(buf, size, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    return version_serial(buf, size);
 }
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
+/* IOTDATA_NODE_VERSION_IMAGE_BYTES is the protocol's length and stays the protocol's: the module is
+   handed a size and fills that much of its digest. */
 static inline bool iotdata_node_version_image(uint8_t *const out, const size_t size) {
-    static uint8_t hash[IOTDATA_NODE_VERSION_IMAGE_BYTES];
-    static bool done = false, have = false;
-    if (!done) {
-        const esp_partition_t *const running = esp_ota_get_running_partition();
-        uint8_t full[32];
-        if (running != NULL && esp_partition_get_sha256(running, full) == ESP_OK) {
-            memcpy(hash, full, sizeof(hash));
-            have = true;
-        }
-        done = true;
-    }
-    if (out == NULL || size < sizeof(hash) || !have)
-        return false;
-    memcpy(out, hash, sizeof(hash));
-    return true;
+    return version_image(out, size);
 }
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-#elif defined(PLATFORM_LINUX)
-
-#include <sys/utsname.h>
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-static inline bool _iotdata_node_version_slurp(const char *const path, char *const dst, const size_t size) {
-    FILE *const f = fopen(path, "r");
-    if (f == NULL)
-        return false;
-    char raw[128];
-    const bool got = fgets(raw, (int)sizeof(raw), f) != NULL;
-    (void)fclose(f);
-    if (!got)
-        return false;
-    raw[strcspn(raw, "\r\n")] = '\0';
-    if (raw[0] == '\0')
-        return false;
-    size_t n = 0;
-    dst[0] = '\0';
-    _iotdata_node_version_append(dst, size, &n, raw);
-    return true;
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-/* Board from the device tree where there is one (Pi, Rock) and from DMI on a PC, falling back to
-   the architecture alone -- which is still true, just less specific. */
-static inline const char *iotdata_node_version_hardware(char *const buf, const size_t size) {
-    struct utsname u;
-    const char *arch = (uname(&u) == 0) ? u.machine : "unknown";
-    char board[24] = { 0 };
-    if (!_iotdata_node_version_slurp("/proc/device-tree/model", board, sizeof(board)) && !_iotdata_node_version_slurp("/sys/class/dmi/id/product_name", board, sizeof(board)))
-        board[0] = '\0';
-    size_t n = 0;
-    if (size > 0)
-        buf[0] = '\0';
-    if (board[0] != '\0') {
-        _iotdata_node_version_append(buf, size, &n, board);
-        _iotdata_node_version_sep(buf, size, &n, '/');
-    }
-    _iotdata_node_version_append(buf, size, &n, arch);
-    return buf;
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-/* The kernel is what runs beneath the application here. The Pi's VideoCore blob is the closer
-   analogue of a bootloader, but vcgencmd is a binary a slimmed image may not carry, so it is not
-   worth a fork per boot -- kernel alone, and the board string already says it is a Pi. */
-static inline const char *iotdata_node_version_firmware(char *const buf, const size_t size) {
-    struct utsname u;
-    size_t n = 0;
-    if (size > 0)
-        buf[0] = '\0';
-    _iotdata_node_version_append(buf, size, &n, "linux");
-    _iotdata_node_version_sep(buf, size, &n, '/');
-    if (uname(&u) != 0) {
-        _iotdata_node_version_append(buf, size, &n, "unknown");
-        return buf;
-    }
-    /* The kernel VERSION only: `uname -r` is "6.12.96+deb13-amd64" on Debian, and everything from
-       the first non-version character is packaging rather than kernel. Dropping it matters twice
-       over -- it is noise, and that '+' is this grammar's own separator for the [+low] field, so
-       carrying it through would make the value parse as a bootloader that does not exist. */
-    char rel[20];
-    size_t r = 0;
-    for (const char *p = u.release; *p != '\0' && r + 1u < sizeof(rel); p++) {
-        if ((*p < '0' || *p > '9') && *p != '.')
-            break;
-        rel[r++] = *p;
-    }
-    rel[r] = '\0';
-    _iotdata_node_version_append(buf, size, &n, r > 0 ? rel : "unknown");
-    return buf;
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-/* NEVER a NIC MAC: those are removable, and a box whose identity changes when a card is swapped
-   cannot be tracked across the swap. The CPU serial is the board; machine-id is the install. */
-static inline const char *iotdata_node_version_serial(char *const buf, const size_t size) {
-    char raw[64] = { 0 };
-    FILE *const f = fopen("/proc/cpuinfo", "r");
-    if (f != NULL) {
-        char line[160];
-        while (fgets(line, (int)sizeof(line), f) != NULL)
-            if (strncmp(line, "Serial", 6) == 0) {
-                const char *const colon = strchr(line, ':');
-                if (colon != NULL) {
-                    const char *v = colon + 1;
-                    while (*v == ' ' || *v == '\t')
-                        v++;
-                    size_t rn = 0;
-                    raw[0] = '\0';
-                    _iotdata_node_version_append(raw, sizeof(raw), &rn, v);
-                }
-                break;
-            }
-        (void)fclose(f);
-    }
-    if (raw[0] == '\0' && !_iotdata_node_version_slurp("/proc/device-tree/serial-number", raw, sizeof(raw)))
-        (void)_iotdata_node_version_slurp("/etc/machine-id", raw, sizeof(raw));
-    /* trim leading zeros a Pi pads its serial with, but never to nothing */
-    const char *p = raw;
-    while (*p == '0' && *(p + 1) != '\0')
-        p++;
-    size_t n = 0;
-    if (size > 0)
-        buf[0] = '\0';
-    _iotdata_node_version_append(buf, size, &n, p[0] != '\0' ? p : "unknown");
-    return buf;
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-static inline bool iotdata_node_version_image(__attribute__((unused)) uint8_t *const out, __attribute__((unused)) const size_t size) {
-    return false;
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #else
 
@@ -611,17 +370,6 @@ static inline bool iotdata_node_version_image(__attribute__((unused)) uint8_t *c
 #endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-
-static inline int _iotdata_node_version_month(const char *const mon) {
-    static const char names[] = "janfebmaraprmayjunjulaugsepoctnovdec";
-    char low[4] = { 0, 0, 0, 0 };
-    for (int i = 0; i < 3 && mon[i] != '\0'; i++)
-        low[i] = (mon[i] >= 'A' && mon[i] <= 'Z') ? (char)(mon[i] + ('a' - 'A')) : mon[i];
-    for (int m = 0; m < 12; m++)
-        if (strncmp(names + m * 3, low, 3) == 0)
-            return m + 1;
-    return 0;
-}
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -649,16 +397,14 @@ static inline const char *_iotdata_node_version_stamp(char *const buf, const siz
         return snprintf_inline(buf, size, "%s", IOTDATA_NODE_VERSION_STAMP_NONE);
     else
         return buf;
-#elif defined(PLATFORM_ESP32)
-    const esp_app_desc_t *const app = esp_app_get_description();
-    int mday = 0, year = 0, hour = 0, minute = 0;
-    /* app->date is __DATE__, "Sep 12 2026", with the day space-padded; app->time is "17:45:09" */
-    const int m = (app != NULL) ? _iotdata_node_version_month(app->date) : 0;
-    if (m > 0 && sscanf(app->date + 3, "%d %d", &mday, &year) == 2 && sscanf(app->time, "%d:%d", &hour, &minute) == 2)
-        return snprintf_inline(buf, size, "%04d%02d%02d%02d%02d", year, m, mday, hour, minute);
-    else
-        return snprintf_inline(buf, size, "%s", IOTDATA_NODE_VERSION_STAMP_NONE);
 #else
+    /* Failing a build-supplied one, the PLATFORM may know -- an ESP-IDF app descriptor is stamped at
+       link, so when a module answers it is always THIS build. Validated like the declared one: the
+       two paths produce the same twelve digits or the same visible nothing. */
+#if defined(D_MODULE_VERSION_PROVIDED)
+    if (version_stamp(buf, size) && _iotdata_node_version_stamp_valid(buf))
+        return buf;
+#endif
     return snprintf_inline(buf, size, "%s", IOTDATA_NODE_VERSION_STAMP_NONE);
 #endif
 }
@@ -677,11 +423,11 @@ static inline const char *iotdata_node_version_software(char *const buf, const s
     size_t n = 0;
     if (size > 0)
         buf[0] = '\0';
-    _iotdata_node_version_append(buf, size, &n, IOTDATA_NODE_VERSION_APP);
-    _iotdata_node_version_sep(buf, size, &n, '/');
-    _iotdata_node_version_append(buf, size, &n, IOTDATA_NODE_VERSION_SEMVER);
-    _iotdata_node_version_sep(buf, size, &n, '/');
-    _iotdata_node_version_append(buf, size, &n, _iotdata_node_version_stamp(st, sizeof(st)));
+    version_append(buf, size, &n, IOTDATA_NODE_VERSION_APP);
+    version_sep(buf, size, &n, '/');
+    version_append(buf, size, &n, IOTDATA_NODE_VERSION_SEMVER);
+    version_sep(buf, size, &n, '/');
+    version_append(buf, size, &n, _iotdata_node_version_stamp(st, sizeof(st)));
     return buf;
 }
 
@@ -785,7 +531,7 @@ static inline bool iotdata_node_version_hardware_split(const char *const hw, cha
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /* "stack/version[+low]" -- the low half is the bootloader or equivalent, and is absent more often
-   than not (a project that did not declare esp_bootloader_format reports none). */
+   than not (a platform whose module cannot see one reports none). */
 static inline bool iotdata_node_version_firmware_split(const char *const fw, char *const stack, const size_t stack_sz, char *const version, const size_t version_sz, char *const low, const size_t low_sz) {
     if (low != NULL && low_sz > 0)
         low[0] = '\0';

@@ -13,6 +13,7 @@
 #include "iotdata_variant.h"
 #include "iotdata.c"
 #include "iotdata_node.h"
+#include "device/d_platform_linux.h" /* iotdata_node_utils.h asks it for the board identity */
 #include "device/d_format.h"
 #include "iotdata_node_utils.h"
 #include "iotdata_node_stations.h"

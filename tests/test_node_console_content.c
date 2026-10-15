@@ -37,6 +37,10 @@
 #include "d_common.h"
 #include "iotdata_node_status.h"
 #include "iotdata_node_control.h"
+#include "d_console_linux.h"      /* the console line, and the platform half of its five verbs */
+#include "iotdata_node_utils.h"   /* iotdata_node_reason_reset(), which `stat` reports */
+#include "iotdata_node_version.h" /* which `vers` reports */
+#include "iotdata_node_firmware.h"
 #include "iotdata_node_console.h"
 #include "d_module_filestore.h" /* the seam: content.h is written against it */
 #include "iotdata_node_content.h"

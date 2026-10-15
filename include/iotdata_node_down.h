@@ -473,19 +473,23 @@ static inline buffer_handle_t iotdata_node_down_window(iotdata_node_down_t *cons
        candidacy -- a lone frame too big for the window was picked, re-stamped and picked again,
        forever -- and both lied about the queue afterwards: a frame that did not fit lost its place
        in arrival order, and a broadcast that did not fit went unsent for a whole repeat interval.
-       Nothing here mutates now, so what did not fit this window keeps its place for the next. */
-    uint32_t aside_station = 0u, aside_bcast = 0u;
-    _Static_assert(IOTDATA_NODE_DOWN_SLOTS <= 32, "the set-aside masks are one bit per slot");
+       Nothing here mutates now, so what did not fit this window keeps its place for the next.
+     *
+     * ONE FLAG PER SLOT, not a bitmask. A uint32_t bitmask was the first shape of this and it was
+       wrong: IOTDATA_NODE_DOWN_SLOTS is the application's, and the gateway sets it to 128 --
+       so a mask silently addresses only the first 32 of them and the search stops terminating
+       again for anything above that. Sized off the macro, it cannot be outgrown. */
+    bool aside_station[IOTDATA_NODE_DOWN_SLOTS] = { false }, aside_bcast[IOTDATA_NODE_DOWN_SLOTS] = { false };
     for (;;) {
         iotdata_node_down_station_t *from = NULL;
         iotdata_node_down_slot_t *best = NULL;
         int best_j = -1;
         for (int pass = 0; pass < 2; pass++) {
             iotdata_node_down_station_t *const src = (pass == 0) ? st : &ds->station[0];
-            const uint32_t aside = (pass == 0) ? aside_station : aside_bcast;
+            const bool *const aside = (pass == 0) ? aside_station : aside_bcast;
             for (int j = 0; j < IOTDATA_NODE_DOWN_SLOTS; j++) {
                 iotdata_node_down_slot_t *const sl = &src->slot[j];
-                if (sl->frame != BUFFER_NONE && (aside & (1u << j)) == 0u)
+                if (sl->frame != BUFFER_NONE && !aside[j])
                     if (!(pass == 1 && _iotdata_node_down_sent_recently(ds, st, sl->hash, now_ms)))
                         if (best == NULL || (int32_t)(sl->arrived_ms - best->arrived_ms) < 0) {
                             best = sl;
@@ -512,9 +516,9 @@ static inline buffer_handle_t iotdata_node_down_window(iotdata_node_down_t *cons
             return out;
         } else {
             if (from == &ds->station[0])
-                aside_bcast |= (uint32_t)1u << best_j;
+                aside_bcast[best_j] = true;
             else
-                aside_station |= (uint32_t)1u << best_j;
+                aside_station[best_j] = true;
         }
     }
 }

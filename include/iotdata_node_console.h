@@ -3,13 +3,13 @@
 #define IOTDATA_NODE_CONSOLE_H
 
 /*
- * iotdata_node_console.h — a small, generic USB-serial-JTAG console line for esp32 apps.
+ * iotdata_node_console.h — a small, generic console line: the verbs, and none of the wiring.
  *
  * Non-blocking and verb-based: a set of built-in consoles (help, vers, stat, logl, boot) plus any
  * consoles the app plugs in on top. Designed to be driven from a cooperative main loop — call
  * iotdata_node_console_tick() each pass; it drains whatever the console has and dispatches a full line.
- * Output is plain printf (over the same USB-serial-JTAG console the app logs on), so records/status
- * come straight back over USB.
+ * Output is plain printf, over whatever the application already logs on, so records and status come
+ * straight back the way they were asked for.
  *
  * Single-header: in ONE translation unit (the app's unity TU) define IOTDATA_NODE_CONSOLE_IMPLEMENTATION
  * before including; other TUs just include it for the declarations.
@@ -21,12 +21,12 @@
  *   for (;;) { ...; iotdata_node_console_tick(hw_time_ms()); }                     // non-blocking, each pass
  *
  * Pass (NULL, 0) for no app consoles. The cons array must live for the program's lifetime (static).
- * On non-esp32 (host) builds this compiles to no-ops, so shared code can include it unconditionally.
  *
- * esp32 component requirements (the TU that defines the implementation must be in a component that
- * REQUIRES these): esp_driver_usb_serial_jtag, vfs, esp_app_format, app_update (`vers` reports the
- * running slot through iotdata_node_firmware.h). (esp_timer / esp_hw_support /
- * heap / log / esp_system come in as common dependencies.)
+ * THE LINE BELONGS TO THE PLATFORM, and so does each verb's platform-shaped half: see
+ * device/d_console_<platform>.h, which the application includes beside its other d_ modules, and
+ * which lists the ESP-IDF components a device build needs. The five verbs are the same everywhere --
+ * they were ESP-only until the wiring moved out from under them, which made a gateway answer
+ * `unknown command 'vers'` about a question it could answer.
  */
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -38,28 +38,6 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <stddef.h>
-
-#if !defined(ESP_PLATFORM)
-#include <poll.h>
-#include <unistd.h>
-#endif
-
-#if defined(ESP_PLATFORM)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpedantic"
-#pragma GCC diagnostic ignored "-Wnested-externs"
-#pragma GCC diagnostic ignored "-Wredundant-decls"
-#include "driver/usb_serial_jtag.h"
-#include "driver/usb_serial_jtag_vfs.h"
-#include "esp_app_desc.h"
-#include "esp_chip_info.h"
-#include "esp_heap_caps.h"
-#include "esp_idf_version.h"
-#include "esp_log.h"
-#include "esp_rom_sys.h"
-#include "esp_system.h"
-#pragma GCC diagnostic pop
-#endif
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
@@ -73,11 +51,7 @@
 #endif
 
 #ifndef IOTDATA_NODE_CONSOLE_PREFIX
-#if defined(ESP_PLATFORM)
-#define IOTDATA_NODE_CONSOLE_PREFIX() printf(IOTDATA_NODE_CONSOLE_TAG " (%u) ", (unsigned)esp_log_timestamp()) /* ms since boot, like ESP_LOG */
-#else
-#define IOTDATA_NODE_CONSOLE_PREFIX() fputs(IOTDATA_NODE_CONSOLE_TAG " (0) ", stdout)
-#endif
+#define IOTDATA_NODE_CONSOLE_PREFIX() printf(IOTDATA_NODE_CONSOLE_TAG " (%u) ", (unsigned)console_stamp_ms()) /* the platform's own log clock */
 #endif
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -184,80 +158,12 @@ void iotdata_node_console_reply(const char *fmt, ...) {
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-#if !defined(ESP_PLATFORM)
-static bool iotdata_node_con_open = false; /* there is a stdin worth looking at, and it has not ended */
-#endif
 static const iotdata_node_console_t *iotdata_node_con_app = NULL;
 static size_t iotdata_node_con_app_n = 0;
 static char iotdata_node_con_line[IOTDATA_NODE_CONSOLE_LINE_MAX];
 static size_t iotdata_node_con_len = 0;
 static iotdata_node_console_sink_fn iotdata_node_con_sink = NULL;
 static void *iotdata_node_con_sink_ctx = NULL;
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-#if defined(ESP_PLATFORM)
-
-static esp_log_level_t iotdata_node_con_log_level = (esp_log_level_t)CONFIG_LOG_DEFAULT_LEVEL;
-
-static const char *iotdata_node_con_log_name(esp_log_level_t l) {
-    switch (l) {
-    case ESP_LOG_NONE:
-        return "none";
-    case ESP_LOG_ERROR:
-        return "error";
-    case ESP_LOG_WARN:
-        return "warn";
-    case ESP_LOG_INFO:
-        return "info";
-    case ESP_LOG_DEBUG:
-        return "debug";
-    case ESP_LOG_VERBOSE:
-        return "verbose";
-    default:
-        return "?";
-    }
-}
-static bool iotdata_node_con_log_parse(const char *s, esp_log_level_t *out) {
-    if (!strcmp(s, "none") || !strcmp(s, "0"))
-        *out = ESP_LOG_NONE;
-    else if (!strcmp(s, "error") || !strcmp(s, "1"))
-        *out = ESP_LOG_ERROR;
-    else if (!strcmp(s, "warn") || !strcmp(s, "warning") || !strcmp(s, "2"))
-        *out = ESP_LOG_WARN;
-    else if (!strcmp(s, "info") || !strcmp(s, "3"))
-        *out = ESP_LOG_INFO;
-    else if (!strcmp(s, "debug") || !strcmp(s, "4"))
-        *out = ESP_LOG_DEBUG;
-    else if (!strcmp(s, "verbose") || !strcmp(s, "5"))
-        *out = ESP_LOG_VERBOSE;
-    else
-        return false;
-    return true;
-}
-
-static const char *iotdata_node_con_reset_name(int r) {
-    switch (r) {
-    case ESP_RST_POWERON:
-        return "poweron";
-    case ESP_RST_SW:
-        return "sw";
-    case ESP_RST_PANIC:
-        return "panic";
-    case ESP_RST_INT_WDT:
-        return "int-wdt";
-    case ESP_RST_TASK_WDT:
-        return "task-wdt";
-    case ESP_RST_WDT:
-        return "wdt";
-    case ESP_RST_BROWNOUT:
-        return "brownout";
-    case ESP_RST_DEEPSLEEP:
-        return "deepsleep";
-    default:
-        return "other";
-    }
-}
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
@@ -279,65 +185,58 @@ static const char *iotdata_node_con_reset_name(int r) {
    iotdata_node_version.h and iotdata_node_firmware.h are both included ahead of this file by
    iotdata_node_platform.h -- the same arrangement iotdata_node_console_content.h relies on. */
 static void iotdata_node_con_cmd_vers(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
-    const esp_app_desc_t *const d = esp_app_get_description();
-    esp_chip_info_t chip;
-    esp_chip_info(&chip);
-    char vbuf[IOTDATA_NODE_VERSION_STR_MAX + 1], ibuf[IOTDATA_NODE_FIRMWARE_STR_MAX + 1];
+    char vbuf[IOTDATA_NODE_VERSION_STR_MAX + 1], ibuf[IOTDATA_NODE_FIRMWARE_STR_MAX + 1], pbuf[80];
     emit("version: %s\n", iotdata_node_version_str(vbuf, sizeof(vbuf), NULL));
     emit("firmware: %s\n", iotdata_node_firmware_str(ibuf, sizeof(ibuf)));
-    emit("image: %s %s\n", d ? d->project_name : "?", d ? d->version : "?");
-    emit("platform=%s chip-rev=%d cores=%d idf=%s\n", CONFIG_IDF_TARGET, (int)chip.revision, (int)chip.cores, esp_get_idf_version());
+    emit("platform: %s\n", console_platform_str(pbuf, sizeof(pbuf)));
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
 static void iotdata_node_con_cmd_stat(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
-    emit("uptime=%us reset=%s\n", (unsigned)(hw_time_ms() / 1000), iotdata_node_con_reset_name((int)esp_reset_reason()));
-    emit("heap: free=%u min=%u largest=%u\n", (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+    /* The reason is the PROTOCOL's name for it, the same one STATUS reports over the air, rather
+       than a second vocabulary for the same fact at the console. */
+    emit("uptime=%us reset=%s\n", (unsigned)(hw_time_ms() / 1000), iotdata_node_tlv_status_reason_str(iotdata_node_reason_reset()));
+    uint32_t heap_free = 0, heap_min = 0, heap_largest = 0;
+    if (console_heap(&heap_free, &heap_min, &heap_largest))
+        emit("heap: free=%u min=%u largest=%u\n", (unsigned)heap_free, (unsigned)heap_min, (unsigned)heap_largest);
+    else
+        emit("heap: not reported on this platform\n");
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
 static void iotdata_node_con_cmd_logl(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, int argc, char **argv) {
     if (argc < 2) {
-        emit("log level = %s\n", iotdata_node_con_log_name(iotdata_node_con_log_level));
+        emit("log level = %s\n", console_log_level_name(platform_log_level_get()));
         return;
     }
-    esp_log_level_t lvl;
-    if (!iotdata_node_con_log_parse(argv[1], &lvl)) {
+    platform_log_level_t lvl;
+    if (!console_log_level_parse(argv[1], &lvl)) {
         emit("logl: unknown level '%s' (none|error|warn|info|debug|verbose | 0..5)\n", argv[1]);
         return;
     }
-    esp_log_level_set("*", lvl); /* dynamic ceiling is CONFIG_LOG_MAXIMUM_LEVEL — can't raise past it */
-    iotdata_node_con_log_level = lvl;
-    emit("log level = %s\n", iotdata_node_con_log_name(lvl));
+    /* A CEILING, NOT A FLOOR: a build that compiled a level out stays quiet however high this goes
+       (CONFIG_LOG_MAXIMUM_LEVEL on a device), so the answer is read back rather than assumed. */
+    platform_log_level_set(lvl);
+    emit("log level = %s\n", console_log_level_name(platform_log_level_get()));
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
 static void iotdata_node_con_cmd_boot(const iotdata_node_console_emit_fn emit, __attribute__((unused)) const uint32_t now_ms, __attribute__((unused)) int argc, __attribute__((unused)) char **argv) {
     emit("rebooting\n");
-    fflush(stdout);
-    esp_rom_delay_us(50000); /* let the reply drain out of the USB TX buffer before the reset */
-    esp_restart();
+    console_restart(); /* never returns: a reset on a device, an exit on a host */
 }
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-#endif /* ESP_PLATFORM */
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
 static const iotdata_node_console_t iotdata_node_con_builtin[] = {
-#if defined(ESP_PLATFORM)
     { "vers", iotdata_node_con_cmd_vers, "device firmware / platform / build version" },
     { "stat", iotdata_node_con_cmd_stat, "device uptime, reset reason, heap" },
     { "logl", iotdata_node_con_cmd_logl, "device loglevel — 'logl' shows, 'logl <lvl>' sets" },
     { "boot", iotdata_node_con_cmd_boot, "device restart" },
-#endif
-    /* A terminator, so the array is never empty -- every built-in above is ESP-only, and a host
-       build would otherwise declare `= { }`, which is not C before C23. */
     { NULL, NULL, NULL },
 };
 /* Walked to the NULL rather than by a count: on a host every built-in above is compiled out, and
@@ -387,14 +286,7 @@ void iotdata_node_console_init(const iotdata_node_console_t *cons, size_t count)
     iotdata_node_con_app = cons;
     iotdata_node_con_app_n = count;
     iotdata_node_con_len = 0;
-#if defined(ESP_PLATFORM)
-    if (usb_serial_jtag_driver_install(&(usb_serial_jtag_driver_config_t){ .tx_buffer_size = IOTDATA_NODE_CONSOLE_TX_BYTES, .rx_buffer_size = IOTDATA_NODE_CONSOLE_RX_BYTES }) == ESP_OK)
-        usb_serial_jtag_vfs_use_driver(); /* route stdio through the driver so reads + printf agree */
-#else
-    /* Nothing to set up: the poll in getc() asks before it reads, so stdin is left exactly as the
-       shell handed it over. A process with no terminal simply never has a byte ready. */
-    iotdata_node_con_open = true;
-#endif
+    (void)console_line_begin(IOTDATA_NODE_CONSOLE_RX_BYTES, IOTDATA_NODE_CONSOLE_TX_BYTES);
     iotdata_node_console_reply("iotdata-console: ready (try 'help')\n");
 }
 
@@ -407,29 +299,7 @@ void iotdata_node_console_init(const iotdata_node_console_t *cons, size_t count)
  * is doing a quarter of a million calls to copy a buffer it could have been given whole. The line
  * path walks the run itself, which costs it nothing. */
 static size_t iotdata_node_con_read(uint8_t *const buf, const size_t max) {
-#if defined(ESP_PLATFORM)
-    const int n = usb_serial_jtag_read_bytes(buf, max, 0); /* timeout 0 -> drain the FIFO */
-    return (n > 0) ? (size_t)n : 0u;
-#else
-    if (!iotdata_node_con_open)
-        return 0u;
-    /* ASKED FIRST, and only read once the answer is yes.
-     *
-     * The obvious alternative is O_NONBLOCK on stdin, and it is a trap on the host this runs on:
-     * stdin and stdout of a process started from a terminal usually share one open file
-     * description, so setting it there sets it for OUTPUT too -- and a gateway that logs every
-     * frame would then start losing writes to EAGAIN the moment it got busy. poll() asks about the
-     * one descriptor we mean, changes nothing, and cannot block with a zero timeout. */
-    struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
-    if (poll(&pfd, 1, 0) <= 0 || (pfd.revents & POLLIN) == 0)
-        return 0u;
-    const ssize_t n = read(STDIN_FILENO, buf, max);
-    if (n > 0)
-        return (size_t)n;
-    if (n == 0)
-        iotdata_node_con_open = false; /* EOF: stop asking, or a closed stdin spins the loop */
-    return 0u;
-#endif
+    return console_line_read(buf, max);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------

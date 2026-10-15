@@ -69,27 +69,31 @@
 // THE ADAPTER: backend, sizes and clock
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#if defined(ESP_PLATFORM)
+/*
+ * WHERE THE RECORDS GO, asked as a capability rather than as a platform. Level 1 is the ring alone;
+ * level 2 writes it through to whatever durable store the platform in front of us has, and
+ * d_platform_<platform>.h is what says which that is. An application that wants something else
+ * defines BLACKBOX_PERSIST itself and none of this runs.
+ */
 #ifndef BLACKBOX_PERSIST
 #if IOTDATA_NODE_DIAGNOSTICS >= 2
+#if defined(D_PERSIST_STORE_PARTITION)
 #define BLACKBOX_PERSIST BLACKBOX_PERSIST_ESP_FLASH
-#else
-#define BLACKBOX_PERSIST BLACKBOX_PERSIST_NONE /* the RTC pool ring */
-#endif
-#endif
-#ifndef IOTDATA_NODE_BLACKBOX_POOL_SZ
-#define IOTDATA_NODE_BLACKBOX_POOL_SZ 2048u
-#endif
-#else /* host / linux */
-#ifndef BLACKBOX_PERSIST
-#if IOTDATA_NODE_DIAGNOSTICS == 1
-#define BLACKBOX_PERSIST BLACKBOX_PERSIST_NONE
-#else
+#elif defined(D_PERSIST_STORE_FILE)
 #define BLACKBOX_PERSIST BLACKBOX_PERSIST_FILE
+#else
+#define BLACKBOX_PERSIST BLACKBOX_PERSIST_NONE /* nowhere durable: the ring is all there is */
+#endif
+#else
+#define BLACKBOX_PERSIST BLACKBOX_PERSIST_NONE /* the reset-surviving ring, and nothing behind it */
 #endif
 #endif
+
 #ifndef IOTDATA_NODE_BLACKBOX_POOL_SZ
-#define IOTDATA_NODE_BLACKBOX_POOL_SZ 4096u
+#ifdef D_PERSIST_POOL_SZ_DEFAULT
+#define IOTDATA_NODE_BLACKBOX_POOL_SZ D_PERSIST_POOL_SZ_DEFAULT
+#else
+#define IOTDATA_NODE_BLACKBOX_POOL_SZ 2048u /* the smaller of the two: a ring that fits anywhere */
 #endif
 #endif
 
@@ -260,11 +264,26 @@ extern const blackbox_struct_config_t iotdata_node_blackbox_config_power_detail;
 
 /* iotdata_node_blackbox_clock (the BLACKBOX_CLOCK hook) is already forward-declared by blackbox.h. */
 
-/* Seed the clock. Call ONCE before blackbox_init(). On esp32 the clock's `seq` lives in RTC_NOINIT,
- * so this zeroes it on a true cold start (detected with a magic word -- see the implementation for
- * why esp_reset_reason() cannot be used for that). A no-op on the host. iotdata_node_diagnostics_begin
+/* Seed the clock. Call ONCE before blackbox_init(). The clock's `seq` lives in the reset-surviving
+ * domain, so this zeroes it on a cold start -- detected with a magic word, and see the
+ * implementation for why a reset-reason test cannot do that job. iotdata_node_diagnostics_begin
  * calls it, so an app driving the singleton never needs to. */
 void iotdata_node_blackbox_begin(void);
+
+/* The alternative BLACKBOX_CLOCK: wall clock milliseconds, for records that will be read beside
+   something else's log. An application chooses it with `#define BLACKBOX_CLOCK
+   iotdata_node_blackbox_clock_wall` before this header; the default is the run-ordered one above,
+   which needs no clock to be set and is the same on every platform.
+
+   THE SUPPRESSION IS LOAD-BEARING. blackbox.h forward-declares whatever name BLACKBOX_CLOCK
+   expands to, so in an application that selected THIS one, that declaration and this one are the
+   same declaration twice and -Wredundant-decls refuses the build -- which is exactly how the
+   gateway broke. The preprocessor cannot compare a macro against an identifier, so the duplicate
+   cannot be avoided, only excused: for this one line, and for no other. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wredundant-decls"
+int iotdata_node_blackbox_clock_wall(char *out, size_t n);
+#pragma GCC diagnostic pop
 
 /* Convenience: record a lifecycle event against any handle. */
 static inline int iotdata_node_blackbox_lifecycle(blackbox_handle_t *h, iotdata_node_bb_lc_event_t ev, uint8_t reason) {
@@ -338,14 +357,11 @@ static inline uint8_t iotdata_node_diagnostics_reason(const uint32_t count) {
 #define IOTDATA_NODE_DIAGNOSTICS_PERSIST_MAX 256u
 #endif
 
-#if defined(ESP_PLATFORM)
-#include "esp_attr.h"
-#define IOTDATA_NODE_DIAGNOSTICS_POOL_ATTR RTC_NOINIT_ATTR /* survives a reset, so a panic is still readable */
-#else
-#define IOTDATA_NODE_DIAGNOSTICS_POOL_ATTR
-#endif
-
-static IOTDATA_NODE_DIAGNOSTICS_POOL_ATTR char _iotdata_node_diagnostics_pool[IOTDATA_NODE_BLACKBOX_POOL_SZ];
+/* RTC_NOINIT_ATTR, so the pool survives a reset and a panic is still readable afterwards. No
+   platform test and no esp_attr.h include: the attribute comes from the includer's d_platform_*
+   header, where it is the real thing on esp32 and nothing at all on a host -- which is exactly the
+   difference, since a host that restarts has no RTC domain to survive in. */
+static RTC_NOINIT_ATTR char _iotdata_node_diagnostics_pool[IOTDATA_NODE_BLACKBOX_POOL_SZ];
 static blackbox_handle_t _iotdata_node_diagnostics_handle;
 static bool _iotdata_node_diagnostics_ready = false;
 static char _iotdata_node_diagnostics_line[IOTDATA_NODE_DIAGNOSTICS_STAT_MAX];
@@ -892,26 +908,36 @@ static int iotdata_node_bb__dec_power_detail(__attribute__((unused)) const black
 }
 const blackbox_struct_config_t iotdata_node_blackbox_config_power_detail = { "PWD", iotdata_node_bb__enc_power_detail, iotdata_node_bb__dec_power_detail };
 
-#if defined(ESP_PLATFORM)
-#include "esp_attr.h"
-
-/* esp32 clock = "seq:up_ms". `seq` is a monotonic counter in RTC_NOINIT so it survives deep sleep and
- * resets -- which also means it holds GARBAGE on a true cold start.
+/*
+ * THE RECORD CLOCK: "seq:up_ms", and ONE clock on every platform.
  *
- * You cannot detect that from esp_reset_reason(): a USB-powered ESP32-C3 reports ESP_RST_USB on a
- * genuine power-up, NOT ESP_RST_POWERON (the ROM logs it as rst:0x15 USB_UART_CHIP_RESET), so an
- * `if (reason == ESP_RST_POWERON) seq = 0;` guard silently never fires and the garbage persists
- * through every later reset. Pair it with a magic word instead, exactly as an RTC state struct is.
+ * `seq` is a counter in the reset-surviving domain, so records keep their order across a watchdog,
+ * a panic and a deep sleep -- which also means it holds GARBAGE on a true cold start. A MAGIC WORD
+ * is how that is detected, and NOT a reset-reason test: a USB-powered ESP32-C3 reports ESP_RST_USB
+ * on a genuine power-up rather than ESP_RST_POWERON (the ROM logs it as rst:0x15
+ * USB_UART_CHIP_RESET), so `if (reason == POWERON) seq = 0;` silently never fires and the garbage
+ * survives every later reset. The magic word asks the only question that matters -- is this memory
+ * ours -- and asks it the same way everywhere.
+ *
+ * RTC_NOINIT_ATTR IS THE PLATFORM'S: the real attribute on a device, nothing at all on a host. So
+ * on a host these are ordinary statics -- zero at start, seeded by the same magic word, and the
+ * counter restarts with the process, which is the truth, because a host restart IS a cold start.
+ * A run is a run whether it began with a reset or with execve. `up_ms` is hw_time_ms() on both.
+ *
+ * A HOST THAT WANTS WALL CLOCK TIME IN ITS RECORDS says so for itself, with
+ * BLACKBOX_CLOCK iotdata_node_blackbox_clock_wall below -- the application knows whether its
+ * records will be read beside a syslog; this header does not.
  *
  * Both variables are owned HERE rather than by each app, so this cannot be got wrong per project.
- * Call iotdata_node_blackbox_begin() once before blackbox_init(). */
+ * Call iotdata_node_blackbox_begin() once before blackbox_init().
+ */
 #define IOTDATA_NODE_BLACKBOX_SEQ_MAGIC 0x1D5EC10Cu /* 'IDSEC-CLOC(k)' */
 
 RTC_NOINIT_ATTR uint32_t iotdata_node_blackbox_seq;
 RTC_NOINIT_ATTR static uint32_t iotdata_node_blackbox_seq_magic;
 
 void iotdata_node_blackbox_begin(void) {
-    if (iotdata_node_blackbox_seq_magic != IOTDATA_NODE_BLACKBOX_SEQ_MAGIC) { /* RTC was garbage: cold start */
+    if (iotdata_node_blackbox_seq_magic != IOTDATA_NODE_BLACKBOX_SEQ_MAGIC) { /* garbage: a cold start */
         iotdata_node_blackbox_seq = 0;
         iotdata_node_blackbox_seq_magic = IOTDATA_NODE_BLACKBOX_SEQ_MAGIC;
     }
@@ -920,16 +946,15 @@ void iotdata_node_blackbox_begin(void) {
 int iotdata_node_blackbox_clock(char *out, size_t n) {
     return snprintf(out, n, "%u:%u", (unsigned)(++iotdata_node_blackbox_seq), (unsigned)hw_time_ms());
 }
-#else
-void iotdata_node_blackbox_begin(void) { /* host: the clock is a real timestamp, nothing to seed */
+
+/* THE OTHER ONE, for a reader who needs to line records up against something outside this node.
+   hw_clock() is the platform's wall clock and may be nothing but seconds since boot, so it is
+   asked whether it means anything first -- a stamp that lies about a date is worse than a tick. */
+int iotdata_node_blackbox_clock_wall(char *out, size_t n) {
+    if (!hw_clock_is_set())
+        return iotdata_node_blackbox_clock(out, n);
+    return snprintf(out, n, "%lld", (long long)hw_clock() * 1000);
 }
-#include <time.h>
-int iotdata_node_blackbox_clock(char *out, size_t n) {
-    struct timespec ts;
-    timespec_get(&ts, TIME_UTC); /* C11 standard — no POSIX feature-test macro needed */
-    return snprintf(out, n, "%lld", (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
-}
-#endif
 
 #endif /* IOTDATA_NODE_BLACKBOX_IMPLEMENTATION */
 

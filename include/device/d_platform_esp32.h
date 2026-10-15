@@ -11,6 +11,16 @@
 #define PLATFORM_ESP32
 #endif
 
+#include "d_platform.h"
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* WHAT A DURABLE RECORD STORE LOOKS LIKE HERE, for anything that has to site and size one without
+   knowing which platform it is on. A labelled flash partition is the store; the reset-surviving
+   ring in front of it is small because RTC RAM is small. */
+#define D_PERSIST_STORE_PARTITION 1
+#define D_PERSIST_POOL_SZ_DEFAULT 2048u
+
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
@@ -55,7 +65,84 @@ static inline time_t hw_clock(void) {
 #pragma GCC diagnostic pop
 
 // ------------------------------------------------------------------------------------------------------------------------
+
+/* WHETHER A SUPPLY FLOOR IS ENFORCED IN HARDWARE, and at what setting, for anything that wants to
+   record what actually stops this node. Declared here and not read from sdkconfig by the caller:
+   CONFIG_ESP_BROWNOUT_DET_LVL is a vendor Kconfig name, and a node header asking for one by that
+   name is how platform knowledge gets back into the layer above. Absent means no detector -- which
+   is the honest answer on a host, where the supply is somebody else's problem.
+
+   NOTE THE PLACEMENT: after the IDF includes above, because sdkconfig.h arrives with them. Moved
+   up beside D_PERSIST_* it would test a macro that is not defined yet and silently come out false,
+   with nothing to see in the build. */
+#if defined(CONFIG_ESP_BROWNOUT_DET) && defined(CONFIG_ESP_BROWNOUT_DET_LVL)
+#define D_PLATFORM_SUPPLY_FLOOR_LVL CONFIG_ESP_BROWNOUT_DET_LVL
+#endif
+
 // ------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* THE EFUSE MAC IS THE BOARD, burned at the factory and not removable -- so there is no second
+   source worth having and alt32 says so by answering 0. */
+static inline bool platform_identity_mac(uint8_t mac[6]) {
+    for (int i = 0; i < 6; i++)
+        mac[i] = 0;
+    return esp_efuse_mac_get_default(mac) == ESP_OK;
+}
+
+static inline uint32_t platform_identity_alt32(void) {
+    return 0u;
+}
+
+static inline const char *platform_identity_alt_name(char *const buf, const size_t size) {
+    if (buf != NULL && size > 0)
+        buf[0] = '\0';
+    return buf;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* IDF OWNS THE CEILING, and esp_log_level_set() is how it is moved -- but it cannot be read back,
+   so the last value set is mirrored here. CONFIG_LOG_DEFAULT_LEVEL is where it starts, and
+   CONFIG_LOG_MAXIMUM_LEVEL is a compile-time cap this cannot raise past: a build that compiled
+   debug out stays quiet however high the ceiling is set. */
+static platform_log_level_t _platform_log_level = (platform_log_level_t)CONFIG_LOG_DEFAULT_LEVEL;
+
+static inline platform_log_level_t platform_log_level_get(void) {
+    return _platform_log_level;
+}
+
+static inline void platform_log_level_set(const platform_log_level_t level) {
+    esp_log_level_set("*", (esp_log_level_t)level);
+    _platform_log_level = level;
+}
+
+static inline platform_reset_t platform_reset_reason(void) {
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:
+        return PLATFORM_RESET_POWER_ON;
+    case ESP_RST_SW:
+        return PLATFORM_RESET_SOFTWARE;
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:
+        return PLATFORM_RESET_WATCHDOG;
+    case ESP_RST_BROWNOUT:
+        return PLATFORM_RESET_BROWNOUT;
+    case ESP_RST_PANIC:
+        return PLATFORM_RESET_PANIC;
+    case ESP_RST_DEEPSLEEP:
+        return PLATFORM_RESET_DEEPSLEEP;
+    case ESP_RST_EXT:
+        return PLATFORM_RESET_EXTERNAL;
+    default:
+        return PLATFORM_RESET_UNKNOWN;
+    }
+}
 
 static inline const char *reset_reason_str(esp_reset_reason_t r) {
     switch (r) {

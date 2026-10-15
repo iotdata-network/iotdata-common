@@ -84,10 +84,11 @@ static void power_describe(const bool battery_present) {
     supply.from_rail = battery_present ? PW_RAIL_PACK : IOTDATA_NODE_BB_PW_NO_RAIL;
     supply.nominal_mv = 3300;
     iotdata_node_diagnostics_power_source(&supply);
-#if defined(CONFIG_ESP_BROWNOUT_DET_LVL)
+#if defined(D_PLATFORM_SUPPLY_FLOOR_LVL)
     /* The brownout detector watches THIS rail, not the pack, and it is what decides when the node
-       stops -- so the floor is a property of the regulator and this number, not of the cell. */
-    iotdata_node_diagnostics_power_detail(PW_RAIL_SUPPLY, "bod", snprintf_inline(buf, sizeof(buf), "lvl%d", CONFIG_ESP_BROWNOUT_DET_LVL));
+       stops -- so the floor is a property of the regulator and this number, not of the cell. The
+       capability comes from d_platform_<platform>.h; a platform without one records no detail. */
+    iotdata_node_diagnostics_power_detail(PW_RAIL_SUPPLY, "bod", snprintf_inline(buf, sizeof(buf), "lvl%d", D_PLATFORM_SUPPLY_FLOOR_LVL));
 #endif
 }
 

@@ -18,7 +18,8 @@
 #include "iotdata_variant.h"
 #include "iotdata.c"
 #include "iotdata_node.h"
-#include "device/d_format.h" /* snprintf_inline, used by the host branch of the version header */
+#include "device/d_format.h"               /* snprintf_inline, version_append/version_sep */
+#include "device/d_module_version_linux.h" /* the host's answers: hardware, firmware, serial, image */
 #include "iotdata_node_version.h"
 
 static int fails = 0;
@@ -182,33 +183,33 @@ static void test_append(void) {
     char out[16];
     size_t n = 0;
     out[0] = '\0';
-    _iotdata_node_version_append(out, sizeof(out), &n, "a/b+c,d e");
+    version_append(out, sizeof(out), &n, "a/b+c,d e");
     CHECK(strcmp(out, "a-b-c-d-e") == 0, "separators and spaces become '-'");
 
     n = 0;
     out[0] = '\0';
-    _iotdata_node_version_append(out, sizeof(out), &n, "10MUS0P800");
+    version_append(out, sizeof(out), &n, "10MUS0P800");
     CHECK(strcmp(out, "10mus0p800") == 0, "and everything is lower cased: a DMI model is shouted");
 
     /* the separator writer puts in verbatim what append would have replaced */
     n = 0;
     out[0] = '\0';
-    _iotdata_node_version_append(out, sizeof(out), &n, "linux");
-    _iotdata_node_version_sep(out, sizeof(out), &n, '/');
-    _iotdata_node_version_append(out, sizeof(out), &n, "6.12");
+    version_append(out, sizeof(out), &n, "linux");
+    version_sep(out, sizeof(out), &n, '/');
+    version_append(out, sizeof(out), &n, "6.12");
     CHECK(strcmp(out, "linux/6.12") == 0, "and a deliberate separator survives");
 
     char two[3];
     n = 0;
     two[0] = '\0';
-    _iotdata_node_version_append(two, sizeof(two), &n, "abcdef");
+    version_append(two, sizeof(two), &n, "abcdef");
     CHECK(strcmp(two, "ab") == 0, "truncates to the buffer");
-    _iotdata_node_version_sep(two, sizeof(two), &n, '/');
+    version_sep(two, sizeof(two), &n, '/');
     CHECK(strcmp(two, "ab") == 0, "and a separator with no room is dropped, not written past the end");
 
     n = 0;
     out[0] = '\0';
-    _iotdata_node_version_append(out, sizeof(out), &n, NULL);
+    version_append(out, sizeof(out), &n, NULL);
     CHECK(strcmp(out, "") == 0, "NULL is the empty string, not a crash");
 }
 
