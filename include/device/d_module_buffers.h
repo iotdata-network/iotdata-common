@@ -49,11 +49,16 @@
 //   - Each CALL is atomic; a SEQUENCE of calls is not. "Remove by tag, then add" -- the supersede
 //     idiom -- is two operations, and another thread can land between them. A caller that needs
 //     that pair to be indivisible needs its own mutex around the pair; the queue's lock is not it.
-//   - The scalar accessors (count, high_water, added, expired, rejected) and peek are deliberately
-//     NOT locked. The counters are diagnostics and a moment's staleness costs nothing. Peek is
-//     different: it hands back a handle the queue still owns, so on a queue another thread can
-//     take from, the handle can go stale under you -- peek is for a queue you own, or for a
-//     diagnostic, and take is the only safe way to get a frame off a shared one.
+//   - The scalar accessors (count, high_water, added, expired, rejected) are deliberately NOT
+//     locked: they are diagnostics, and a moment's staleness costs nothing. PEEK IS LOCKED, and
+//     takes a non-const queue because of it -- a read that acquires a lock is not a const read.
+//     What the lock buys is that the handle, tag and key it hands back describe ONE entry. They
+//     are three separate loads: unlocked, another thread's take and a later add could reuse that
+//     slot between them, and the caller would get a tag from one frame and a buffer from another,
+//     for an entry that was never due. What the lock cannot buy is freshness -- the entry stays in
+//     the queue and no reference is transferred, so on a queue another thread takes from, the
+//     handle can go stale the instant the lock is dropped. Peek is for deciding whether to bother;
+//     take is the only safe way to get a frame OFF a shared queue.
 //
 // NO FIELD ACCESS. Everything is a function or a macro. The struct is visible because this is a
 // header-only library and the storage has to be declared somewhere, not because it is an interface.
@@ -63,8 +68,6 @@
 
 #define BUFFER_NONE 0xFFu /* not a handle: what acquire returns when the pool is empty */
 
-/* No lock unless the caller asked for one. The placeholder keeps the struct layout and the call
-   sites identical either way, so the locked and unlocked builds are the same code. */
 #ifndef BUFFER_LOCK_TYPE
 #define BUFFER_LOCK_TYPE       char
 #define BUFFER_LOCK_INIT(l)    ((void)(l))
@@ -81,12 +84,10 @@
 typedef uint8_t buffer_handle_t;
 #define BUFFER_POOL_COUNT_MAX 254
 
-/* Per-buffer bookkeeping. `at` is where the data currently starts, which moves BACKWARDS as
-   headers are prepended; `len` is how many bytes of data there are from `at`. */
 typedef struct {
     uint8_t refs;
-    uint16_t at;
-    uint16_t len;
+    uint16_t at;  /* `at` is where the data starts, moving BACKWARDS as headers are prepended */
+    uint16_t len; /* `len` is how many bytes of data there are from `at`. */
 } buffer_meta_t;
 
 typedef struct {
@@ -95,7 +96,8 @@ typedef struct {
     uint32_t *free_map; /* one bit per buffer, SET = free (so "find a free one" is a ctz) */
     uint16_t count;
     uint16_t stride;
-    uint16_t offset; /* where a receive starts: the room reserved for prepending */
+    uint16_t offset;    /* where a receive starts: the room reserved for prepending */
+    uint16_t hint_word; /* which map word last yielded a buffer: see buffer_acquire */
     /* stats, for the periodic report */
     uint16_t used;
     uint16_t high_water;
@@ -128,6 +130,7 @@ static inline void buffer_pool_init(buffer_pool_t *const p, uint8_t *const data,
     p->count = count;
     p->stride = stride;
     p->offset = offset;
+    p->hint_word = 0;
     p->used = 0;
     p->high_water = 0;
     p->acquires = 0;
@@ -141,26 +144,51 @@ static inline void buffer_pool_init(buffer_pool_t *const p, uint8_t *const data,
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+/*
+ * Take a free buffer: find a set bit, clear it, stamp the meta.
+ *
+ * IT STARTS WHERE IT LAST SUCCEEDED, rather than always at word 0, and that is worth the one field
+ * it costs on a pool of more than 32. The scan takes the LOWEST free bit, so buffers held for a
+ * long time settle into the low words and the short-lived ones are pushed above them -- a gateway
+ * dimensioned 24 processing + 128 downstream will hold most of those 128 for as long as the nodes
+ * behind them are alive, and every receive then walks three or four solid words to reach the bit it
+ * wants. Worst exactly when the pool is busiest, which is the wrong way round.
+ *
+ * A HINT, NOT A CACHE OF FREED HANDLES. There is no second structure to keep in step and no
+ * invariant beyond `hint_word < words`: being wrong costs one wasted word load, and the scan still
+ * visits every word before it gives up, so nothing is ever stranded. (The kernels' per-cpu freelist
+ * -- slab magazines, page_pool's recycle cache, DPDK's mempool cache -- is the heavier version of
+ * this idea, and it is there to avoid a LOCK rather than a scan. The lock here is the caller's
+ * choice and the scan was never the expensive part; a start word is the whole of what this needs.)
+ *
+ * It does mean a handle is no longer deterministically the lowest free index -- allocation is
+ * round-robin from the last success. A single-word pool (count <= 32) is unaffected: there is one
+ * word and the hint is always 0.
+ */
 static inline buffer_handle_t buffer_acquire(buffer_pool_t *const p) {
-    BUFFER_LOCK_ACQUIRE(&p->lock);
     const uint16_t words = (uint16_t)BUFFER_POOL_MAP_WORDS(p->count);
-    for (uint16_t w = 0; w < words; w++)
+    BUFFER_LOCK_ACQUIRE(&p->lock);
+    for (uint16_t n = 0; n < words; n++) {
+        uint16_t w = (uint16_t)(p->hint_word + n);
+        if (w >= words)
+            w = (uint16_t)(w - words); /* one subtract, not a modulo: n < words, so w < 2 * words */
         if (p->free_map[w] != 0u) {
             const uint16_t bit = (uint16_t)__builtin_ctz(p->free_map[w]);
             const uint16_t i = (uint16_t)(w * 32u + bit);
-            if (i >= p->count)
-                break; /* the tail of the last word is padding, not buffers */
-            p->free_map[w] &= ~(1u << bit);
-            p->meta[i].refs = 1;
-            p->meta[i].at = p->offset; /* a receive lands past the reserved prefix */
-            p->meta[i].len = 0;
-            p->used++;
-            p->acquires++;
-            if (p->used > p->high_water)
-                p->high_water = p->used;
-            BUFFER_LOCK_RELEASE(&p->lock);
-            return (buffer_handle_t)i;
+            if (i < p->count) {
+                p->free_map[w] &= ~(1u << bit);
+                p->hint_word = w;
+                p->meta[i].refs = 1;
+                p->meta[i].at = p->offset; /* a receive lands past the reserved prefix */
+                p->meta[i].len = 0;
+                p->acquires++;
+                if (++p->used > p->high_water)
+                    p->high_water = p->used;
+                BUFFER_LOCK_RELEASE(&p->lock);
+                return (buffer_handle_t)i;
+            }
         }
+    }
     p->fails++;
     BUFFER_LOCK_RELEASE(&p->lock);
     return BUFFER_NONE;
@@ -182,8 +210,6 @@ static inline buffer_handle_t buffer_ref(buffer_pool_t *const p, const buffer_ha
 
 static inline void buffer_unref(buffer_pool_t *const p, const buffer_handle_t h) {
     BUFFER_LOCK_ACQUIRE(&p->lock);
-    /* the decrement and the return-to-pool are one step: a reader between them would see a
-       buffer with no holders that is not yet free */
     if (buffer_valid(p, h) && --p->meta[h].refs == 0) {
         p->free_map[h / 32u] |= (1u << (h % 32u));
         p->used--;
@@ -244,7 +270,7 @@ static inline bool buffer_prepend(buffer_pool_t *const p, const buffer_handle_t 
         return false;
     p->meta[h].at = (uint16_t)(p->meta[h].at - n);
     p->meta[h].len = (uint16_t)(p->meta[h].len + n);
-    if (hdr != NULL)
+    if (hdr)
         memcpy(&p->data[(size_t)h * p->stride + p->meta[h].at], hdr, n);
     return true;
 }
@@ -294,9 +320,6 @@ static inline uint32_t buffer_pool_acquires(const buffer_pool_t *const p) {
 
 #define BUFFER_QUEUE_TAG_NONE 0xFFu
 
-/* What a tag MEANS is the caller's vocabulary, but wanting to print one is generic -- every log
-   line about a queued frame wants its name. So the queue carries an optional resolver rather than
-   each caller formatting tags itself. */
 typedef const char *(*buffer_tag_name_fn)(uint8_t tag);
 
 typedef struct {
@@ -349,9 +372,9 @@ static inline void buffer_queue_set_tag_name(buffer_queue_t *const q, const buff
 
 static inline const char *buffer_queue_tag_name(const buffer_queue_t *const q, const uint8_t tag) {
     static char fallback[8];
-    if (q->tag_name != NULL) {
+    if (q->tag_name) {
         const char *const n = q->tag_name(tag);
-        if (n != NULL)
+        if (n)
             return n;
     }
     return snprintf_inline(fallback, sizeof(fallback), "tag%u", (unsigned)tag);
@@ -378,7 +401,7 @@ static inline bool buffer_queue_add(buffer_queue_t *const q, const buffer_handle
         return false;
     }
     BUFFER_LOCK_ACQUIRE(&q->lock);
-    for (uint16_t i = 0; i < q->size; i++) {
+    for (uint16_t i = 0; i < q->size; i++)
         if (!q->slot[i].valid) {
             q->slot[i].buf = buffer_ref(q->pool, h);
             q->slot[i].valid = true;
@@ -386,14 +409,12 @@ static inline bool buffer_queue_add(buffer_queue_t *const q, const buffer_handle
             q->slot[i].key = key;
             q->slot[i].due_ms = due_ms;
             q->slot[i].expiry_ms = expiry_ms;
-            q->used++;
             q->st_added++;
-            if (q->used > q->high_water)
+            if (++q->used > q->high_water)
                 q->high_water = q->used;
             BUFFER_LOCK_RELEASE(&q->lock);
             return true;
         }
-    }
     q->st_rejected++;
     BUFFER_LOCK_RELEASE(&q->lock);
     return false;
@@ -401,7 +422,29 @@ static inline bool buffer_queue_add(buffer_queue_t *const q, const buffer_handle
 
 // ------------------------------------------------------------------------------------------------------------------------
 
+/*
+ * Age the queue. Called every pass, whether or not anything can be transmitted -- see above.
+ *
+ * AN EMPTY QUEUE IS ANSWERED WITHOUT THE WALK, and without the lock. expire(), peek() and take()
+ * are the three a polling loop calls on every pass regardless of whether there is anything in
+ * here, and on most of those passes there is not: a relay puts a frame or two in and drains them,
+ * and a gateway's survey and trace queues are empty except during a diagnostic. Scanning `size`
+ * slots to discover that is the only work the loop does when it has nothing to do.
+ *
+ * `used` is exact -- it moves with `valid` under the lock -- so the test is not an approximation,
+ * and reading it unlocked is safe in BOTH directions, which is why it comes before the lock: read
+ * stale-high and we take the lock, scan, and find nothing, which is the right answer; read
+ * stale-low, because another thread added between the read and now, and we skip a pass -- the
+ * entry is still there with its own absolute due and expiry, and the next pass takes it. The same
+ * conservative read buffer_queue_count() has always handed out.
+ *
+ * NOT on remove_key/remove_tag/clear. Those are called because something happened -- an ack
+ * arrived, a request superseded another, a module is shutting down -- so the queue is usually not
+ * empty when they run and there is nothing to skip. Only the polling path repeats.
+ */
 static inline uint16_t buffer_queue_expire(buffer_queue_t *const q, const uint32_t now_ms) {
+    if (q->used == 0)
+        return 0;
     uint16_t expired = 0;
     BUFFER_LOCK_ACQUIRE(&q->lock);
     for (uint16_t i = 0; i < q->size; i++)
@@ -428,42 +471,49 @@ static inline uint16_t buffer_queue_expire(buffer_queue_t *const q, const uint32
  */
 /* Which frame take() would hand over, WITHOUT taking it. The reference is NOT transferred: the
    queue still holds it, so the caller must read and let go, never unref. For deciding whether it
-   is worth asking the radio at all, and for a test that wants to look at what is queued. */
-static inline buffer_handle_t buffer_queue_peek(const buffer_queue_t *const q, const uint32_t now_ms, uint8_t *const out_tag, uint32_t *const out_key) {
-    int best = -1;
-    for (uint16_t i = 0; i < q->size; i++)
-        if (q->slot[i].valid && (int32_t)(now_ms - q->slot[i].due_ms) >= 0)
-            if (best < 0 || (int32_t)(q->slot[i].due_ms - q->slot[best].due_ms) < 0)
-                best = (int)i;
-    if (best < 0)
+   is worth asking the radio at all, and for a test that wants to look at what is queued.
+   LOCKED -- see the LOCKING block above for what that does and does not make safe: the three
+   values describe one entry, and on a shared queue the handle can still go stale afterwards. */
+static inline buffer_handle_t buffer_queue_peek(buffer_queue_t *const q, const uint32_t now_ms, uint8_t *const out_tag, uint32_t *const out_key) {
+    if (q->used == 0)
         return BUFFER_NONE;
-    if (out_tag != NULL)
-        *out_tag = q->slot[best].tag;
-    if (out_key != NULL)
-        *out_key = q->slot[best].key;
-    return q->slot[best].buf;
-}
-
-// ------------------------------------------------------------------------------------------------------------------------
-
-static inline buffer_handle_t buffer_queue_take(buffer_queue_t *const q, const uint32_t now_ms, uint8_t *const out_tag, uint32_t *const out_key) {
     int best = -1;
     BUFFER_LOCK_ACQUIRE(&q->lock);
     for (uint16_t i = 0; i < q->size; i++)
         if (q->slot[i].valid && (int32_t)(now_ms - q->slot[i].due_ms) >= 0)
             if (best < 0 || (int32_t)(q->slot[i].due_ms - q->slot[best].due_ms) < 0)
                 best = (int)i;
-    if (best < 0) {
-        BUFFER_LOCK_RELEASE(&q->lock);
-        return BUFFER_NONE;
+    const buffer_handle_t h = best < 0 ? BUFFER_NONE : q->slot[best].buf;
+    if (h != BUFFER_NONE) {
+        if (out_tag)
+            *out_tag = q->slot[best].tag;
+        if (out_key)
+            *out_key = q->slot[best].key;
     }
-    const buffer_handle_t h = q->slot[best].buf;
-    if (out_tag != NULL)
-        *out_tag = q->slot[best].tag;
-    if (out_key != NULL)
-        *out_key = q->slot[best].key;
-    q->slot[best].valid = false;
-    q->used--;
+    BUFFER_LOCK_RELEASE(&q->lock);
+    return h;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+static inline buffer_handle_t buffer_queue_take(buffer_queue_t *const q, const uint32_t now_ms, uint8_t *const out_tag, uint32_t *const out_key) {
+    if (q->used == 0)
+        return BUFFER_NONE;
+    int best = -1;
+    BUFFER_LOCK_ACQUIRE(&q->lock);
+    for (uint16_t i = 0; i < q->size; i++)
+        if (q->slot[i].valid && (int32_t)(now_ms - q->slot[i].due_ms) >= 0)
+            if (best < 0 || (int32_t)(q->slot[i].due_ms - q->slot[best].due_ms) < 0)
+                best = (int)i;
+    const buffer_handle_t h = best < 0 ? BUFFER_NONE : q->slot[best].buf;
+    if (h != BUFFER_NONE) {
+        if (out_tag)
+            *out_tag = q->slot[best].tag;
+        if (out_key)
+            *out_key = q->slot[best].key;
+        q->slot[best].valid = false;
+        q->used--;
+    }
     BUFFER_LOCK_RELEASE(&q->lock);
     return h; /* the reference travels with it: no ref/unref pair here on purpose */
 }
@@ -471,22 +521,26 @@ static inline buffer_handle_t buffer_queue_take(buffer_queue_t *const q, const u
 // ------------------------------------------------------------------------------------------------------------------------
 
 static inline bool buffer_queue_remove_key(buffer_queue_t *const q, const uint8_t tag, const uint32_t key) {
+    if (q->used == 0)
+        return false;
+    uint16_t n = 0;
     BUFFER_LOCK_ACQUIRE(&q->lock);
-    for (uint16_t i = 0; i < q->size; i++)
+    for (uint16_t i = 0; i < q->size && n == 0; i++)
         if (q->slot[i].valid && q->slot[i].tag == tag && q->slot[i].key == key) {
             buffer_unref(q->pool, q->slot[i].buf);
             q->slot[i].valid = false;
             q->used--;
-            BUFFER_LOCK_RELEASE(&q->lock);
-            return true;
+            n++;
         }
     BUFFER_LOCK_RELEASE(&q->lock);
-    return false;
+    return n > 0;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
 
 static inline uint16_t buffer_queue_remove_tag(buffer_queue_t *const q, const uint8_t tag) {
+    if (q->used == 0)
+        return 0;
     uint16_t n = 0;
     BUFFER_LOCK_ACQUIRE(&q->lock);
     for (uint16_t i = 0; i < q->size; i++)
@@ -503,6 +557,8 @@ static inline uint16_t buffer_queue_remove_tag(buffer_queue_t *const q, const ui
 // ------------------------------------------------------------------------------------------------------------------------
 
 static inline void buffer_queue_clear(buffer_queue_t *const q) {
+    if (q->used == 0)
+        return;
     BUFFER_LOCK_ACQUIRE(&q->lock);
     for (uint16_t i = 0; i < q->size; i++)
         if (q->slot[i].valid) {
@@ -518,7 +574,6 @@ static inline void buffer_queue_clear(buffer_queue_t *const q) {
 static inline uint16_t buffer_queue_high_water(const buffer_queue_t *const q) {
     return q->high_water;
 }
-
 static inline uint32_t buffer_queue_added(const buffer_queue_t *const q) {
     return q->st_added;
 }

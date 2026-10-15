@@ -93,6 +93,7 @@ BUFFER_QUEUE_DECLARE(g_queue, QUEUE_DEPTH);
 
 static uint32_t g_queued = 0, g_refused = 0;   /* producer side */
 static uint32_t g_received = 0, g_corrupt = 0; /* consumer side */
+static uint32_t g_peek_lied = 0;               /* consumer side: peek saw a frame that take then missed */
 static volatile bool g_producer_done = false;
 static bool g_consumer_gave_up = false;
 
@@ -130,7 +131,15 @@ static void *consumer(__attribute__((unused)) void *arg) {
     for (;;) {
         uint32_t key = 0;
         uint8_t tag = 0;
+        /* PEEK LOCKS, so this drives that path with the producer contending for the same lock.
+           The invariant is sharp on this queue: nothing expires (the producer queues with expiry 0)
+           and the consumer is the only remover, so a frame peek just saw cannot have vanished by
+           the take below. On a queue two threads TOOK from it could, which is the staleness the
+           lock does not fix and the header says so. */
+        const bool peeked = buffer_queue_peek(&g_queue, 0, NULL, NULL) != (buffer_handle_t)BUFFER_NONE;
         const buffer_handle_t h = buffer_queue_take(&g_queue, 0, &tag, &key);
+        if (peeked && h == (buffer_handle_t)BUFFER_NONE)
+            g_peek_lied++;
         if (h == (buffer_handle_t)BUFFER_NONE) {
             if (g_producer_done && buffer_queue_count(&g_queue) == 0)
                 break;
@@ -188,6 +197,7 @@ static void test_cross_thread_queue(void) {
     printf("  %" PRIu32 " queued, %" PRIu32 " refused (full), %" PRIu32 " received intact, queue high_water=%u\n", g_queued, g_refused, g_received, (unsigned)buffer_queue_high_water(&g_queue));
     CHECK(!g_consumer_gave_up, "the consumer drained the queue rather than giving up waiting");
     CHECK(g_corrupt == 0, "every frame taken was the frame that was queued");
+    CHECK(g_peek_lied == 0, "a frame peek saw was still there to take, under contention");
     CHECK(g_queued + g_refused == HANDOFFS, "every request either queued or was refused");
     CHECK(g_received == g_queued, "and everything queued came back out exactly once");
     CHECK(g_queued > 0 && g_received > 0, "the pair actually did some work");

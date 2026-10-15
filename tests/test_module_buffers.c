@@ -38,6 +38,14 @@ static int fails = 0;
 BUFFER_POOL_DECLARE(g_pool, TEST_COUNT, TEST_STRIDE);
 BUFFER_QUEUE_DECLARE(g_queue, 8);
 
+/* A POOL WIDER THAN ONE MAP WORD, which is the only thing that exercises the start-word hint in
+   buffer_acquire: with count <= 32 there is one word, the hint is always 0, and the scan is what it
+   always was -- and g_pool above is 12. 70 is three words, and deliberately NOT a multiple of 32,
+   so the last word carries 26 padding bits that are not buffers and must never be handed out.
+   The stride is tiny because nothing here writes bytes; it is the bookkeeping under test. */
+#define WIDE_COUNT 70u
+BUFFER_POOL_DECLARE(g_wide, WIDE_COUNT, 16u);
+
 /* a caller's tag vocabulary, as the relay has one */
 static const char *test_tag_name(const uint8_t tag) {
     return tag == 1 ? "BEACON" : tag == 2 ? "FORWARD" : NULL;
@@ -199,6 +207,93 @@ static void test_reuse_without_reacquiring(void) {
     CHECK(!buffer_reset(&g_pool, h), "and not on a buffer nobody holds");
     CHECK(buffer_pool_used(&g_pool) == 0, "released");
 }
+
+/*
+ * WHAT IS ASSERTED IS THAT NOTHING IS STRANDED AND NOTHING IS HANDED OUT TWICE -- not which handle
+ * comes back. The hint gives up "always the lowest free index" on purpose, so a test that pinned
+ * the order would be testing the hint's current shape rather than the pool's contract. The one
+ * ordering claim below is forced: with 69 of 70 held there is exactly one free bit anywhere, so any
+ * correct scan must return it, wherever the hint happens to be sitting.
+ */
+static void test_pool_wider_than_one_word(void) {
+    printf("a pool of %u, three map words: the scan wraps and the padding is not a buffer\n", (unsigned)WIDE_COUNT);
+    BUFFER_POOL_INIT(g_wide, WIDE_COUNT, 16u, 0u);
+
+    buffer_handle_t all[WIDE_COUNT];
+    bool live[WIDE_COUNT];
+    memset(live, 0, sizeof(live));
+    unsigned unreachable = 0, padding = 0, twice = 0;
+    for (unsigned i = 0; i < WIDE_COUNT; i++) {
+        all[i] = buffer_acquire(&g_wide);
+        if (all[i] == BUFFER_NONE) {
+            unreachable++;
+            continue;
+        }
+        if (all[i] >= WIDE_COUNT) {
+            padding++;
+            continue;
+        }
+        if (live[all[i]])
+            twice++;
+        live[all[i]] = true;
+    }
+    CHECK(unreachable == 0, "every one of the 70 is reachable");
+    CHECK(padding == 0, "and is a real buffer, never a padding bit of the last word");
+    CHECK(twice == 0, "and is handed out exactly once");
+    CHECK(buffer_pool_used(&g_wide) == WIDE_COUNT, "the pool is now full");
+    CHECK(buffer_acquire(&g_wide) == BUFFER_NONE, "a full pool refuses rather than minting a padding bit");
+
+    /* THE WRAP. The hint is in the LAST word -- that is where the last acquire succeeded -- and the
+       buffer freed here is in the FIRST. A scan that started at the hint and ran to the end without
+       coming round would report an empty pool while a buffer sat free in it. */
+    buffer_unref(&g_wide, all[3]);
+    CHECK(buffer_pool_used(&g_wide) == WIDE_COUNT - 1, "one buffer free, in the first word");
+    CHECK(buffer_acquire(&g_wide) == all[3], "and the scan comes round to it");
+
+    /* churn across all three words: a hint left out of range, or one that stopped the scan short,
+       shows up here as a refusal or a double hand-out rather than as a slow path */
+    unsigned churn_fails = 0;
+    for (unsigned round = 0; round < 500; round++) {
+        const unsigned k = (round * 7u) % WIDE_COUNT; /* strides across the words rather than along one */
+        buffer_unref(&g_wide, all[k]);
+        live[all[k]] = false;
+        all[k] = buffer_acquire(&g_wide);
+        if (all[k] == BUFFER_NONE || all[k] >= WIDE_COUNT || live[all[k]])
+            churn_fails++;
+        else
+            live[all[k]] = true;
+    }
+    CHECK(churn_fails == 0, "500 rounds of free-and-reacquire across the words, none refused or duplicated");
+    for (unsigned i = 0; i < WIDE_COUNT; i++)
+        buffer_unref(&g_wide, all[i]);
+    CHECK(buffer_pool_used(&g_wide) == 0, "and it all comes back");
+    CHECK(buffer_pool_fails(&g_wide) == 1, "the only refusal was the deliberate one");
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+
+/* The three calls a polling loop makes on EVERY pass, on a queue with nothing in it: each answers
+   nothing, and -- the part worth a test -- the early-out that lets them answer without walking the
+   slots does not then swallow the work when there IS something in there. */
+static void test_empty_queue(void) {
+    printf("an empty queue answers every question, and one with a frame in it is still walked\n");
+    setup();
+    CHECK(buffer_queue_count(&g_queue) == 0, "empty to begin with");
+    CHECK(buffer_queue_take(&g_queue, 1000, NULL, NULL) == BUFFER_NONE, "take finds nothing");
+    CHECK(buffer_queue_peek(&g_queue, 1000, NULL, NULL) == BUFFER_NONE, "peek finds nothing");
+    CHECK(buffer_queue_expire(&g_queue, 1000) == 0, "expire finds nothing");
+    CHECK(buffer_queue_expired(&g_queue) == 0, "and counts nothing expired");
+
+    const buffer_handle_t h = buffer_acquire(&g_pool);
+    CHECK(buffer_queue_add(&g_queue, h, 0, 100, 1, 0x1234), "one frame queued, expiring at 100");
+    buffer_unref(&g_pool, h);
+    CHECK(buffer_queue_peek(&g_queue, 50, NULL, NULL) == h, "peek walks a queue that has something in it");
+    CHECK(buffer_queue_expire(&g_queue, 200) == 1, "and expire still expires it");
+    CHECK(buffer_pool_used(&g_pool) == 0, "the reference went with it");
+    CHECK(buffer_queue_count(&g_queue) == 0, "leaving it empty again");
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
 
 static void test_queue(void) {
     printf("the queue: due, expiry, and who holds the reference\n");
@@ -396,6 +491,8 @@ int main(void) {
     test_refcounting();
     test_reserved_prefix();
     test_reuse_without_reacquiring();
+    test_pool_wider_than_one_word();
+    test_empty_queue();
     test_queue();
     test_no_leaks_over_churn();
     test_reuse_across_receive_cycles();
