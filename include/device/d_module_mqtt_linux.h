@@ -10,8 +10,8 @@
 //
 // ONE CLIENT, FILE-SCOPE STATE, which is d_interface_e22900t22.h's shape rather than the datastore's:
 // a node has one broker the way it has one radio, so there is no handle to thread through every call
-// site and the counters are globals the status publisher reads where it stands. It is a header with
-// definitions in it, so exactly one translation unit may include it.
+// site -- one mqtt_state_t, whose counters a status publisher reads through mqtt_stats(). It is a
+// header with definitions in it, so exactly one translation unit may include it.
 //
 // SUBSCRIBERS ARE A TABLE, AND THE PATTERN IS THE ROUTE
 //

@@ -66,10 +66,18 @@
 
 /* Command output is emitted as a pseudo log line "<TAG> (<ms>) <message>" — the same shape as an
  * ESP_LOG "<LEVEL> (<ms>) tag: msg" line — so a host monitor can grep/strip it by the leading level
- * letter (default 'C'), consistent with the I/W/E/D log lines it's interleaved with. Override the
- * letter before including if it clashes. */
+ * letter (default 'C'), consistent with the I/W/E/D log lines it's interleaved with.
+ */
 #ifndef IOTDATA_NODE_CONSOLE_TAG
 #define IOTDATA_NODE_CONSOLE_TAG "C"
+#endif
+
+#ifndef IOTDATA_NODE_CONSOLE_PREFIX
+#if defined(ESP_PLATFORM)
+#define IOTDATA_NODE_CONSOLE_PREFIX() printf(IOTDATA_NODE_CONSOLE_TAG " (%u) ", (unsigned)esp_log_timestamp()) /* ms since boot, like ESP_LOG */
+#else
+#define IOTDATA_NODE_CONSOLE_PREFIX() fputs(IOTDATA_NODE_CONSOLE_TAG " (0) ", stdout)
+#endif
 #endif
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -130,11 +138,7 @@ bool iotdata_node_console_sink_active(void);
 void iotdata_node_console_reply(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-#if defined(ESP_PLATFORM)
-    printf(IOTDATA_NODE_CONSOLE_TAG " (%u) ", (unsigned)esp_log_timestamp()); /* ms since boot, like ESP_LOG */
-#else
-    fputs(IOTDATA_NODE_CONSOLE_TAG " (0) ", stdout);
-#endif
+    IOTDATA_NODE_CONSOLE_PREFIX();
     (void)vprintf(fmt, ap);
     va_end(ap);
 }

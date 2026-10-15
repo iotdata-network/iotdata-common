@@ -97,7 +97,7 @@ static int deliver(const char *const topic, const char *const payload) {
    added is a channel that goes deaf with no error anywhere. */
 static void test_subscribe_without_a_connection(void) {
     rig();
-    CHECK(mosq == NULL, "no client: this suite never connects");
+    CHECK(_mqtt_state.mosq == NULL, "no client: this suite never connects");
     CHECK(mqtt_subscribe("iotdata/manage/req", 0, sink_handler, &sink_a), "a subscribe with no client is recorded, not refused");
     CHECK(_mqtt_state.subscribers_count == 1, "and it is one row");
     CHECK(g_errors == 0, "with nothing reported");
